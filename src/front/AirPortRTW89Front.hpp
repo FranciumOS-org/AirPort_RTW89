@@ -9,6 +9,7 @@
 
 #include <IOKit/80211/IO80211Controller.h>
 #include <IOKit/80211/IO80211Interface.h>
+#include <IOKit/80211/IO80211P2PInterface.h>
 #include <IOKit/80211/IO80211VirtualInterface.h>
 #include <IOKit/80211/IO80211WorkLoop.h>
 #include <IOKit/IOLocks.h>
@@ -70,6 +71,7 @@ public:
                              void *data) override;
     SInt32 apple80211VirtualRequest(UInt type, int number, IO80211VirtualInterface *vif,
                                     void *data) override;
+    IO80211VirtualInterface *createVirtualInterface(ether_addr *addr, UInt role) override;
     SInt32 stopDMA() override;
     UInt32 hardwareOutputQueueDepth(IO80211Interface *interface) override;
     SInt32 performCountryCodeOperation(IO80211Interface *interface,

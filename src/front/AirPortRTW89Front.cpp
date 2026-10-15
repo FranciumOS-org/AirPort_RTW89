@@ -300,10 +300,45 @@ void AirPortRTW89Front::opSetAppleRsn(void *ctx, bool on)
 }
 
 /*
- * The family builds the virtual interface itself: attachVirtualInterface()
- * calls createVirtualInterface(), which allocates an IO80211P2PInterface and
- * gives it a BSD name from the role (awdl0 for APPLE80211_VIF_AWDL). We keep
- * the one we were given; macOS asks for a second one only for P2P.
+ * The old family's own IO80211Controller::createVirtualInterface() builds only
+ * the P2P roles (3, 4, 5, as "p2p") and the soft-AP role (7, as "ap"); role 6,
+ * AWDL, falls off the end of its range check and it returns nothing, which is
+ * why awdl0 never appeared. AirPort_BrcmNIC overrides the method for exactly
+ * this reason: it takes one role more and names that one "awdl". We do the
+ * same, with the family's plain IO80211P2PInterface, since what Broadcom adds
+ * on top of it is Broadcom's own firmware state.
+ *
+ * attachVirtualInterface() calls this through the vtable and then attaches and
+ * publishes what comes back, so the rest of the path is the family's and is
+ * the same one p2p already uses.
+ */
+IO80211VirtualInterface *AirPortRTW89Front::createVirtualInterface(ether_addr *addr, UInt role)
+{
+    IO80211P2PInterface *vif;
+
+    if (role != APPLE80211_VIF_AWDL)
+        return super::createVirtualInterface(addr, role);
+
+    vif = OSTypeAlloc(IO80211P2PInterface);
+    if (!vif) {
+        LOG("out of memory for the AWDL interface");
+        return nullptr;
+    }
+    /* A literal, not a buffer on the stack: Broadcom passes a stack buffer, so
+     * init() copies the name, but a literal is right either way. */
+    if (!vif->init(this, addr, role, "awdl")) {
+        LOG("IO80211P2PInterface::init() refused role %u", (unsigned int)role);
+        vif->release();
+        return nullptr;
+    }
+    return vif;
+}
+
+/*
+ * The family builds the virtual interface, through the override above:
+ * attachVirtualInterface() calls createVirtualInterface(), attaches what it
+ * gets and gives it a BSD name (awdl0). We keep the one we were given; macOS
+ * asks for a second one only for P2P.
  */
 int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t role, char *bsd_name)
 {
@@ -320,7 +355,8 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
      * outright, ENODEV it claiming success without an interface, and success
      * with an empty name an interface that never reached BSD. */
     if (!self->attachVirtualInterface(&vif, &addr, role, true)) {
-        LOG("attachVirtualInterface() refused role %u", (unsigned int)role);
+        LOG("attachVirtualInterface() refused role %u (see createVirtualInterface above)",
+            (unsigned int)role);
         return EIO;
     }
     if (!vif) {
