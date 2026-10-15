@@ -796,7 +796,14 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
         }
         bzero(d, sizeof(*d));
         d->version = APPLE80211_VERSION;
-        d->enabled = _ns->awdlSyncEnabled;
+        /*
+         * An experiment, not a claim we can keep: say sync is running and see
+         * whether the state machine goes on to push sync params, the channel
+         * sequence and a frame template at us. Nothing is transmitted yet, so
+         * this is a lie to the family -- contained behind -rtw89awdl, and the
+         * requests it draws out are the point.
+         */
+        d->enabled = 1;
         return kIOReturnSuccess;
     }
     default:
