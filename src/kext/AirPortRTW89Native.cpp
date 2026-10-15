@@ -65,6 +65,38 @@ struct AirPort_RTW89::NativeState {
     bool awdlSyncEnabled = false;   /* what macOS last asked for on awdl0 */
 };
 
+/* The AWDL requests we have seen the family make, by number, so the log reads
+ * without apple80211_ioctl.h open beside it. */
+static const char *awdlRequestName(int number)
+{
+    switch (number) {
+    case APPLE80211_IOC_SSID:                       return "SSID";
+    case APPLE80211_IOC_CARD_CAPABILITIES:          return "CARD_CAPABILITIES";
+    case APPLE80211_IOC_POWER:                      return "POWER";
+    case APPLE80211_IOC_SUPPORTED_CHANNELS:         return "SUPPORTED_CHANNELS";
+    case APPLE80211_IOC_AWDL_SYNC_PARAMS:           return "AWDL_SYNC_PARAMS";
+    case APPLE80211_IOC_AWDL_SYNC_ENABLED:          return "AWDL_SYNC_ENABLED";
+    case APPLE80211_IOC_AWDL_ELECTION_METRIC:       return "AWDL_ELECTION_METRIC";
+    case APPLE80211_IOC_AWDL_ELECTION_ID:           return "AWDL_ELECTION_ID";
+    case APPLE80211_IOC_AWDL_BSSID:                 return "AWDL_BSSID";
+    case APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE:
+                                                    return "AWDL_SYNC_CHANNEL_SEQUENCE";
+    case APPLE80211_IOC_AWDL_MASTER_CHANNEL:        return "AWDL_MASTER_CHANNEL";
+    case APPLE80211_IOC_AWDL_SYNC_STATE:            return "AWDL_SYNC_STATE";
+    case APPLE80211_IOC_AWDL_PRESENCE_MODE:         return "AWDL_PRESENCE_MODE";
+    case APPLE80211_IOC_AWDL_SYNC_FRAME_TEMPLATE:   return "AWDL_SYNC_FRAME_TEMPLATE";
+    case APPLE80211_IOC_AWDL_PEER_TRAFFIC_REGISTRATION:
+                                                    return "AWDL_PEER_TRAFFIC_REGISTRATION";
+    case APPLE80211_IOC_AWDL_OOB_REQUEST:           return "AWDL_OOB_REQUEST";
+    case APPLE80211_IOC_AWDL_AES_KEY:               return "AWDL_AES_KEY";
+    case APPLE80211_IOC_AWDL_SOCIAL_TIME_SLOTS:     return "AWDL_SOCIAL_TIME_SLOTS";
+    case APPLE80211_IOC_AWDL_DEVICE_CAPABILITIES:   return "AWDL_DEVICE_CAPABILITIES";
+    case APPLE80211_IOC_AWDL_STRATEGY:              return "AWDL_STRATEGY";
+    case APPLE80211_IOC_AWDL_CTL:                   return "AWDL_CTL";
+    default:                                        return "?";
+    }
+}
+
 /* True the first time @number is seen. The bitmap covers every request number
  * the family knows (the highest in apple80211_ioctl.h is 353); a number past
  * the end is logged once per sighting, which is the lesser evil. */
@@ -713,9 +745,14 @@ int AirPort_RTW89::backVirtualRequest(void *ctx, unsigned int type, int number,
 
     if (!me->_ns)
         return EOPNOTSUPP;
-    if (firstSighting(me->_ns->seenVirtual, number))
-        LOG("awdl: %s request %d on the virtual interface (%s)",
-            type == SIOCSA80211 ? "set" : "get", number, data ? "with data" : "no data");
+    /*
+     * Every request, not the first sighting of each number: the AWDL state
+     * machine drives the same handful of requests over and over, and what
+     * matters while working it out is the order they come in and how often.
+     * The log is a ring, and this only runs behind -rtw89awdl.
+     */
+    LOG("awdl: %s request %d (%s)%s", type == SIOCSA80211 ? "set" : "get", number,
+        awdlRequestName(number), data ? "" : " [no data]");
     if (!data)
         return EOPNOTSUPP;
     return me->nativeVirtualRequest(type == SIOCSA80211, number, data);
