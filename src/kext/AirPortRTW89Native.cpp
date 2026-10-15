@@ -62,6 +62,7 @@ struct AirPort_RTW89::NativeState {
     uint64_t seenVirtual[RTW89_SEEN_WORDS] = {};
     char vifName[16] = {};
     bool vifUp = false;
+    bool awdlSyncEnabled = false;   /* what macOS last asked for on awdl0 */
 };
 
 /* True the first time @number is seen. The bitmap covers every request number
@@ -715,12 +716,55 @@ int AirPort_RTW89::backVirtualRequest(void *ctx, unsigned int type, int number,
     if (firstSighting(me->_ns->seenVirtual, number))
         LOG("awdl: %s request %d on the virtual interface (%s)",
             type == SIOCSA80211 ? "set" : "get", number, data ? "with data" : "no data");
+    if (!data)
+        return EOPNOTSUPP;
+    return me->nativeVirtualRequest(type == SIOCSA80211, number, data);
+}
+
+/*
+ * What we answer on awdl0. Everything still unanswered returns EOPNOTSUPP, which
+ * sends the front to the family; each number is logged once above, and that log
+ * is how the next thing to implement is chosen.
+ */
+int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
+{
+    switch (number) {
     /* The family asks the virtual interface what the card can do while it is
      * building it, and took EOPNOTSUPP badly. The card is the same one either
      * way, so answer as the real interface does. */
-    if (number == APPLE80211_IOC_CARD_CAPABILITIES && type == SIOCGA80211 && data)
-        return me->nativeRequest(false, APPLE80211_IOC_CARD_CAPABILITIES, data);
-    return EOPNOTSUPP;      /* the family answers what it can */
+    case APPLE80211_IOC_CARD_CAPABILITIES:
+        return isSet ? EOPNOTSUPP : nativeRequest(false, number, data);
+
+    /*
+     * Whether AWDL synchronisation is on. The family asks for this and goes no
+     * further while the answer is "unsupported", so taking the request is what
+     * makes it ask for the rest (sync params, election, channel sequence) --
+     * which is what we are here to find out. Nothing in the chip is touched
+     * yet: we remember the flag and hand it back.
+     *
+     * AirPort_BrcmNIC::getAWDL_SYNC_ENABLED checks the version first and
+     * answers EINVAL when it does not match, then reports what its firmware
+     * says. We have no firmware AWDL block, so our own state is the answer.
+     */
+    case APPLE80211_IOC_AWDL_SYNC_ENABLED: {
+        struct apple80211_awdl_sync_enabled *d =
+            static_cast<struct apple80211_awdl_sync_enabled *>(data);
+
+        if (d->version != APPLE80211_VERSION)
+            return EINVAL;
+        if (isSet) {
+            _ns->awdlSyncEnabled = d->enabled != 0;
+            LOG("awdl: macOS asks for sync %s", _ns->awdlSyncEnabled ? "on" : "off");
+            return kIOReturnSuccess;
+        }
+        bzero(d, sizeof(*d));
+        d->version = APPLE80211_VERSION;
+        d->enabled = _ns->awdlSyncEnabled;
+        return kIOReturnSuccess;
+    }
+    default:
+        return EOPNOTSUPP;      /* the family answers what it can */
+    }
 }
 
 /*

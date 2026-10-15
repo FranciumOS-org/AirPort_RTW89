@@ -100,6 +100,7 @@ private:
     void nativePowerChanged();
     static bool frontExpected();
     int nativeRequest(bool isSet, int number, void *data);
+    int nativeVirtualRequest(bool isSet, int number, void *data);
     int nativeVirtualIfCreate(void *data);
     int nativeVirtualIfDelete(void *data);
     int nativeAssociate(void *data);
