@@ -26,6 +26,9 @@
 
 static_assert(sizeof(struct apple80211_scan_result) == 1164, "scan result layout is not Ventura's");
 
+/* enough bits for request numbers 0..511 */
+#define RTW89_SEEN_WORDS 8
+
 struct AirPort_RTW89::NativeState {
     struct rtw89_front_ops front = {};
     struct apple80211_scan_result scanResult = {};
@@ -54,19 +57,21 @@ struct AirPort_RTW89::NativeState {
     uint8_t joinPass[64] = {};
     uint8_t joinPassLen = 0;
     /* Request numbers already logged as not answered here, one bit each, so
-     * that a request macOS repeats does not fill the log (0..255). */
-    uint64_t seenUnhandled[4] = {};
-    uint64_t seenVirtual[4] = {};
+     * that a request macOS repeats does not fill the log. */
+    uint64_t seenUnhandled[RTW89_SEEN_WORDS] = {};
+    uint64_t seenVirtual[RTW89_SEEN_WORDS] = {};
     char vifName[16] = {};
     bool vifUp = false;
 };
 
-/* True the first time @number is seen; @seen holds 256 bits. */
-static bool firstSighting(uint64_t seen[4], int number)
+/* True the first time @number is seen. The bitmap covers every request number
+ * the family knows (the highest in apple80211_ioctl.h is 353); a number past
+ * the end is logged once per sighting, which is the lesser evil. */
+static bool firstSighting(uint64_t seen[RTW89_SEEN_WORDS], int number)
 {
     unsigned int n = (unsigned int)number;
 
-    if (n > 255)
+    if (number < 0 || n >= RTW89_SEEN_WORDS * 64)
         return true;
     if (seen[n / 64] & (1ULL << (n % 64)))
         return false;
@@ -1893,16 +1898,24 @@ int AirPort_RTW89::nativeVirtualIfCreate(void *data)
         LOG("refused: only the AWDL role (%d) is built here", (int)APPLE80211_VIF_AWDL);
         return kIOReturnUnsupported;
     }
-    if (!_ns->front.create_vif)
+    if (!_ns->front.create_vif) {
+        LOG("refused: the front that is loaded has no create_vif (API too old)");
         return kIOReturnUnsupported;
-    if (_ns->vifUp)
+    }
+    if (_ns->vifUp) {
+        LOG("refused: %s is already up", _ns->vifName);
         return EBUSY;
+    }
 
     err = _ns->front.create_vif(_ns->front.ctx, d->mac, d->role, name);
-    if (err)
+    if (err) {
+        /* the front says why, in the system log */
+        LOG("the front could not build the virtual interface: %d", err);
         return err;
+    }
     _ns->vifUp = true;
     strlcpy(_ns->vifName, name, sizeof(_ns->vifName));
+    LOG("virtual interface %s is up", _ns->vifName);
     bzero(d->bsd_name, sizeof(d->bsd_name));
     memcpy(d->bsd_name, name, strnlen(name, sizeof(d->bsd_name)));
     return kIOReturnSuccess;
