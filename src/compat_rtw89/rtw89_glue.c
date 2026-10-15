@@ -1443,7 +1443,7 @@ bool rtw89_glue_scanning(void)
     return glue.scanning;
 }
 
-static int glue_scan_locked(void);
+static int glue_scan_locked(const u8 *name, size_t name_len);
 
 int rtw89_glue_scan(void)
 {
@@ -1452,12 +1452,26 @@ int rtw89_glue_scan(void)
     if (!glue.active)
         return -ENETDOWN;
     mutex_lock(&glue.cmd_lock);
-    ret = glue_scan_locked();
+    ret = glue_scan_locked(NULL, 0);
     mutex_unlock(&glue.cmd_lock);
     return ret;
 }
 
-static int glue_scan_locked(void)
+int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len)
+{
+    int ret;
+
+    if (!glue.active)
+        return -ENETDOWN;
+    if (!ssid_len || ssid_len > IEEE80211_MAX_SSID_LEN)
+        return -EINVAL;
+    mutex_lock(&glue.cmd_lock);
+    ret = glue_scan_locked(ssid, ssid_len);
+    mutex_unlock(&glue.cmd_lock);
+    return ret;
+}
+
+static int glue_scan_locked(const u8 *name, size_t name_len)
 {
     struct rtw89_m80211_local *local;
     struct ieee80211_scan_request *sreq;
@@ -1482,25 +1496,27 @@ static int glue_scan_locked(void)
         if (hw->wiphy->bands[band])
             n_channels += hw->wiphy->bands[band]->n_channels;
 
-    /* One allocation: request, channel pointers, one wildcard SSID, the IEs. */
+    /* One allocation: request, channel pointers, the wildcard SSID and maybe
+     * a named one, the IEs. */
     sreq = kzalloc(sizeof(*sreq) + n_channels * sizeof(sreq->req.channels[0]) +
-                   sizeof(*ssid) + sizeof(glue_ies_2ghz) + sizeof(glue_ies_5ghz),
+                   2 * sizeof(*ssid) + sizeof(glue_ies_2ghz) + sizeof(glue_ies_5ghz),
                    GFP_KERNEL);
     if (!sreq)
         return -ENOMEM;
     req = &sreq->req;
     ssid = (void *)&req->channels[n_channels];
-    ies = (u8 *)(ssid + 1);
+    ies = (u8 *)(ssid + 2);
 
     /*
      * Connected, a scan covers the next GLUE_SCAN_SLICE channels only: all of
      * them took about 5.5 s off the network's channel, and macOS asks every
      * 30 s, which on a weak 5 GHz link was seconds of no traffic each time. A
      * slice is about a second; the whole list comes round every few minutes,
-     * as a Mac's own background scans do. Not connected, all of them.
+     * as a Mac's own background scans do. Not connected, or looking for one
+     * network by name, all of them.
      */
     {
-        bool slice = glue.vif->cfg.assoc;
+        bool slice = glue.vif->cfg.assoc && !name;
         unsigned int k = 0, taken = 0, from = slice ? glue.scan_slice_pos : 0;
 
         for (band = 0; band < NUM_NL80211_BANDS; band++) {
@@ -1527,6 +1543,13 @@ static int glue_scan_locked(void)
 
     req->ssids = ssid;          /* zero length: the wildcard SSID */
     req->n_ssids = 1;
+    if (name) {
+        /* and the network asked for by name: a phone's hotspot that has
+         * only just come up answers that soonest */
+        memcpy(ssid[1].ssid, name, name_len);
+        ssid[1].ssid_len = (u8)name_len;
+        req->n_ssids = 2;
+    }
     req->wiphy = hw->wiphy;
     req->scan_start = jiffies;
     ether_addr_copy(req->mac_addr, glue.vif->addr);
@@ -2040,7 +2063,7 @@ static void glue_rejoin_work(struct work_struct *work)
         }
     } else if (!glue.rejoin_scanned) {
         glue.rejoin_scanned = true;
-        if (!glue_scan_locked())
+        if (!glue_scan_locked(NULL, 0))
             goto out;
         /* no scan to be had: try with what was heard before */
     }

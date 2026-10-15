@@ -30,6 +30,10 @@ struct AirPort_RTW89::NativeState {
     struct rtw89_front_ops front = {};
     struct apple80211_scan_result scanResult = {};
     unsigned int scanCursor = 0;
+    /* the list being read, strongest first: addresses, taken when reading
+     * starts (scanCursor 0) */
+    uint8_t scanOrder[128][6] = {};
+    unsigned int scanOrderLen = 0;
     bool scanInProgress = false;
     bool scanBootstrapTried = false;
     uint64_t lastConnectedScan = 0;     /* uptime (ns) of the last scan while connected */
@@ -853,6 +857,42 @@ int AirPort_RTW89::backIoctlSet(void *ctx, void *interface, void *vif, void *sky
 /*  apple80211Request(): one item, get or set                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * A join for a network not heard yet: a phone's hotspot that Instant Hotspot
+ * has only just turned on, which the sliced scans while connected may take
+ * minutes to reach. One scan over every channel, also probing for it by name,
+ * then the caller tries again. The old link is already down (the join left
+ * it), so nothing is slowed. Called with _commandLock held; the scan's end is
+ * seen through rtw89_glue_scanning(), which does not take it. True when the
+ * network was heard.
+ */
+bool AirPort_RTW89::joinAfterScan(const uint8_t *ssid, uint32_t ssidLen)
+{
+    struct rtw89_glue_bss bss;
+    unsigned int i;
+    int ret, waited;
+
+    for (waited = 0; rtw89_glue_scanning() && waited < 8000; waited += 100)
+        IOSleep(100);
+    _ns->scanInProgress = true;
+    ret = rtw89_glue_scan_for(ssid, ssidLen);
+    if (ret) {
+        _ns->scanInProgress = false;
+        LOG("no scan for the network asked for: %d", ret);
+        return false;
+    }
+    for (waited = 0; rtw89_glue_scanning() && waited < 10000; waited += 100)
+        IOSleep(100);
+    for (i = 0; rtw89_glue_scan_entry(i, &bss, nullptr, 0, nullptr, nullptr); i++)
+        if (bss.ssid_len == ssidLen && !memcmp(bss.ssid, ssid, ssidLen)) {
+            LOG("the network asked for heard after a scan of its own (%u MHz, %d dBm)",
+                bss.freq, bss.signal);
+            return true;
+        }
+    LOG("the network asked for not heard after a scan of its own");
+    return false;
+}
+
 int AirPort_RTW89::nativeAssociate(void *data)
 {
     struct apple80211_assoc_data *d = static_cast<struct apple80211_assoc_data *>(data);
@@ -931,6 +971,16 @@ int AirPort_RTW89::nativeAssociate(void *data)
     } else {
         ret = rtw89_glue_join_pmk(d->ad_ssid, d->ad_ssid_len, bssid, pmk);
         if (ret == -2 && bssid) /* that access point is not in the list: any of the network's */
+            ret = rtw89_glue_join_pmk(d->ad_ssid, d->ad_ssid_len, nullptr, pmk);
+    }
+    if (ret == -2 && joinAfterScan(d->ad_ssid, d->ad_ssid_len)) {
+        /* heard now: the same join again */
+        if (enterprise)
+            ret = rtw89_glue_join_ext(d->ad_ssid, d->ad_ssid_len, nullptr, nullptr, 0);
+        else if (fromPassphrase)
+            ret = rtw89_glue_join_password(d->ad_ssid, d->ad_ssid_len, nullptr,
+                                           (const char *)_ns->joinPass, _ns->joinPassLen);
+        else
             ret = rtw89_glue_join_pmk(d->ad_ssid, d->ad_ssid_len, nullptr, pmk);
     }
     IOLockUnlock(_commandLock);
@@ -1173,10 +1223,32 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         if (isSet)
             return kIOReturnUnsupported;
         *out = nullptr;
+        /*
+         * Strongest first: the menu shows the networks in the order they
+         * come. The order is fixed when reading starts, each network then
+         * looked up by its address (it may have gone meanwhile).
+         */
+        if (_ns->scanCursor == 0) {
+            Scratch listBuf(128 * sizeof(struct rtw89_glue_bss));
+            struct rtw89_glue_bss *list = reinterpret_cast<struct rtw89_glue_bss *>(listBuf.bytes());
+            unsigned int n = list ? rtw89_glue_scan_results(list, 128) : 0;
+
+            for (unsigned int i = 1; i < n; i++) {
+                struct rtw89_glue_bss key = list[i];
+                unsigned int j = i;
+
+                for (; j > 0 && list[j - 1].signal < key.signal; j--)
+                    list[j] = list[j - 1];
+                list[j] = key;
+            }
+            for (unsigned int i = 0; i < n; i++)
+                memcpy(_ns->scanOrder[i], list[i].bssid, 6);
+            _ns->scanOrderLen = n;
+        }
         /* hidden networks have no name to show */
-        while (rtw89_glue_scan_entry(_ns->scanCursor, &bss, ies, 1024, &len, &beaconInt)) {
-            _ns->scanCursor++;
-            if (!bss.ssid_len)
+        while (_ns->scanCursor < _ns->scanOrderLen) {
+            if (!rtw89_glue_find_bss(_ns->scanOrder[_ns->scanCursor++], &bss, ies, 1024, &len,
+                                     &beaconInt) || !bss.ssid_len)
                 continue;
             /* all elements: without HT/VHT/HE ones macOS takes every network
              * for 802.11a/g */

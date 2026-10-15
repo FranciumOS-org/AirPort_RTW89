@@ -121,6 +121,13 @@ bool rtw89_glue_is_up(void);
  * already running, -ENETDOWN if the radio is down.
  */
 int rtw89_glue_scan(void);
+
+/*
+ * The same over every channel also while connected (no slice), probing for
+ * @ssid by name as well as with the wildcard: for a join whose network has
+ * not been heard yet.
+ */
+int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len);
 bool rtw89_glue_scanning(void);
 
 struct rtw89_glue_bss {

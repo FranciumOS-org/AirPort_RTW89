@@ -101,6 +101,7 @@ private:
     static bool frontExpected();
     int nativeRequest(bool isSet, int number, void *data);
     int nativeAssociate(void *data);
+    bool joinAfterScan(const uint8_t *ssid, uint32_t ssidLen);
     static void scanDone(void *ctx, bool aborted);
     static void backGetMac(void *ctx, uint8_t mac[6]);
     static int backSetMac(void *ctx, const uint8_t mac[6]);
