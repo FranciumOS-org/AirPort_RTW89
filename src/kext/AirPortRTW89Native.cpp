@@ -1908,10 +1908,20 @@ int AirPort_RTW89::nativeVirtualIfCreate(void *data)
     }
 
     err = _ns->front.create_vif(_ns->front.ctx, d->mac, d->role, name);
+    if (err == EIO) {
+        LOG("the family refused role %u outright: the old IO80211Controller builds only "
+            "the p2p and ap roles, so the front has to name the AWDL one itself",
+            (unsigned int)d->role);
+        return err;
+    }
     if (err) {
-        /* the front says why, in the system log */
         LOG("the front could not build the virtual interface: %d", err);
         return err;
+    }
+    if (!name[0]) {
+        LOG("the family built the interface but gave it no BSD name, so nothing reaches BSD");
+        _ns->vifUp = true;
+        return kIOReturnSuccess;
     }
     _ns->vifUp = true;
     strlcpy(_ns->vifName, name, sizeof(_ns->vifName));

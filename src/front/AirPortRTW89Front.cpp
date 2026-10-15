@@ -315,9 +315,17 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
     if (self->_vif)
         return EBUSY;
     memcpy(addr.octet, mac, sizeof(addr.octet));
-    if (!self->attachVirtualInterface(&vif, &addr, role, true) || !vif) {
-        LOG("the family would not build a virtual interface for role %u", (unsigned int)role);
+    /* The three outcomes are told apart by the errno, because the driver's log
+     * ring is the only one we can read back: EIO the family refusing the role
+     * outright, ENODEV it claiming success without an interface, and success
+     * with an empty name an interface that never reached BSD. */
+    if (!self->attachVirtualInterface(&vif, &addr, role, true)) {
+        LOG("attachVirtualInterface() refused role %u", (unsigned int)role);
         return EIO;
+    }
+    if (!vif) {
+        LOG("attachVirtualInterface() said yes to role %u but built nothing", (unsigned int)role);
+        return ENODEV;
     }
     self->_vif = vif;
     name = vif->getBSDName();
@@ -326,7 +334,8 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
         if (name)
             strlcpy(bsd_name, name, IFNAMSIZ);
     }
-    LOG("virtual interface %s up, role %u", name ? name : "(unnamed)", (unsigned int)role);
+    LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
+        (unsigned int)role);
     return 0;
 }
 
