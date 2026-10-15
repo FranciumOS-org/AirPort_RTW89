@@ -314,7 +314,17 @@ front:
 	@echo "  KEXT $(FRONT_BUNDLE)"
 
 # The smoke test gates the bundle: nothing gets packaged that crashed there.
-kext: hosttest $(KEXT_OBJS) $(KEXT_SRC)/Info.plist
+# It runs again only when what it tests has changed since it last passed
+# (`make hosttest` runs it regardless): most of its time is the dead-device
+# runs waiting out each chip's power-on timeouts.
+HOSTTEST_STAMP := $(BUILD_DIR)/out/hosttest.passed
+$(HOSTTEST_STAMP): $(ALL_OBJS) $(wildcard tools/hosttest/*.c) $(SAE_SRCS) \
+                   $(COMPAT89_DIR)/rtw89_crypto.c Makefile
+	@rm -f $@
+	@$(MAKE) --no-print-directory hosttest
+	@touch $@
+
+kext: $(HOSTTEST_STAMP) $(KEXT_OBJS) $(KEXT_SRC)/Info.plist
 	@rm -rf $(BUILD_DIR)/out/AirPort_RTW89.kext
 	@mkdir -p $(dir $(KEXT_BIN))
 	@cp $(KEXT_SRC)/Info.plist $(KEXT_BUNDLE)/Contents/Info.plist
