@@ -100,6 +100,8 @@ private:
     void nativePowerChanged();
     static bool frontExpected();
     int nativeRequest(bool isSet, int number, void *data);
+    int nativeVirtualIfCreate(void *data);
+    int nativeVirtualIfDelete(void *data);
     int nativeAssociate(void *data);
     bool joinAfterScan(const uint8_t *ssid, uint32_t ssidLen);
     static void scanDone(void *ctx, bool aborted);
@@ -113,6 +115,8 @@ private:
     static int backEnable(void *ctx, bool on);
     static uint32_t backOutput(void *ctx, mbuf_t m);
     static void backPower(void *ctx, bool on);
+    static int backVirtualRequest(void *ctx, unsigned int type, int number,
+                                  void *virtual_interface, void *data);
     /* The radio on, unless the machine is going down or asleep. */
     int radioUp() { return _halting ? -100 : _asleep ? -101 : rtw89_glue_up(); }
     static IOReturn powerEvent(void *target, void *refCon, UInt32 messageType,

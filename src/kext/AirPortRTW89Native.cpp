@@ -53,7 +53,26 @@ struct AirPort_RTW89::NativeState {
      * form (too long for apple80211_key); wiped once the join has started. */
     uint8_t joinPass[64] = {};
     uint8_t joinPassLen = 0;
+    /* Request numbers already logged as not answered here, one bit each, so
+     * that a request macOS repeats does not fill the log (0..255). */
+    uint64_t seenUnhandled[4] = {};
+    uint64_t seenVirtual[4] = {};
+    char vifName[16] = {};
+    bool vifUp = false;
 };
+
+/* True the first time @number is seen; @seen holds 256 bits. */
+static bool firstSighting(uint64_t seen[4], int number)
+{
+    unsigned int n = (unsigned int)number;
+
+    if (n > 255)
+        return true;
+    if (seen[n / 64] & (1ULL << (n % 64)))
+        return false;
+    seen[n / 64] |= 1ULL << (n % 64);
+    return true;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Small helpers                                                       */
@@ -81,6 +100,23 @@ static bool advertiseWPA3()
         int dummy;
 
         state = PE_parse_boot_argn("-rtw89nowpa3", &dummy, sizeof(dummy)) ? 2 : 1;
+    }
+    return state == 1;
+}
+
+/*
+ * Whether the AWDL groundwork is live (boot-arg -rtw89awdl): macOS may create
+ * the virtual interface awdl0 on this card, and every request that arrives on
+ * it is logged. Off by default; normal Wi-Fi behaves as before either way.
+ */
+static bool awdlEnabled()
+{
+    static int state;   /* 0: not read yet, 1: on, 2: off */
+
+    if (!state) {
+        int dummy;
+
+        state = PE_parse_boot_argn("-rtw89awdl", &dummy, sizeof(dummy)) ? 1 : 2;
     }
     return state == 1;
 }
@@ -450,6 +486,7 @@ bool AirPort_RTW89::connectFront()
     back.enable = backEnable;
     back.output = backOutput;
     back.power = backPower;
+    back.virtual_request = backVirtualRequest;
 
     _native = true;         /* the callbacks below may come during the call */
     ret = front->callPlatformFunction(name, true, &back, &_ns->front, nullptr, nullptr);
@@ -478,6 +515,10 @@ void AirPort_RTW89::disconnectFront()
         return;
     if (_ns->front.set_apple_rsn)
         _ns->front.set_apple_rsn(_ns->front.ctx, false);
+    if (_ns->vifUp && _ns->front.destroy_vif) {
+        _ns->front.destroy_vif(_ns->front.ctx);
+        _ns->vifUp = false;
+    }
     _nativeClosing = true;
     if (_nativeCall) {
         /* nothing new is queued now; let one that is running finish */
@@ -651,6 +692,25 @@ int AirPort_RTW89::backRequest(void *ctx, unsigned int type, int number, void *i
     if (!data && number != APPLE80211_IOC_DISASSOCIATE)
         return kIOReturnBadArgument;
     return me->nativeRequest(type == SIOCSA80211, number, data);
+}
+
+/*
+ * A get or set on a virtual interface (awdl0). Phase 0 of AWDL: note which
+ * requests macOS makes, and let the family answer them, so that the work the
+ * injected Ventura family already does for AWDL can be told from the work the
+ * driver still owes it.
+ */
+int AirPort_RTW89::backVirtualRequest(void *ctx, unsigned int type, int number,
+                                      void *virtual_interface, void *data)
+{
+    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
+
+    if (!me->_ns)
+        return EOPNOTSUPP;
+    if (firstSighting(me->_ns->seenVirtual, number))
+        LOG("awdl: %s request %d on the virtual interface (%s)",
+            type == SIOCSA80211 ? "set" : "get", number, data ? "with data" : "no data");
+    return EOPNOTSUPP;      /* the family answers what it can */
 }
 
 /*
@@ -1788,12 +1848,76 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         return kIOReturnSuccess;
     }
 
+    case APPLE80211_IOC_VIRTUAL_IF_CREATE:
+        if (!isSet || !data)
+            return kIOReturnUnsupported;
+        return nativeVirtualIfCreate(data);
+
+    case APPLE80211_IOC_VIRTUAL_IF_DELETE:
+        if (!isSet || !data)
+            return kIOReturnUnsupported;
+        return nativeVirtualIfDelete(data);
+
     case APPLE80211_IOC_ROAM:
     case APPLE80211_IOC_WOW_PARAMETERS:
     case APPLE80211_IOC_IE:
         return kIOReturnError;
 
     default:
+        if (firstSighting(_ns->seenUnhandled, number))
+            LOG("request %d (%s) is not answered here", number, isSet ? "set" : "get");
         return kIOReturnUnsupported;
     }
+}
+
+/*
+ * macOS asks for awdl0 with APPLE80211_IOC_VIRTUAL_IF_CREATE, role
+ * APPLE80211_VIF_AWDL (6 on Ventura and later). The front hands the request to
+ * the family, which builds the interface and names it; we only report the name
+ * back in the request, as the Broadcom driver does.
+ */
+int AirPort_RTW89::nativeVirtualIfCreate(void *data)
+{
+    struct apple80211_virt_if_create_data *d =
+        static_cast<struct apple80211_virt_if_create_data *>(data);
+    char name[IFNAMSIZ] = {};
+    int err;
+
+    LOG("virtual interface asked for: role %u, address %02x:%02x:%02x:%02x:%02x:%02x",
+        (unsigned int)d->role, d->mac[0], d->mac[1], d->mac[2], d->mac[3], d->mac[4], d->mac[5]);
+    if (!awdlEnabled()) {
+        LOG("refused: boot-arg -rtw89awdl is not set");
+        return kIOReturnUnsupported;
+    }
+    if (d->role != APPLE80211_VIF_AWDL) {
+        LOG("refused: only the AWDL role (%d) is built here", (int)APPLE80211_VIF_AWDL);
+        return kIOReturnUnsupported;
+    }
+    if (!_ns->front.create_vif)
+        return kIOReturnUnsupported;
+    if (_ns->vifUp)
+        return EBUSY;
+
+    err = _ns->front.create_vif(_ns->front.ctx, d->mac, d->role, name);
+    if (err)
+        return err;
+    _ns->vifUp = true;
+    strlcpy(_ns->vifName, name, sizeof(_ns->vifName));
+    bzero(d->bsd_name, sizeof(d->bsd_name));
+    memcpy(d->bsd_name, name, strnlen(name, sizeof(d->bsd_name)));
+    return kIOReturnSuccess;
+}
+
+int AirPort_RTW89::nativeVirtualIfDelete(void *data)
+{
+    struct apple80211_virt_if_delete_data *d =
+        static_cast<struct apple80211_virt_if_delete_data *>(data);
+
+    LOG("virtual interface %.*s asked to go", (int)sizeof(d->bsd_name), (const char *)d->bsd_name);
+    if (!_ns->vifUp || !_ns->front.destroy_vif)
+        return kIOReturnUnsupported;
+    _ns->front.destroy_vif(_ns->front.ctx);
+    _ns->vifUp = false;
+    bzero(_ns->vifName, sizeof(_ns->vifName));
+    return kIOReturnSuccess;
 }

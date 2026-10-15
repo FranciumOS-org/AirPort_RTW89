@@ -9,6 +9,7 @@
 
 #include <IOKit/80211/IO80211Controller.h>
 #include <IOKit/80211/IO80211Interface.h>
+#include <IOKit/80211/IO80211VirtualInterface.h>
 #include <IOKit/80211/IO80211WorkLoop.h>
 #include <IOKit/IOLocks.h>
 #include <IOKit/pci/IOPCIDevice.h>
@@ -67,6 +68,8 @@ public:
                                 IO80211SkywalkInterface *skywalk, void *data) override;
     SInt32 apple80211Request(unsigned int type, int number, IO80211Interface *interface,
                              void *data) override;
+    SInt32 apple80211VirtualRequest(UInt type, int number, IO80211VirtualInterface *vif,
+                                    void *data) override;
     SInt32 stopDMA() override;
     UInt32 hardwareOutputQueueDepth(IO80211Interface *interface) override;
     SInt32 performCountryCodeOperation(IO80211Interface *interface,
@@ -89,10 +92,14 @@ private:
                             unsigned long cmd, void *data);
     static int opSuperIoctlSet(void *ctx, void *interface, void *vif, void *skywalk, void *data);
     static void opSetAppleRsn(void *ctx, bool on);
+    static int opCreateVif(void *ctx, const uint8_t mac[6], uint32_t role, char *bsd_name);
+    static void opDestroyVif(void *ctx);
 
     IOPCIDevice *_pci = nullptr;
     IO80211WorkLoop *_workLoop = nullptr;
     AirPortRTW89FrontInterface *_netif = nullptr;
+    /* The one virtual interface the family built for us (awdl0), or none */
+    IO80211VirtualInterface *_vif = nullptr;
     const IONetworkMedium *_medium = nullptr;
     IOEthernetAddress _mac = {};
     bool _haveMac = false;

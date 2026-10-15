@@ -27,7 +27,7 @@
 #include <stdint.h>
 #include <sys/kernel_types.h>   /* mbuf_t */
 
-#define RTW89_FRONT_API_VERSION 2
+#define RTW89_FRONT_API_VERSION 3
 #define RTW89_FRONT_CLASS       "AirPortRTW89Front"
 /* callPlatformFunction(name, true, back ops, front ops out, 0, 0) */
 #define RTW89_FRONT_CONNECT     "RTW89FrontConnect"
@@ -64,6 +64,11 @@ struct rtw89_front_ops {
      * received EAPOL frames are handed to IO80211 and the keys come back as
      * APPLE80211_IOC_CIPHER_KEY requests. */
     void (*set_apple_rsn)(void *ctx, bool on);
+    /* A virtual interface of the family's (awdl0 for role 6, AWDL): created
+     * for a VIRTUAL_IF_CREATE request, its BSD name written to @bsd_name
+     * (16 bytes). One at a time. 0 or an errno. */
+    int (*create_vif)(void *ctx, const uint8_t mac[6], uint32_t role, char *bsd_name);
+    void (*destroy_vif)(void *ctx);
 };
 
 /* What the back does for the front. */
@@ -89,6 +94,10 @@ struct rtw89_back_ops {
     uint32_t (*output)(void *ctx, mbuf_t m);
     /* The system goes to sleep (false) or has woken (true). */
     void (*power)(void *ctx, bool on);
+    /* IO80211Controller::apple80211VirtualRequest(): a get or set on a
+     * virtual interface (awdl0) */
+    int (*virtual_request)(void *ctx, unsigned int type, int number, void *virtual_interface,
+                           void *data);
 };
 
 #ifdef __cplusplus

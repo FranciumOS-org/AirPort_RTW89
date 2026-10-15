@@ -92,6 +92,7 @@ bool AirPortRTW89Front::start(IOService *provider)
 void AirPortRTW89Front::stop(IOService *provider)
 {
     disconnectBack();
+    opDestroyVif(this);
     if (_netif) {
         detachInterface(_netif, true);
         _netif->release();
@@ -220,6 +221,8 @@ IOReturn AirPortRTW89Front::connectBack(const struct rtw89_back_ops *back,
     front->super_ioctl = opSuperIoctl;
     front->super_ioctl_set = opSuperIoctlSet;
     front->set_apple_rsn = opSetAppleRsn;
+    front->create_vif = opCreateVif;
+    front->destroy_vif = opDestroyVif;
 
     setProperty("RTW89 Back Connected", kOSBooleanTrue);
     LOG("driver connected, address %02x:%02x:%02x:%02x:%02x:%02x", _mac.bytes[0], _mac.bytes[1],
@@ -294,6 +297,49 @@ void AirPortRTW89Front::opSetLink(void *ctx, bool up, uint64_t bps, unsigned int
 void AirPortRTW89Front::opSetAppleRsn(void *ctx, bool on)
 {
     gAppleRsn = on;
+}
+
+/*
+ * The family builds the virtual interface itself: attachVirtualInterface()
+ * calls createVirtualInterface(), which allocates an IO80211P2PInterface and
+ * gives it a BSD name from the role (awdl0 for APPLE80211_VIF_AWDL). We keep
+ * the one we were given; macOS asks for a second one only for P2P.
+ */
+int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t role, char *bsd_name)
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+    IO80211VirtualInterface *vif = nullptr;
+    ether_addr addr = {};
+    const char *name;
+
+    if (self->_vif)
+        return EBUSY;
+    memcpy(addr.octet, mac, sizeof(addr.octet));
+    if (!self->attachVirtualInterface(&vif, &addr, role, true) || !vif) {
+        LOG("the family would not build a virtual interface for role %u", (unsigned int)role);
+        return EIO;
+    }
+    self->_vif = vif;
+    name = vif->getBSDName();
+    if (bsd_name) {
+        bzero(bsd_name, IFNAMSIZ);
+        if (name)
+            strlcpy(bsd_name, name, IFNAMSIZ);
+    }
+    LOG("virtual interface %s up, role %u", name ? name : "(unnamed)", (unsigned int)role);
+    return 0;
+}
+
+void AirPortRTW89Front::opDestroyVif(void *ctx)
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+    IO80211VirtualInterface *vif = self->_vif;
+
+    if (!vif)
+        return;
+    self->_vif = nullptr;
+    self->detachVirtualInterface(vif, true);
+    LOG("virtual interface down");
 }
 
 bool AirPortRTW89Front::useAppleRSNSupplicant(IO80211Interface *interface)
@@ -385,6 +431,28 @@ SInt32 AirPortRTW89Front::apple80211Request(unsigned int type, int number,
     if (there)
         ret = _back.request(_back.ctx, type, number, interface, data);
     backLeave();
+    return ret;
+}
+
+/*
+ * Requests on a virtual interface (awdl0). The family routes its own
+ * apple80211_ioctl() here when the ioctl names a virtual interface; the
+ * driver proper logs what AWDL asks for and answers what it can.
+ */
+SInt32 AirPortRTW89Front::apple80211VirtualRequest(UInt type, int number,
+                                                   IO80211VirtualInterface *vif, void *data)
+{
+    SInt32 ret = ENXIO;
+    bool there;
+
+    there = backEnter();
+    if (there && _back.virtual_request)
+        ret = _back.virtual_request(_back.ctx, type, number, vif, data);
+    else
+        ret = EOPNOTSUPP;
+    backLeave();
+    if (ret == EOPNOTSUPP)
+        return super::apple80211VirtualRequest(type, number, vif, data);
     return ret;
 }
 
