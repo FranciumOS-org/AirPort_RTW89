@@ -331,6 +331,9 @@ IO80211VirtualInterface *AirPortRTW89Front::createVirtualInterface(ether_addr *a
         vif->release();
         return nullptr;
     }
+    /* So that a later failure cannot be blamed on this method again */
+    LOG("built the AWDL interface %s for role %u", vif->getBSDName() ? vif->getBSDName() : "(unnamed)",
+        (unsigned int)role);
     return vif;
 }
 
@@ -355,8 +358,10 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
      * outright, ENODEV it claiming success without an interface, and success
      * with an empty name an interface that never reached BSD. */
     if (!self->attachVirtualInterface(&vif, &addr, role, true)) {
-        LOG("attachVirtualInterface() refused role %u (see createVirtualInterface above)",
-            (unsigned int)role);
+        /* Which of its two steps failed is in the log above: it calls
+         * createVirtualInterface() first, which says when it has built one, and
+         * then IO80211VirtualInterface::attach(), which is IOService::attach(). */
+        LOG("attachVirtualInterface() failed for role %u", (unsigned int)role);
         return EIO;
     }
     if (!vif) {

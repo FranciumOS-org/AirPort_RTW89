@@ -715,6 +715,11 @@ int AirPort_RTW89::backVirtualRequest(void *ctx, unsigned int type, int number,
     if (firstSighting(me->_ns->seenVirtual, number))
         LOG("awdl: %s request %d on the virtual interface (%s)",
             type == SIOCSA80211 ? "set" : "get", number, data ? "with data" : "no data");
+    /* The family asks the virtual interface what the card can do while it is
+     * building it, and took EOPNOTSUPP badly. The card is the same one either
+     * way, so answer as the real interface does. */
+    if (number == APPLE80211_IOC_CARD_CAPABILITIES && type == SIOCGA80211 && data)
+        return me->nativeRequest(false, APPLE80211_IOC_CARD_CAPABILITIES, data);
     return EOPNOTSUPP;      /* the family answers what it can */
 }
 
@@ -1908,12 +1913,6 @@ int AirPort_RTW89::nativeVirtualIfCreate(void *data)
     }
 
     err = _ns->front.create_vif(_ns->front.ctx, d->mac, d->role, name);
-    if (err == EIO) {
-        LOG("the family refused role %u outright: the old IO80211Controller builds only "
-            "the p2p and ap roles, so the front has to name the AWDL one itself",
-            (unsigned int)d->role);
-        return err;
-    }
     if (err) {
         LOG("the front could not build the virtual interface: %d", err);
         return err;
