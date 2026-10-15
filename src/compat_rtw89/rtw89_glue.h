@@ -329,6 +329,10 @@ void rtw89_glue_set_ppdu_flush(bool on);
  */
 void rtw89_glue_set_rejoin(bool on);
 
+/* Log the AWDL sync frames the chip already hears (see rtw89_awdl.h). Nothing
+ * is transmitted; this only measures Apple's timeline before we try to join it. */
+void rtw89_glue_awdl_watch(bool on);
+
 /*
  * For testing on the real card. rtw89_glue_probe_ap() acts as if the driver
  * had reported missed beacons: the AP is probed, and the connection given up

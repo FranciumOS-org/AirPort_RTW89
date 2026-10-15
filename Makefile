@@ -102,6 +102,7 @@ COMPAT89_SRCS := $(COMPAT89_DIR)/rtw89_compat.c \
                  $(COMPAT89_DIR)/rtw89_mlme.c \
                  $(COMPAT89_DIR)/rtw89_data.c \
                  $(COMPAT89_DIR)/rtw89_glue.c \
+                 $(COMPAT89_DIR)/rtw89_awdl.c \
                  $(COMPAT89_DIR)/rtw89_core_wrap.c \
                  $(COMPAT89_DIR)/rtw89_debug_shim.c
 

@@ -6,6 +6,7 @@
  */
 #include "rtw89_net80211.h"
 #include "rtw89_crypto.h"
+#include "rtw89_awdl.h"
 
 static int failures;
 
@@ -692,6 +693,77 @@ out_hw:
 }
 
 int rtw89_selftest(void);
+/* ---- the AWDL sync-frame reader in rtw89_awdl.c ---- */
+
+/* An AWDL action frame: management header, Apple's BSSID, then the
+ * vendor-specific body a PSF carries. */
+static struct sk_buff *awdl_frame(u8 subtype, size_t body_extra)
+{
+    static const u8 bssid[ETH_ALEN] = { 0x00, 0x25, 0x00, 0xff, 0x94, 0x73 };
+    struct ieee80211_mgmt *mgmt;
+    struct sk_buff *skb = dev_alloc_skb(256);
+    u8 *body;
+
+    mgmt = (void *)skb_put_zero(skb, sizeof(struct ieee80211_hdr_3addr));
+    mgmt->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_ACTION);
+    memcpy(mgmt->bssid, bssid, ETH_ALEN);
+    memcpy(mgmt->sa, "\x02\x11\x22\x33\x44\x55", ETH_ALEN);
+
+    body = skb_put_zero(skb, 16 + body_extra);
+    body[0] = WLAN_CATEGORY_VENDOR_SPECIFIC;
+    body[1] = 0x00; body[2] = 0x17; body[3] = 0xf2;     /* Apple */
+    body[4] = 0x08;                                     /* AWDL */
+    body[5] = 1;                                        /* version */
+    body[6] = subtype;
+    body[8] = 0x10;                                     /* phy_tx_time */
+    body[12] = 0x08;                                    /* target_tx_time */
+    return skb;
+}
+
+static void test_awdl(void)
+{
+    struct sk_buff *skb;
+
+    rtw89_awdl_watch(true);
+    CHECK(rtw89_awdl_watching());
+
+    /* a whole PSF is recognised */
+    skb = awdl_frame(0, 0);
+    CHECK(rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+
+    /* a TLV whose length runs past the end must not be walked off the end */
+    skb = awdl_frame(3, 5);
+    {
+        u8 *tlv = skb->data + skb->len - 5;
+
+        tlv[0] = 4;                 /* sync parameters */
+        tlv[1] = 0xff; tlv[2] = 0xff;   /* a length far past the frame */
+    }
+    CHECK(rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+
+    /* truncated frames are refused rather than read */
+    skb = awdl_frame(0, 0);
+    CHECK(!rtw89_awdl_rx(skb, sizeof(struct ieee80211_hdr_3addr) + 4));
+    kfree_skb(skb);
+
+    /* an action frame that is not AWDL is left alone */
+    skb = awdl_frame(0, 0);
+    ((u8 *)skb->data)[sizeof(struct ieee80211_hdr_3addr) + 4] = 0x09;  /* not AWDL type */
+    CHECK(!rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+
+    rtw89_awdl_watch(false);
+    CHECK(!rtw89_awdl_watching());
+
+    /* and it still classifies with the watch off */
+    skb = awdl_frame(0, 0);
+    CHECK(rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+}
+
+
 int rtw89_selftest(void)
 {
     int ret;
@@ -705,6 +777,7 @@ int rtw89_selftest(void)
     test_crypto();
     test_cfg80211_helpers();
     test_stack();
+    test_awdl();
 
     rtw88_compat_exit();
     return failures;

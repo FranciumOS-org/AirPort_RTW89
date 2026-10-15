@@ -6,6 +6,7 @@
  */
 #include "rtw89_net80211.h"
 #include "rtw89_glue.h"
+#include "rtw89_awdl.h"
 #include "rtw89_crypto.h"
 #include "core.h"
 #include "coex.h"
@@ -985,6 +986,14 @@ static void glue_rx(void *ctx, struct ieee80211_sta *sta, struct sk_buff *skb)
         if (!is_multicast_ether_addr(hdr->addr1))
             glue_rx_rate(status);
         rtw89_data_rx(skb);
+        return;
+    }
+
+    /* AWDL sync frames are addressed to Apple's own BSSID, so the station
+     * MLME would drop them unseen. Watched for separately; the frame goes on
+     * to the MLME either way, which will ignore it. */
+    if (rtw89_awdl_rx(skb, len - FCS_LEN)) {
+        kfree_skb(skb);
         return;
     }
 
@@ -2092,6 +2101,11 @@ void rtw89_glue_drop(void)
 {
     if (glue.up)
         rtw89_mlme_connection_lost();
+}
+
+void rtw89_glue_awdl_watch(bool on)
+{
+    rtw89_awdl_watch(on);
 }
 
 void rtw89_glue_set_rejoin(bool on)
