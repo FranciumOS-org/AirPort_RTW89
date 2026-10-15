@@ -241,7 +241,10 @@ static bool decodeHostAssoc(const uint8_t *p, struct HostAssoc *out)
 {
     uint32_t upper = le32(p + 12), ssidLen = le32(p + 16), keyLen = le32(p + 64);
 
-    if (le32(p) != 1 || le32(p + 4) != 2 || le32(p + 8) != 1 || le32(p + 60) != 1)
+    /* the key's version at 60: none on an open network (seen on
+     * TDSB-Guest, Sequoia's 900 bytes) */
+    if (le32(p) != 1 || le32(p + 4) != 2 || le32(p + 8) != 1 ||
+        (le32(p + 60) != 1 && !(le32(p + 60) == 0 && upper == 0 && keyLen == 0)))
         return false;
     const uint32_t cipher = le32(p + 68);
     /* SAE, alone or with WPA2-PSK (a mixed network) */
