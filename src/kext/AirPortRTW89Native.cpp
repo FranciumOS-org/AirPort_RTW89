@@ -796,14 +796,10 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
         }
         bzero(d, sizeof(*d));
         d->version = APPLE80211_VERSION;
-        /*
-         * An experiment, not a claim we can keep: say sync is running and see
-         * whether the state machine goes on to push sync params, the channel
-         * sequence and a frame template at us. Nothing is transmitted yet, so
-         * this is a lie to the family -- contained behind -rtw89awdl, and the
-         * requests it draws out are the point.
-         */
-        d->enabled = 1;
+        /* What macOS last asked for, which is the truth: nothing is
+         * synchronised until the driver drives an availability-window
+         * timeline. Claiming otherwise was tried and changed nothing. */
+        d->enabled = _ns->awdlSyncEnabled;
         return kIOReturnSuccess;
     }
     default:
