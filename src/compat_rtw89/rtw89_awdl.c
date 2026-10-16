@@ -38,6 +38,7 @@ static const u8 kAppleOui[3] = { 0x00, 0x17, 0xf2 };
 #define AWDL_FIXED_LEN      (1 + 3 + 1 + 1 + 1 + 1 + 4 + 4)
 
 static bool gWatching;
+static u32 gLastTargetTx;   /* to show the period between sync frames */
 /* Only the first few of each kind, so a busy room cannot fill the log ring. */
 static unsigned int gSeen[4];
 #define AWDL_LOG_LIMIT 12
@@ -47,8 +48,10 @@ void rtw89_awdl_watch(bool on)
     if (on == gWatching)
         return;
     gWatching = on;
-    if (on)
+    if (on) {
         memset(gSeen, 0, sizeof(gSeen));
+        gLastTargetTx = 0;
+    }
     awdl_log("watching %s", on ? "on" : "off");
 }
 
@@ -57,20 +60,25 @@ bool rtw89_awdl_watching(void)
     return gWatching;
 }
 
-/* The synchronisation parameters TLV, as far as the timeline goes. */
-static void awdl_log_sync_params(const u8 *v, size_t len)
+/*
+ * The synchronisation parameters TLV carries the schedule, but the field
+ * offsets inside it are not something to guess at: a first attempt invented
+ * them and produced a master channel that changed between 32, 40 and 50 on
+ * consecutive frames from one device, which is nonsense (AWDL's social
+ * channels are 6, 44 and 149). So log the bytes and work the layout out from
+ * real frames against OWL's awdl_sync_params_tlv, rather than printing
+ * confident-looking numbers that are wrong.
+ */
+static void awdl_log_hex(const char *what, const u8 *v, size_t len)
 {
-    /* next_aw_seq_number, aw_period, aw_common_length and the step count sit
-     * at fixed offsets; anything shorter is not worth guessing at. */
-    if (len < 20)
-        return;
-    awdl_log("    sync: next AW #%u, period %u TU, AW length %u TU, "
-             "remaining %u TU, master channel %u",
-             (unsigned int)(v[2] | (v[3] << 8)),       /* next AW sequence  */
-             (unsigned int)(v[6] | (v[7] << 8)),       /* AW period         */
-             (unsigned int)(v[4] | (v[5] << 8)),       /* AW common length  */
-             (unsigned int)(v[8] | (v[9] << 8)),       /* remaining         */
-             (unsigned int)v[1]);                      /* master channel    */
+    char line[3 * 24 + 1];
+    size_t i, n = len > 24 ? 24 : len;
+
+    for (i = 0; i < n; i++)
+        snprintf(line + 3 * i, sizeof(line) - 3 * i, "%02x ", v[i]);
+    line[n ? 3 * n - 1 : 0] = '\0';
+    awdl_log("    %s (%u bytes): %s%s", what, (unsigned int)len, line,
+             len > n ? " ..." : "");
 }
 
 bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
@@ -115,9 +123,15 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
              (int)status->signal, (unsigned int)status->freq, (unsigned int)version);
     /* target vs phy is the sender's own transmit jitter: the budget we would
      * have to stay inside to be heard in the same window. */
-    awdl_log("    target tx %u us, phy tx %u us, late by %d us; our clock %u us",
+    /* target vs phy is the sender's own jitter; the gap between frames is the
+     * period we would have to keep up with. */
+    awdl_log("    target tx %u us, phy tx %u us, late by %d us; our clock %u us%s",
              (unsigned int)target_tx, (unsigned int)phy_tx,
-             (int)(phy_tx - target_tx), (unsigned int)status->mactime);
+             (int)(phy_tx - target_tx), (unsigned int)status->mactime,
+             gLastTargetTx ? "" : " (first)");
+    if (gLastTargetTx)
+        awdl_log("    %u us since the last sync frame seen", (unsigned int)(target_tx - gLastTargetTx));
+    gLastTargetTx = target_tx;
 
     for (tlv = body + AWDL_FIXED_LEN; tlv + 3 <= end; ) {
         u8 type = tlv[0];
@@ -126,7 +140,9 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
         if (tlv + 3 + tlen > end)
             break;
         if (type == AWDL_TLV_SYNC_PARAMS)
-            awdl_log_sync_params(tlv + 3, tlen);
+            awdl_log_hex("sync params", tlv + 3, tlen);
+        else
+            awdl_log("    TLV type %u, %u bytes", (unsigned int)type, (unsigned int)tlen);
         tlv += 3 + tlen;
     }
     return true;
