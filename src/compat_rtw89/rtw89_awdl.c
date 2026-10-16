@@ -61,14 +61,52 @@ bool rtw89_awdl_watching(void)
 }
 
 /*
- * The synchronisation parameters TLV carries the schedule, but the field
- * offsets inside it are not something to guess at: a first attempt invented
- * them and produced a master channel that changed between 32, 40 and 50 on
- * consecutive frames from one device, which is nonsense (AWDL's social
- * channels are 6, 44 and 149). So log the bytes and work the layout out from
- * real frames against OWL's awdl_sync_params_tlv, rather than printing
- * confident-looking numbers that are wrong.
+ * The synchronisation parameters TLV: the schedule itself. The layout below
+ * is OWL's awdl_sync_params_tlv, checked field by field against frames from
+ * an iPhone on 2026-10-16 -- master channel 6 and next AW channel 44 are
+ * AWDL's social channels, the master address was the sender's own, and the
+ * periods came out as round numbers of TU. (An earlier version guessed these
+ * offsets and printed nonsense; the bytes are still logged beside the decode
+ * so a wrong reading stays visible.)
  */
+struct awdl_sync_params {
+    u8  next_aw_channel;
+    __le16 tx_down_counter;
+    u8  master_channel;
+    u8  guard_time;
+    __le16 aw_period;
+    __le16 af_period;
+    __le16 flags;
+    __le16 aw_ext_length;
+    __le16 aw_common_length;
+    __le16 remaining_aw_length;
+    u8  min_ext;
+    u8  max_ext_multicast;
+    u8  max_ext_unicast;
+    u8  max_ext_af;
+    u8  master_addr[ETH_ALEN];
+} __packed;
+
+static void awdl_log_sync_params(const u8 *v, size_t len)
+{
+    const struct awdl_sync_params *p = (const void *)v;
+
+    if (len < sizeof(*p))
+        return;
+    /* A TU is 1024 us, so an AW period of 16 TU is 16.384 ms. */
+    awdl_log("    sync: AW period %u TU, common length %u TU, extension %u TU, "
+             "%u TU left; AF period %u TU",
+             le16_to_cpu(p->aw_period), le16_to_cpu(p->aw_common_length),
+             le16_to_cpu(p->aw_ext_length), le16_to_cpu(p->remaining_aw_length),
+             le16_to_cpu(p->af_period));
+    awdl_log("    sync: master channel %u, next AW on channel %u, master "
+             "%02x:%02x:%02x:%02x:%02x:%02x, flags 0x%04x, counter %u",
+             p->master_channel, p->next_aw_channel,
+             p->master_addr[0], p->master_addr[1], p->master_addr[2],
+             p->master_addr[3], p->master_addr[4], p->master_addr[5],
+             le16_to_cpu(p->flags), le16_to_cpu(p->tx_down_counter));
+}
+
 static void awdl_log_hex(const char *what, const u8 *v, size_t len)
 {
     char line[3 * 24 + 1];
@@ -139,8 +177,10 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
 
         if (tlv + 3 + tlen > end)
             break;
-        if (type == AWDL_TLV_SYNC_PARAMS)
+        if (type == AWDL_TLV_SYNC_PARAMS) {
+            awdl_log_sync_params(tlv + 3, tlen);
             awdl_log_hex("sync params", tlv + 3, tlen);
+        }
         else
             awdl_log("    TLV type %u, %u bytes", (unsigned int)type, (unsigned int)tlen);
         tlv += 3 + tlen;
