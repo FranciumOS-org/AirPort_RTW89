@@ -432,11 +432,16 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
     chan[1] = channel;              /* .channel, the one updateAFStats reads */
     chan[2] = channel <= 14 ? APPLE80211_C_FLAG_2GHZ : APPLE80211_C_FLAG_5GHZ;
 
-    /* The packet is the family's once it is handed over, so we do not free it:
-     * IO80211AWDLPeerManager::actionFrameInput() either puts it on its action
-     * frame ring, in which case the ring owns it, or frees it itself on every
-     * path where it does not.  Freeing it here as well would be a double free. */
+    /* The packet stays ours, and goes back to the pool it came from rather than
+     * to mbuf_freem(): Broadcom pairs its own bpfTapInput() with freePacket()
+     * the same way.  Nothing the family does with it conflicts.  Its action
+     * frame ring, the one path that would keep the packet, is dead code -- the
+     * flag that selects it is set to false at peer manager init and written
+     * nowhere else -- so actionFrameInput() always takes the
+     * actionFrameProcessInput() branch, which frees only a copy it made
+     * itself, never the packet it was handed. */
     rtw89_vif_bpf_tap_input(vif, m, 12, hdr, sizeof(hdr));
+    self->freePacket(m);
 }
 
 void AirPortRTW89Front::opDestroyVif(void *ctx)
