@@ -31,6 +31,10 @@
 #include "rtw89_glue.h"
 #include "../front/rtw89_front_api.h"
 
+/* src/kext/rtw89_awdl_timing.cpp: can this host wake on an AWDL schedule? */
+void rtw89_awdl_timing_start(void);
+void rtw89_awdl_timing_stop(void);
+
 class AirPort_RTW89 : public IOEthernetController {
     OSDeclareDefaultStructors(AirPort_RTW89)
 

@@ -527,9 +527,12 @@ bool AirPort_RTW89::connectFront()
     back.virtual_request = backVirtualRequest;
 
     /* The receive half of the AWDL work: log the sync frames Apple devices
-     * are already sending, to measure their timeline before joining it. */
-    if (awdlEnabled())
+     * are already sending, to measure their timeline before joining it, and
+     * ask whether this host can keep to that timeline at all. */
+    if (awdlEnabled()) {
         rtw89_glue_awdl_watch(true);
+        rtw89_awdl_timing_start();
+    }
 
     _native = true;         /* the callbacks below may come during the call */
     ret = front->callPlatformFunction(name, true, &back, &_ns->front, nullptr, nullptr);
@@ -558,6 +561,7 @@ void AirPort_RTW89::disconnectFront()
         return;
     if (_ns->front.set_apple_rsn)
         _ns->front.set_apple_rsn(_ns->front.ctx, false);
+    rtw89_awdl_timing_stop();
     if (_ns->vifUp && _ns->front.destroy_vif) {
         _ns->front.destroy_vif(_ns->front.ctx);
         _ns->vifUp = false;

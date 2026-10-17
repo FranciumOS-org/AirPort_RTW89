@@ -282,6 +282,7 @@ KEXT_CXXFLAGS := $(ARCH) $(MINOS) -isysroot $(SDK) -nostdinc \
                  -I$(MKSDK)/Headers -I$(COMPAT89_DIR) -Wall -MMD -MP
 KEXT_OBJS     := $(BUILD_DIR)/kext/AirPortRTW89.o $(BUILD_DIR)/kext/AirPortRTW89Native.o \
                  $(BUILD_DIR)/kext/rtw89_logring.o \
+                 $(BUILD_DIR)/kext/rtw89_awdl_timing.o \
                  $(BUILD_DIR)/kext/kmod_info.o
 KEXT_BUNDLE   := $(BUILD_DIR)/out/AirPort_RTW89.kext
 KEXT_BIN      := $(KEXT_BUNDLE)/Contents/MacOS/AirPort_RTW89
