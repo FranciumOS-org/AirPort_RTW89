@@ -36,6 +36,9 @@ namespace {
 
 struct Probe {
     thread_call_t call = nullptr;
+    uint64_t baseAbs = 0;       /* mach_absolute_time() when the run started */
+    uint64_t periodAbs = 0;     /* one window, in mach absolute units */
+    uint64_t baseUs = 0;        /* the same instant, in us */
     uint64_t target = 0;        /* when this tick was due, in us */
     unsigned int ticks = 0;
     unsigned int late[6] = {};  /* <100us, <500us, <1ms, <5ms, <16ms, >=16ms */
@@ -67,9 +70,14 @@ void report()
 {
     const unsigned int n = gProbe.ticks ? gProbe.ticks : 1;
 
-    LOG("awdl timing: %u windows of %u us, mean %lld us late, worst %lld us",
+    /* The run's own length against what it should have been: if these differ
+     * by much, the schedule drifted and the per-window figures below are
+     * measuring the probe, not the machine. */
+    LOG("awdl timing: %u windows of %u us, mean %lld us late, worst %lld us; "
+        "the run took %llu us against %llu expected",
         gProbe.ticks, (unsigned int)AW_PERIOD_US, (long long)(gProbe.sum / n),
-        (long long)gProbe.worst);
+        (long long)gProbe.worst, (unsigned long long)(nowUs() - gProbe.baseUs),
+        (unsigned long long)((uint64_t)gProbe.ticks * AW_PERIOD_US));
     LOG("awdl timing: under 100us %u, under 500us %u, under 1ms %u, "
         "under 5ms %u, under one window %u, a window or more late %u",
         gProbe.late[0], gProbe.late[1], gProbe.late[2], gProbe.late[3],
@@ -106,11 +114,16 @@ void tick(thread_call_param_t, thread_call_param_t)
         gProbe.inTick = false;
         return;
     }
-    /* Keep the schedule absolute: each window is counted from the one before,
-     * not from now, so a late wake-up does not push the rest along -- which is
-     * also how an AWDL timeline has to behave. */
-    gProbe.target += AW_PERIOD_US;
-    clock_interval_to_deadline((uint32_t)AW_PERIOD_US, kMicrosecondScale, &deadline);
+    /*
+     * Each deadline is absolute, counted from the instant the run started, so
+     * one late wake-up cannot push the rest along. An earlier version asked
+     * for an interval from *now* instead, which made every overshoot
+     * cumulative: the error grew by ~340 us a window until it read as two
+     * thirds of a second, and the machine looked hopeless when it was the
+     * measurement that was wrong.
+     */
+    gProbe.target = gProbe.baseUs + (uint64_t)gProbe.ticks * AW_PERIOD_US;
+    deadline = gProbe.baseAbs + (uint64_t)gProbe.ticks * gProbe.periodAbs;
     thread_call_enter_delayed(gProbe.call, deadline);
     gProbe.inTick = false;
 }
@@ -132,11 +145,14 @@ void rtw89_awdl_timing_start(void)
     gProbe.worst = 0;
     gProbe.sum = 0;
     gProbe.running = true;
-    gProbe.target = nowUs() + AW_PERIOD_US;
+    nanoseconds_to_absolutetime((uint64_t)AW_PERIOD_US * 1000, &gProbe.periodAbs);
+    gProbe.baseAbs = mach_absolute_time();
+    gProbe.baseUs = nowUs();
+    gProbe.target = gProbe.baseUs + AW_PERIOD_US;
     LOG("awdl timing: measuring %u windows of %u us (%u s), nothing is transmitted",
         (unsigned int)AW_TICKS, (unsigned int)AW_PERIOD_US,
         (unsigned int)(AW_TICKS * AW_PERIOD_US / 1000000));
-    clock_interval_to_deadline((uint32_t)AW_PERIOD_US, kMicrosecondScale, &deadline);
+    deadline = gProbe.baseAbs + gProbe.periodAbs;
     thread_call_enter_delayed(gProbe.call, deadline);
 }
 
