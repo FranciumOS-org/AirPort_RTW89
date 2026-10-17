@@ -63,6 +63,12 @@ struct AirPort_RTW89::NativeState {
     char vifName[16] = {};
     bool vifUp = false;
     bool awdlSyncEnabled = false;   /* what macOS last asked for on awdl0 */
+    /* The sync frame the family builds for us to put on air. Broadcom's
+     * setAWDL_SYNC_FRAME_TEMPLATE allocates 0x724 bytes for it, so that is the
+     * size the family expects to be able to hand over. */
+    uint8_t awdlTemplate[1826] = {};
+    size_t awdlTemplateLen = 0;
+    uint32_t awdlElectionMetric = 0;
 };
 
 /* The AWDL requests we have seen the family make, by number, so the log reads
@@ -95,6 +101,20 @@ static const char *awdlRequestName(int number)
     case APPLE80211_IOC_AWDL_CTL:                   return "AWDL_CTL";
     default:                                        return "?";
     }
+}
+
+/* The first bytes of a buffer, for the log. */
+static void logHex(const char *what, const uint8_t *v, size_t len, size_t show)
+{
+    char line[3 * 24 + 1];
+    size_t i, n = len < show ? len : show;
+
+    if (n > 24)
+        n = 24;
+    for (i = 0; i < n; i++)
+        snprintf(line + 3 * i, sizeof(line) - 3 * i, "%02x ", v[i]);
+    line[n ? 3 * n - 1 : 0] = '\0';
+    LOG("awdl: %s, %u bytes: %s%s", what, (unsigned int)len, line, len > n ? " ..." : "");
 }
 
 /* True the first time @number is seen. The bitmap covers every request number
@@ -811,6 +831,66 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
         d->enabled = _ns->awdlSyncEnabled;
         return kIOReturnSuccess;
     }
+    /*
+     * The frame the family wants on air. This is the whole point of the
+     * exercise: IO80211AWDLPeerManager builds a complete AWDL sync frame --
+     * header, timestamps and TLVs -- and hands it over ready to transmit, so
+     * the driver owes the schedule and the radio, not the protocol.
+     *
+     * The payload pointer is a kernel one by the time it reaches here:
+     * AirPort_BrcmNIC::setAWDL_SYNC_FRAME_TEMPLATE memmove()s straight from it
+     * with no copyin, into a buffer of 0x724 bytes.
+     */
+    case APPLE80211_IOC_AWDL_SYNC_FRAME_TEMPLATE: {
+        struct apple80211_awdl_sync_frame_template *d =
+            static_cast<struct apple80211_awdl_sync_frame_template *>(data);
+        size_t n;
+
+        if (!isSet)
+            return EOPNOTSUPP;
+        if (!d->payload || !d->payload_len) {
+            _ns->awdlTemplateLen = 0;
+            LOG("awdl: the sync frame template was cleared");
+            return kIOReturnSuccess;
+        }
+        n = d->payload_len;
+        if (n > sizeof(_ns->awdlTemplate)) {
+            LOG("awdl: sync frame template of %u bytes is longer than the %u we keep",
+                (unsigned int)n, (unsigned int)sizeof(_ns->awdlTemplate));
+            n = sizeof(_ns->awdlTemplate);
+        }
+        memcpy(_ns->awdlTemplate, d->payload, n);
+        _ns->awdlTemplateLen = n;
+        logHex("sync frame template", _ns->awdlTemplate, n, 24);
+        return kIOReturnSuccess;
+    }
+
+    /* How good a master this device claims to be, for the election. */
+    case APPLE80211_IOC_AWDL_ELECTION_METRIC: {
+        struct apple80211_awdl_election_metric *d =
+            static_cast<struct apple80211_awdl_election_metric *>(data);
+
+        if (isSet) {
+            _ns->awdlElectionMetric = d->metric;
+            LOG("awdl: election metric %u", (unsigned int)d->metric);
+            return kIOReturnSuccess;
+        }
+        d->version = APPLE80211_VERSION;
+        d->metric = _ns->awdlElectionMetric;
+        return kIOReturnSuccess;
+    }
+
+    /*
+     * Taken so the state machine gets its acknowledgement and goes on. The
+     * layout is not in the SDK header, so nothing is read out of it beyond
+     * saying it arrived.
+     */
+    case APPLE80211_IOC_AWDL_PEER_TRAFFIC_REGISTRATION:
+        if (!isSet)
+            return EOPNOTSUPP;
+        LOG("awdl: peer traffic registration");
+        return kIOReturnSuccess;
+
     default:
         return EOPNOTSUPP;      /* the family answers what it can */
     }
