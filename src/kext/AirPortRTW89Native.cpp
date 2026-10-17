@@ -786,6 +786,7 @@ int AirPort_RTW89::backVirtualRequest(void *ctx, unsigned int type, int number,
                                       void *virtual_interface, void *data)
 {
     AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
+    int ret;
 
     if (!me->_ns)
         return EOPNOTSUPP;
@@ -795,11 +796,17 @@ int AirPort_RTW89::backVirtualRequest(void *ctx, unsigned int type, int number,
      * matters while working it out is the order they come in and how often.
      * The log is a ring, and this only runs behind -rtw89awdl.
      */
-    LOG("awdl: %s request %d (%s)%s", type == SIOCSA80211 ? "set" : "get", number,
-        awdlRequestName(number), data ? "" : " [no data]");
-    if (!data)
+    if (!data) {
+        LOG("awdl: %s request %d (%s) [no data]", type == SIOCSA80211 ? "set" : "get",
+            number, awdlRequestName(number));
         return EOPNOTSUPP;
-    return me->nativeVirtualRequest(type == SIOCSA80211, number, data);
+    }
+    ret = me->nativeVirtualRequest(type == SIOCSA80211, number, data);
+    /* with the answer: a refusal here is the family being told the AWDL
+     * interface cannot do something, which is what stalls it */
+    LOG("awdl: %s request %d (%s) -> %d%s", type == SIOCSA80211 ? "set" : "get", number,
+        awdlRequestName(number), ret, ret == EOPNOTSUPP ? " (unsupported)" : "");
+    return ret;
 }
 
 /*
@@ -814,6 +821,17 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
      * building it, and took EOPNOTSUPP badly. The card is the same one either
      * way, so answer as the real interface does. */
     case APPLE80211_IOC_CARD_CAPABILITIES:
+        return isSet ? EOPNOTSUPP : nativeRequest(false, number, data);
+
+    /*
+     * The radio behind the AWDL interface is the same radio, so these are the
+     * real interface's answers.  SUPPORTED_CHANNELS matters: the family asks
+     * the AWDL interface for it over and over while deciding whether it can
+     * run, and it has nothing to choose a social channel from while the answer
+     * is "unsupported", so it never gets as far as setting anything.
+     */
+    case APPLE80211_IOC_SUPPORTED_CHANNELS:
+    case APPLE80211_IOC_POWER:
         return isSet ? EOPNOTSUPP : nativeRequest(false, number, data);
 
     /*
