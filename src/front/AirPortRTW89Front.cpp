@@ -378,6 +378,22 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
         if (name)
             strlcpy(bsd_name, name, IFNAMSIZ);
     }
+    /*
+     * Tell the family the interface can carry packets.  Nothing else does it
+     * for a virtual interface: IO80211VirtualInterface::setLinkState() posts
+     * the kernel event that ifconfig reports as "status: active" and that
+     * userspace watches, and it takes a branch of its own once the state is
+     * up.  Until it is called awdl0 stays inactive, sharingd sees no usable
+     * AWDL interface and never asks for AWDL at all, so the engine sits idle
+     * however many frames it is handed.
+     *
+     * Broadcom does the same for its AWDL interface, from setPOWER: it logs
+     * "Indicate AWDL interface LINK UP" and calls setLinkState(2, 1).
+     */
+    if (role == APPLE80211_VIF_AWDL) {
+        vif->setLinkState(kIO80211NetworkLinkUp, 1);
+        LOG("told the family the AWDL interface's link is up");
+    }
     LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
         (unsigned int)role);
     return 0;
