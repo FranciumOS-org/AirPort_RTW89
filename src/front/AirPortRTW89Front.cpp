@@ -420,11 +420,23 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
     uint32_t *chan = reinterpret_cast<uint32_t *>(hdr + 12);
     mbuf_t m;
 
-    if (!vif || !frame || !len)
+    /* Say what became of the frames, thinly: the first one, then every
+     * hundredth.  "recognised N frames" in the driver's log only means the
+     * driver saw them, and every way this can fail from here is silent. */
+    self->_awdlRxSeen++;
+    if (!vif) {
+        if (!self->_awdlRxNoVif++)
+            LOG("an AWDL frame arrived with no interface to hand it to");
+        return;
+    }
+    if (!frame || !len)
         return;
     m = self->allocatePacket((unsigned int)len);
-    if (!m)
+    if (!m) {
+        if (!self->_awdlRxNoBuf++)
+            LOG("out of packets for an AWDL frame");
         return;
+    }
     memcpy(mbuf_data(m), frame, len);
 
     memcpy(hdr, peer, 6);
@@ -442,6 +454,9 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
      * itself, never the packet it was handed. */
     rtw89_vif_bpf_tap_input(vif, m, 12, hdr, sizeof(hdr));
     self->freePacket(m);
+    if (self->_awdlRxFed++ % 100 == 0)
+        LOG("handed AWDL frame %u to IO80211 (channel %u, from %02x:%02x:%02x:%02x:%02x:%02x)",
+            self->_awdlRxFed, channel, peer[0], peer[1], peer[2], peer[3], peer[4], peer[5]);
 }
 
 void AirPortRTW89Front::opDestroyVif(void *ctx)

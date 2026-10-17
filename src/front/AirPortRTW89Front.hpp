@@ -104,6 +104,11 @@ private:
     AirPortRTW89FrontInterface *_netif = nullptr;
     /* The one virtual interface the family built for us (awdl0), or none */
     IO80211VirtualInterface *_vif = nullptr;
+    /* what became of the received AWDL frames (see opAwdlRx) */
+    unsigned int _awdlRxSeen = 0;
+    unsigned int _awdlRxFed = 0;
+    unsigned int _awdlRxNoVif = 0;
+    unsigned int _awdlRxNoBuf = 0;
     const IONetworkMedium *_medium = nullptr;
     IOEthernetAddress _mac = {};
     bool _haveMac = false;
