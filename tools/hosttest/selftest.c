@@ -754,6 +754,21 @@ static void test_awdl(void)
     CHECK(!rtw89_awdl_rx(skb, skb->len));
     kfree_skb(skb);
 
+    /* Handing frames up as well: with no platform callback behind it the
+     * forwarder must be a no-op rather than a crash, and classification is
+     * unchanged either way. */
+    rtw89_awdl_deliver(true);
+    CHECK(rtw89_awdl_delivering());
+    skb = awdl_frame(0, 0);
+    CHECK(rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+    skb = awdl_frame(0, 0);
+    ((u8 *)skb->data)[sizeof(struct ieee80211_hdr_3addr) + 4] = 0x09;
+    CHECK(!rtw89_awdl_rx(skb, skb->len));       /* not AWDL: not handed up */
+    kfree_skb(skb);
+    rtw89_awdl_deliver(false);
+    CHECK(!rtw89_awdl_delivering());
+
     rtw89_awdl_watch(false);
     CHECK(!rtw89_awdl_watching());
 

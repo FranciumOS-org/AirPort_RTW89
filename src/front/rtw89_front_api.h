@@ -27,7 +27,7 @@
 #include <stdint.h>
 #include <sys/kernel_types.h>   /* mbuf_t */
 
-#define RTW89_FRONT_API_VERSION 3
+#define RTW89_FRONT_API_VERSION 4
 #define RTW89_FRONT_CLASS       "AirPortRTW89Front"
 /* callPlatformFunction(name, true, back ops, front ops out, 0, 0) */
 #define RTW89_FRONT_CONNECT     "RTW89FrontConnect"
@@ -69,6 +69,12 @@ struct rtw89_front_ops {
      * (16 bytes). One at a time. 0 or an errno. */
     int (*create_vif)(void *ctx, const uint8_t mac[6], uint32_t role, char *bsd_name);
     void (*destroy_vif)(void *ctx);
+    /* A received AWDL action frame for IO80211's AWDL engine: handed to the
+     * virtual interface, which gives it to IO80211AWDLPeerManager. @frame is
+     * the 802.11 management frame without its FCS, @peer its transmitter and
+     * @channel the channel it arrived on. Only valid during the call. */
+    void (*awdl_rx)(void *ctx, const uint8_t *frame, size_t len,
+                    const uint8_t peer[6], uint32_t channel);
 };
 
 /* What the back does for the front. */

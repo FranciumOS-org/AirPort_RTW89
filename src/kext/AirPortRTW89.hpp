@@ -85,6 +85,8 @@ private:
     static void irqEnable(void *ctx, bool enable);
     static void linkChanged(void *ctx);
     static void rxFrame(void *ctx, const uint8_t *frame, size_t len);
+    static void awdlFrame(void *ctx, const uint8_t *frame, size_t len,
+                          const uint8_t peer[6], uint32_t channel);
     static void txWake(void *ctx);
     bool transmit(mbuf_t m);
 

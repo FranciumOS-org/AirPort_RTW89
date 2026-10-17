@@ -2,6 +2,8 @@
 #include "AirPortRTW89Front.hpp"
 #include "../kext/rtw89_chips.h"
 
+#include <IOKit/80211/apple80211_var.h>
+
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/network/IOBasicOutputQueue.h>
@@ -223,6 +225,7 @@ IOReturn AirPortRTW89Front::connectBack(const struct rtw89_back_ops *back,
     front->set_apple_rsn = opSetAppleRsn;
     front->create_vif = opCreateVif;
     front->destroy_vif = opDestroyVif;
+    front->awdl_rx = opAwdlRx;
 
     setProperty("RTW89 Back Connected", kOSBooleanTrue);
     LOG("driver connected, address %02x:%02x:%02x:%02x:%02x:%02x", _mac.bytes[0], _mac.bytes[1],
@@ -378,6 +381,59 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
     LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
         (unsigned int)role);
     return 0;
+}
+
+/*
+ * IO80211VirtualInterface::bpfTapInput() is not in MacKernelSDK's header, so
+ * it is declared here by its own symbol rather than by editing the vendored
+ * SDK. It is not a virtual method -- it appears in neither
+ * IO80211VirtualInterface's vtable nor IO80211P2PInterface's -- so a direct
+ * call to the exported symbol is what the compiler would have emitted anyway,
+ * and is what AirPort_BrcmNIC does: it imports this exact symbol.
+ */
+extern "C" UInt32
+rtw89_vif_bpf_tap_input(IO80211VirtualInterface *vif, mbuf_t m, UInt dlt, void *header,
+                        size_t header_len)
+    __asm__("__ZN23IO80211VirtualInterface11bpfTapInputEP6__mbufjPvm");
+
+/*
+ * A received AWDL action frame, handed to the family's AWDL engine.
+ *
+ * IO80211VirtualInterface::bpfTapInput() is the way in: with DLT 12 it gives
+ * the frame to the peer manager's actionFrameInput() and only falls through to
+ * the ordinary bpf tap if that does not take it. The header it wants is an
+ * apple80211_act_frm_hdr of 72 bytes, mapped out of
+ * AirPort_BrcmNIC::wlEvent(), which builds one the same way: the transmitter's
+ * address first, then an apple80211_channel at offset 12. Broadcom fills three
+ * more words at 0x1c, 0x20 and 0x24 out of its own event, byte-swapped; what
+ * they are is not known, so they are left zero.
+ *
+ * The mbuf stays ours: after its own bpfTapInput() Broadcom hands the packet
+ * straight to its free routine, so the family does not take it.
+ */
+void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
+                                 const uint8_t peer[6], uint32_t channel)
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+    IO80211VirtualInterface *vif = self->_vif;
+    uint8_t hdr[72] = {};
+    uint32_t *chan = reinterpret_cast<uint32_t *>(hdr + 12);
+    mbuf_t m;
+
+    if (!vif || !frame || !len)
+        return;
+    m = self->allocatePacket((unsigned int)len);
+    if (!m)
+        return;
+    memcpy(mbuf_data(m), frame, len);
+
+    memcpy(hdr, peer, 6);
+    chan[0] = APPLE80211_VERSION;   /* apple80211_channel.version */
+    chan[1] = channel;              /* .channel, the one updateAFStats reads */
+    chan[2] = channel <= 14 ? APPLE80211_C_FLAG_2GHZ : APPLE80211_C_FLAG_5GHZ;
+
+    rtw89_vif_bpf_tap_input(vif, m, 12, hdr, sizeof(hdr));
+    mbuf_freem(m);
 }
 
 void AirPortRTW89Front::opDestroyVif(void *ctx)

@@ -478,6 +478,7 @@ bool AirPort_RTW89::start(IOService *provider)
     platform.rx_frame = rxFrame;
     platform.tx_wake = txWake;
     platform.scan_done = scanDone;
+    platform.awdl_frame = awdlFrame;
 
     LOG("probing");
     ret = rtw89_glue_probe(&platform, &device);

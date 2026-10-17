@@ -96,6 +96,8 @@ private:
     static void opSetAppleRsn(void *ctx, bool on);
     static int opCreateVif(void *ctx, const uint8_t mac[6], uint32_t role, char *bsd_name);
     static void opDestroyVif(void *ctx);
+    static void opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
+                         const uint8_t peer[6], uint32_t channel);
 
     IOPCIDevice *_pci = nullptr;
     IO80211WorkLoop *_workLoop = nullptr;

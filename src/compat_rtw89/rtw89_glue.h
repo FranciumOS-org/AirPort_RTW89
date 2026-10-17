@@ -55,6 +55,13 @@ struct rtw89_glue_platform {
     /* Optional: a scan has ended (or was given up). Called from a driver
      * thread with driver locks held: only the scan result calls are safe. */
     void (*scan_done)(void *ctx, bool aborted);
+
+    /* Optional: a received AWDL action frame, for IO80211's AWDL engine.
+     * @frame is the 802.11 management frame without the FCS and is only valid
+     * during the call; @peer is its transmitter and @channel the channel it
+     * arrived on. Called from the driver's receive thread. */
+    void (*awdl_frame)(void *ctx, const uint8_t *frame, size_t len,
+                       const uint8_t peer[6], uint32_t channel);
 };
 
 struct rtw89_glue_device {
@@ -332,6 +339,13 @@ void rtw89_glue_set_rejoin(bool on);
 /* Log the AWDL sync frames the chip already hears (see rtw89_awdl.h). Nothing
  * is transmitted; this only measures Apple's timeline before we try to join it. */
 void rtw89_glue_awdl_watch(bool on);
+
+/* Hand received AWDL action frames up through platform.awdl_frame as well. */
+void rtw89_glue_awdl_deliver(bool on);
+
+/* Called from inside the compat layer when one arrives. */
+void rtw89_glue_awdl_frame(const uint8_t *frame, size_t len, const uint8_t peer[6],
+                           uint32_t channel);
 
 /*
  * For testing on the real card. rtw89_glue_probe_ap() acts as if the driver

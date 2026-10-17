@@ -582,6 +582,7 @@ void AirPort_RTW89::disconnectFront()
     if (_ns->front.set_apple_rsn)
         _ns->front.set_apple_rsn(_ns->front.ctx, false);
     rtw89_awdl_timing_stop();
+    rtw89_glue_awdl_deliver(false);
     if (_ns->vifUp && _ns->front.destroy_vif) {
         _ns->front.destroy_vif(_ns->front.ctx);
         _ns->vifUp = false;
@@ -767,6 +768,20 @@ int AirPort_RTW89::backRequest(void *ctx, unsigned int type, int number, void *i
  * injected Ventura family already does for AWDL can be told from the work the
  * driver still owes it.
  */
+/*
+ * A received AWDL action frame, on its way to IO80211's AWDL engine. Lives
+ * here rather than beside the other platform callbacks because NativeState is
+ * only declared in AirPortRTW89.cpp, not defined.
+ */
+void AirPort_RTW89::awdlFrame(void *ctx, const uint8_t *frame, size_t len,
+                              const uint8_t peer[6], uint32_t channel)
+{
+    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
+
+    if (me->_ns && me->_ns->front.awdl_rx)
+        me->_ns->front.awdl_rx(me->_ns->front.ctx, frame, len, peer, channel);
+}
+
 int AirPort_RTW89::backVirtualRequest(void *ctx, unsigned int type, int number,
                                       void *virtual_interface, void *data)
 {
@@ -2097,6 +2112,8 @@ int AirPort_RTW89::nativeVirtualIfCreate(void *data)
     }
     _ns->vifUp = true;
     strlcpy(_ns->vifName, name, sizeof(_ns->vifName));
+    /* There is somewhere to put received AWDL frames now. */
+    rtw89_glue_awdl_deliver(true);
     LOG("virtual interface %s is up", _ns->vifName);
     bzero(d->bsd_name, sizeof(d->bsd_name));
     memcpy(d->bsd_name, name, strnlen(name, sizeof(d->bsd_name)));
@@ -2111,6 +2128,7 @@ int AirPort_RTW89::nativeVirtualIfDelete(void *data)
     LOG("virtual interface %.*s asked to go", (int)sizeof(d->bsd_name), (const char *)d->bsd_name);
     if (!_ns->vifUp || !_ns->front.destroy_vif)
         return kIOReturnUnsupported;
+    rtw89_glue_awdl_deliver(false);
     _ns->front.destroy_vif(_ns->front.ctx);
     _ns->vifUp = false;
     bzero(_ns->vifName, sizeof(_ns->vifName));

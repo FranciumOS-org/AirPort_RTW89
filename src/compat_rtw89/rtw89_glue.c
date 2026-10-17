@@ -2108,6 +2108,18 @@ void rtw89_glue_awdl_watch(bool on)
     rtw89_awdl_watch(on);
 }
 
+void rtw89_glue_awdl_deliver(bool on)
+{
+    rtw89_awdl_deliver(on);
+}
+
+/* From rtw89_awdl.c, on the receive thread. */
+void rtw89_glue_awdl_frame(const u8 *frame, size_t len, const u8 peer[6], u32 channel)
+{
+    if (glue.plat.awdl_frame)
+        glue.plat.awdl_frame(glue.plat.ctx, frame, len, peer, channel);
+}
+
 void rtw89_glue_set_rejoin(bool on)
 {
     if (!glue.active)

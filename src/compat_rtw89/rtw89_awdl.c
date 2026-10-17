@@ -18,6 +18,7 @@
  * which is the schedule a driver has to match to be heard.
  */
 #include "rtw89_awdl.h"
+#include "rtw89_glue.h"
 
 #include <linux/ieee80211.h>
 #include <linux/skbuff.h>
@@ -38,6 +39,7 @@ static const u8 kAppleOui[3] = { 0x00, 0x17, 0xf2 };
 #define AWDL_FIXED_LEN      (1 + 3 + 1 + 1 + 1 + 1 + 4 + 4)
 
 static bool gWatching;
+static bool gDelivering;
 static u32 gLastTargetTx;   /* to show the period between sync frames */
 /* Only the first few of each kind, so a busy room cannot fill the log ring. */
 static unsigned int gSeen[4];
@@ -58,6 +60,19 @@ void rtw89_awdl_watch(bool on)
 bool rtw89_awdl_watching(void)
 {
     return gWatching;
+}
+
+void rtw89_awdl_deliver(bool on)
+{
+    if (on == gDelivering)
+        return;
+    gDelivering = on;
+    awdl_log("handing frames to IO80211: %s", on ? "on" : "off");
+}
+
+bool rtw89_awdl_delivering(void)
+{
+    return gDelivering;
 }
 
 /*
@@ -142,6 +157,9 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
         return false;
 
     /* It is AWDL from here on, whether or not we are watching. */
+    if (gDelivering)
+        rtw89_glue_awdl_frame(skb->data, len, mgmt->sa,
+                              ieee80211_frequency_to_channel(status->freq));
     if (!gWatching)
         return true;
 
