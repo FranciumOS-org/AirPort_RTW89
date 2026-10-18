@@ -107,14 +107,19 @@ static const char *awdlRequestName(int number)
 static void logHex(const char *what, const uint8_t *v, size_t len, size_t show)
 {
     char line[3 * 24 + 1];
-    size_t i, n = len < show ? len : show;
+    size_t off, n = len < show ? len : show;
 
-    if (n > 24)
-        n = 24;
-    for (i = 0; i < n; i++)
-        snprintf(line + 3 * i, sizeof(line) - 3 * i, "%02x ", v[i]);
-    line[n ? 3 * n - 1 : 0] = '\0';
-    LOG("awdl: %s, %u bytes: %s%s", what, (unsigned int)len, line, len > n ? " ..." : "");
+    LOG("awdl: %s, %u bytes%s:", what, (unsigned int)len, len > n ? " (the start of it)" : "");
+    /* in full, 24 to a line with its offset: these are frames we have to put
+     * on air byte for byte, so the tail of one matters as much as its head */
+    for (off = 0; off < n; off += 24) {
+        size_t i, m = n - off < 24 ? n - off : 24;
+
+        for (i = 0; i < m; i++)
+            snprintf(line + 3 * i, sizeof(line) - 3 * i, "%02x ", v[off + i]);
+        line[3 * m - 1] = '\0';
+        LOG("awdl:   %04x  %s", (unsigned int)off, line);
+    }
 }
 
 /* True the first time @number is seen. The bitmap covers every request number
@@ -894,7 +899,7 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
         }
         memcpy(_ns->awdlTemplate, d->payload, n);
         _ns->awdlTemplateLen = n;
-        logHex("sync frame template", _ns->awdlTemplate, n, 24);
+        logHex("sync frame template", _ns->awdlTemplate, n, sizeof(_ns->awdlTemplate));
         return kIOReturnSuccess;
     }
 
