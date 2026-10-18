@@ -2108,6 +2108,11 @@ void rtw89_glue_awdl_watch(bool on)
     rtw89_awdl_watch(on);
 }
 
+void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac[6])
+{
+    rtw89_awdl_set_template(tlvs, len, mac);
+}
+
 void rtw89_glue_awdl_deliver(bool on)
 {
     rtw89_awdl_deliver(on);

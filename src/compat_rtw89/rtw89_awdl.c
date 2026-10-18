@@ -122,16 +122,26 @@ static void awdl_log_sync_params(const u8 *v, size_t len)
              le16_to_cpu(p->flags), le16_to_cpu(p->tx_down_counter));
 }
 
+/*
+ * In full, 24 to a line.  The synchronisation parameters are the one TLV we
+ * have to send as well as read, and the part past the fixed fields decoded
+ * above -- the channel sequence -- has no layout here yet, so the bytes
+ * themselves are the record to build it from.
+ */
 static void awdl_log_hex(const char *what, const u8 *v, size_t len)
 {
     char line[3 * 24 + 1];
-    size_t i, n = len > 24 ? 24 : len;
+    size_t off;
 
-    for (i = 0; i < n; i++)
-        snprintf(line + 3 * i, sizeof(line) - 3 * i, "%02x ", v[i]);
-    line[n ? 3 * n - 1 : 0] = '\0';
-    awdl_log("    %s (%u bytes): %s%s", what, (unsigned int)len, line,
-             len > n ? " ..." : "");
+    awdl_log("    %s (%u bytes):", what, (unsigned int)len);
+    for (off = 0; off < len; off += 24) {
+        size_t i, m = len - off < 24 ? len - off : 24;
+
+        for (i = 0; i < m; i++)
+            snprintf(line + 3 * i, sizeof(line) - 3 * i, "%02x ", v[off + i]);
+        line[3 * m - 1] = '\0';
+        awdl_log("      %04x  %s", (unsigned int)off, line);
+    }
 }
 
 bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
@@ -204,4 +214,125 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
         tlv += 3 + tlen;
     }
     return true;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Transmitting: building a sync frame                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * What IO80211's AWDL engine last gave us.  Broadcom's firmware buffer for
+ * this is 0x724 bytes, which is the size Apple expects to be able to send;
+ * the templates seen so far are nearer 110.
+ */
+#define AWDL_TEMPLATE_MAX   0x724
+
+static u8 gTemplate[AWDL_TEMPLATE_MAX];
+static size_t gTemplateLen;
+static u8 gTemplateMac[ETH_ALEN];
+static bool gTemplateMacSet;
+
+void rtw89_awdl_set_template(const u8 *tlvs, size_t len, const u8 *mac)
+{
+    if (!tlvs || !len) {
+        if (gTemplateLen)
+            awdl_log("the sync frame template was forgotten");
+        gTemplateLen = 0;
+        return;
+    }
+    if (len > sizeof(gTemplate)) {
+        awdl_log("a sync frame template of %u bytes is longer than the %u we keep",
+                 (unsigned int)len, (unsigned int)sizeof(gTemplate));
+        return;
+    }
+    memcpy(gTemplate, tlvs, len);
+    gTemplateLen = len;
+    if (mac) {
+        memcpy(gTemplateMac, mac, ETH_ALEN);
+        gTemplateMacSet = true;
+    }
+    awdl_log("keeping a %u byte sync frame template%s", (unsigned int)len,
+             gTemplateMacSet ? "" : " (no address for it yet)");
+}
+
+size_t rtw89_awdl_get_template(const u8 **tlvs, const u8 **mac)
+{
+    if (!gTemplateLen || !gTemplateMacSet)
+        return 0;
+    if (tlvs)
+        *tlvs = gTemplate;
+    if (mac)
+        *mac = gTemplateMac;
+    return gTemplateLen;
+}
+
+/* The TLV header the decoder above walks: type, then the length little endian. */
+#define AWDL_TLV_HDR_LEN    3
+
+size_t rtw89_awdl_sync_frame_len(size_t sync_params_len, size_t tlv_len)
+{
+    return sizeof(struct ieee80211_hdr_3addr) + AWDL_FIXED_LEN +
+           AWDL_TLV_HDR_LEN + sync_params_len + tlv_len;
+}
+
+size_t rtw89_awdl_build_sync_frame(u8 *buf, size_t size,
+                                   const struct rtw89_awdl_frame_params *p)
+{
+    struct ieee80211_hdr_3addr *hdr;
+    u8 *body, *tlv;
+    size_t need;
+
+    if (!buf || !p || !p->src || !p->sync_params || !p->sync_params_len)
+        return 0;
+    if (p->tlv_len && !p->tlvs)
+        return 0;
+    /* the length goes in a 16-bit field */
+    if (p->sync_params_len > 0xffff)
+        return 0;
+    need = rtw89_awdl_sync_frame_len(p->sync_params_len, p->tlv_len);
+    if (need > size)
+        return 0;
+
+    memset(buf, 0, need);
+
+    /*
+     * Every AWDL frame is addressed to Apple's AWDL address, as both the
+     * receiver and the BSSID; the sender is the AWDL interface's own address,
+     * which is not the station's.
+     */
+    hdr = (struct ieee80211_hdr_3addr *)buf;
+    hdr->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_ACTION);
+    hdr->duration_id = 0;
+    memcpy(hdr->addr1, kAwdlBssid, ETH_ALEN);
+    memcpy(hdr->addr2, p->src, ETH_ALEN);
+    memcpy(hdr->addr3, kAwdlBssid, ETH_ALEN);
+    hdr->seq_ctrl = cpu_to_le16((u16)(p->seq << 4));
+
+    body = buf + sizeof(*hdr);
+    body[0] = WLAN_CATEGORY_VENDOR_SPECIFIC;
+    memcpy(body + 1, kAppleOui, sizeof(kAppleOui));
+    body[4] = AWDL_TYPE;
+    body[5] = p->version;
+    body[6] = p->subtype;
+    body[7] = 0;                /* reserved */
+    body[8]  = (u8)p->phy_tx_time;
+    body[9]  = (u8)(p->phy_tx_time >> 8);
+    body[10] = (u8)(p->phy_tx_time >> 16);
+    body[11] = (u8)(p->phy_tx_time >> 24);
+    body[12] = (u8)p->target_tx_time;
+    body[13] = (u8)(p->target_tx_time >> 8);
+    body[14] = (u8)(p->target_tx_time >> 16);
+    body[15] = (u8)(p->target_tx_time >> 24);
+
+    /* the schedule first, then the family's static TLVs as they were given */
+    tlv = body + AWDL_FIXED_LEN;
+    tlv[0] = AWDL_TLV_SYNC_PARAMS;
+    tlv[1] = (u8)p->sync_params_len;
+    tlv[2] = (u8)(p->sync_params_len >> 8);
+    memcpy(tlv + AWDL_TLV_HDR_LEN, p->sync_params, p->sync_params_len);
+    tlv += AWDL_TLV_HDR_LEN + p->sync_params_len;
+    if (p->tlv_len)
+        memcpy(tlv, p->tlvs, p->tlv_len);
+
+    return need;
 }

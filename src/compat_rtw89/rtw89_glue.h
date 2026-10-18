@@ -343,6 +343,9 @@ void rtw89_glue_awdl_watch(bool on);
 /* Hand received AWDL action frames up through platform.awdl_frame as well. */
 void rtw89_glue_awdl_deliver(bool on);
 
+/* The sync frame template IO80211 built, and the AWDL address it is for. */
+void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac[6]);
+
 /* Called from inside the compat layer when one arrives. */
 void rtw89_glue_awdl_frame(const uint8_t *frame, size_t len, const uint8_t peer[6],
                            uint32_t channel);

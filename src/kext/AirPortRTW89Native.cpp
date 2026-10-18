@@ -61,6 +61,7 @@ struct AirPort_RTW89::NativeState {
     uint64_t seenUnhandled[RTW89_SEEN_WORDS] = {};
     uint64_t seenVirtual[RTW89_SEEN_WORDS] = {};
     char vifName[16] = {};
+    uint8_t vifMac[6] = {};     /* the AWDL address, the sender of our frames */
     bool vifUp = false;
     bool awdlSyncEnabled = false;   /* what macOS last asked for on awdl0 */
     /* The sync frame the family builds for us to put on air. Broadcom's
@@ -888,6 +889,7 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
             return EOPNOTSUPP;
         if (!d->payload || !d->payload_len) {
             _ns->awdlTemplateLen = 0;
+            rtw89_glue_awdl_template(nullptr, 0, nullptr);
             LOG("awdl: the sync frame template was cleared");
             return kIOReturnSuccess;
         }
@@ -900,6 +902,9 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
         memcpy(_ns->awdlTemplate, d->payload, n);
         _ns->awdlTemplateLen = n;
         logHex("sync frame template", _ns->awdlTemplate, n, sizeof(_ns->awdlTemplate));
+        /* over to the side that builds frames: these are the static TLVs the
+         * transmit loop appends to the schedule it works out itself */
+        rtw89_glue_awdl_template(_ns->awdlTemplate, n, _ns->vifMac);
         return kIOReturnSuccess;
     }
 
@@ -2134,6 +2139,7 @@ int AirPort_RTW89::nativeVirtualIfCreate(void *data)
         return kIOReturnSuccess;
     }
     _ns->vifUp = true;
+    memcpy(_ns->vifMac, d->mac, sizeof(_ns->vifMac));
     strlcpy(_ns->vifName, name, sizeof(_ns->vifName));
     /* There is somewhere to put received AWDL frames now. */
     rtw89_glue_awdl_deliver(true);

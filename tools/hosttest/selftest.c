@@ -720,6 +720,8 @@ static struct sk_buff *awdl_frame(u8 subtype, size_t body_extra)
     return skb;
 }
 
+static void test_awdl_build(void);
+
 static void test_awdl(void)
 {
     struct sk_buff *skb;
@@ -774,6 +776,110 @@ static void test_awdl(void)
 
     /* and it still classifies with the watch off */
     skb = awdl_frame(0, 0);
+    CHECK(rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+
+    test_awdl_build();
+}
+
+/*
+ * Building a sync frame to transmit: the frame we put on air has to be laid
+ * out byte for byte the way the frames we receive are, so the check is that
+ * our own decoder reads back what the builder wrote.
+ */
+static void test_awdl_build(void)
+{
+    /* the four static TLVs IO80211 hands over, in its own encoding:
+     * type, length little endian, value */
+    static const u8 tlvs[] = {
+        0x15, 0x02, 0x00, 0x71, 0x01,               /* version */
+        0x06, 0x04, 0x00, 0x01, 0x02, 0x03, 0x04,   /* service parameters */
+    };
+    static const u8 sync_params[27] = {
+        6,                      /* next AW on channel 6 */
+        0x09, 0x00,             /* tx down counter */
+        6,                      /* master channel */
+        0,                      /* guard time */
+        0x10, 0x00,             /* AW period, 16 TU */
+        0x6e, 0x00,             /* AF period, 110 TU */
+    };
+    const u8 src[ETH_ALEN] = { 0xaa, 0xa6, 0x2f, 0xd2, 0xe3, 0x10 };
+    struct rtw89_awdl_frame_params p = {
+        .src = src,
+        .version = 0x10,
+        .subtype = 0,                   /* PSF */
+        .seq = 0x123,
+        .phy_tx_time = 0x11223344,
+        .target_tx_time = 0x55667788,
+        .sync_params = sync_params,
+        .sync_params_len = sizeof(sync_params),
+        .tlvs = tlvs,
+        .tlv_len = sizeof(tlvs),
+    };
+    const size_t want = sizeof(struct ieee80211_hdr_3addr) + 16 + 3 +
+                        sizeof(sync_params) + sizeof(tlvs);
+    u8 buf[256];
+    size_t len, off, seen = 0;
+    struct sk_buff *skb;
+    const u8 *body;
+
+    CHECK(rtw89_awdl_sync_frame_len(sizeof(sync_params), sizeof(tlvs)) == want);
+
+    /* it refuses rather than overruns when the buffer is too small */
+    CHECK(rtw89_awdl_build_sync_frame(buf, want - 1, &p) == 0);
+    /* and refuses incomplete parameters */
+    {
+        struct rtw89_awdl_frame_params bad = p;
+
+        bad.sync_params = NULL;
+        CHECK(rtw89_awdl_build_sync_frame(buf, sizeof(buf), &bad) == 0);
+        bad = p;
+        bad.tlvs = NULL;
+        CHECK(rtw89_awdl_build_sync_frame(buf, sizeof(buf), &bad) == 0);
+    }
+
+    len = rtw89_awdl_build_sync_frame(buf, sizeof(buf), &p);
+    CHECK(len == want);
+
+    /* the header: addressed to AWDL's address, from us, that address again */
+    CHECK(buf[0] == 0xd0 && buf[1] == 0x00);        /* action frame */
+    CHECK(memcmp(buf + 4, "\x00\x25\x00\xff\x94\x73", ETH_ALEN) == 0);
+    CHECK(memcmp(buf + 10, src, ETH_ALEN) == 0);
+    CHECK(memcmp(buf + 16, "\x00\x25\x00\xff\x94\x73", ETH_ALEN) == 0);
+    CHECK(buf[22] == 0x30 && buf[23] == 0x12);      /* sequence 0x123 << 4 */
+
+    body = buf + sizeof(struct ieee80211_hdr_3addr);
+    CHECK(body[0] == 0x7f);                                     /* vendor specific */
+    CHECK(memcmp(body + 1, "\x00\x17\xf2", 3) == 0);           /* Apple */
+    CHECK(body[4] == 0x08 && body[5] == 0x10 && body[6] == 0);  /* AWDL, v1.0, PSF */
+    CHECK(body[8] == 0x44 && body[11] == 0x11);                 /* phy tx, le32 */
+    CHECK(body[12] == 0x88 && body[15] == 0x55);                /* target tx, le32 */
+
+    /* the TLVs: the schedule first, then the family's, unchanged */
+    for (off = 16; off + 3 <= len - sizeof(struct ieee80211_hdr_3addr); ) {
+        u8 type = body[off];
+        size_t tlen = (size_t)(body[off + 1] | (body[off + 2] << 8));
+
+        if (type == 4) {
+            CHECK(tlen == sizeof(sync_params));
+            CHECK(memcmp(body + off + 3, sync_params, tlen) == 0);
+            seen |= 1;
+        } else if (type == 0x15) {
+            CHECK(tlen == 2);
+            seen |= 2;
+        } else if (type == 6) {
+            CHECK(tlen == 4);
+            seen |= 4;
+        }
+        off += 3 + tlen;
+    }
+    CHECK(off == len - sizeof(struct ieee80211_hdr_3addr));     /* no slack */
+    CHECK(seen == 7);
+
+    /* and our own receiver accepts what we built */
+    skb = dev_alloc_skb(len);
+    CHECK(skb != NULL);
+    memcpy(skb_put(skb, len), buf, len);
     CHECK(rtw89_awdl_rx(skb, skb->len));
     kfree_skb(skb);
 }
