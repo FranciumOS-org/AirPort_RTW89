@@ -982,18 +982,22 @@ static void glue_rx(void *ctx, struct ieee80211_sta *sta, struct sk_buff *skb)
         return;
     }
 
+    /*
+     * AWDL frames are addressed to Apple's own BSSID, so neither the station
+     * MLME nor the data path would make anything of them. This has to come
+     * before the data branch below: a transfer arrives as data frames on that
+     * BSSID, and sending them to rtw89_data_rx() -- which has no station for
+     * it -- is how they were being lost.
+     */
+    if (rtw89_awdl_rx(skb, len - FCS_LEN)) {
+        kfree_skb(skb);
+        return;
+    }
+
     if (ieee80211_is_data(hdr->frame_control)) {
         if (!is_multicast_ether_addr(hdr->addr1))
             glue_rx_rate(status);
         rtw89_data_rx(skb);
-        return;
-    }
-
-    /* AWDL sync frames are addressed to Apple's own BSSID, so the station
-     * MLME would drop them unseen. Watched for separately; the frame goes on
-     * to the MLME either way, which will ignore it. */
-    if (rtw89_awdl_rx(skb, len - FCS_LEN)) {
-        kfree_skb(skb);
         return;
     }
 

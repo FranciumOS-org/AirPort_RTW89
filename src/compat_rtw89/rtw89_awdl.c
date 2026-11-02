@@ -146,7 +146,7 @@ static void awdl_log_hex(const char *what, const u8 *v, size_t len)
 }
 
 /* What has come back the other way; see rtw89_awdl_rx(). */
-static struct { u32 data_seen; } gRx;
+static struct { u32 data_seen; u32 offered; u32 matched; } gRx;
 
 bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
 {
@@ -159,8 +159,18 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
 
     if (len < sizeof(struct ieee80211_hdr_3addr))
         return false;
+    /*
+     * How much the card hears, in two numbers. A boot where the engine was
+     * running and transmitting perfectly received nothing at all, and from
+     * the log alone there was no telling whether the radio heard nothing or
+     * heard plenty and this function rejected it.
+     */
+    if (++gRx.offered % 512 == 0)
+        awdl_log("%u frame(s) offered to the AWDL path, %u on the AWDL BSSID",
+                 (unsigned int)gRx.offered, (unsigned int)gRx.matched);
     if (!ether_addr_equal(mgmt->bssid, kAwdlBssid))
         return false;
+    gRx.matched++;
     /*
      * A data frame on the AWDL BSSID, which is what a transfer is made of.
      * Only action frames were recognised here before, so these fell through
