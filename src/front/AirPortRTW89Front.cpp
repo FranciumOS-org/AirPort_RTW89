@@ -478,8 +478,25 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
      * "Indicate AWDL interface LINK UP" and calls setLinkState(2, 1).
      */
     if (role == APPLE80211_VIF_AWDL) {
+        /*
+         * Down first, then up, because what matters is the transition and not
+         * the state. setLinkState() returns at its first instruction when the
+         * interface is already in the state being set, and everything AWDL
+         * needs hangs off the path after that: the link-up branch is what
+         * calls IO80211PeerManager::enable(), which reaches doEnable() and
+         * configure(), which is what finally sets the flags that
+         * actionFrameProcessInput() tests before it will look at a received
+         * frame at all.
+         *
+         * Setting up alone did nothing. The family had already brought the
+         * link up inside init(), so the call returned immediately, enable()
+         * was never called -- it logs and nothing of it ever appeared -- and
+         * the AWDL engine stayed idle while frames from a dozen peers were
+         * handed to it and discarded.
+         */
+        vif->setLinkState(kIO80211NetworkLinkDown, 0);
         vif->setLinkState(kIO80211NetworkLinkUp, 1);
-        LOG("told the family the AWDL interface's link is up");
+        LOG("told the family the AWDL interface's link went down and up again");
     }
     LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
         (unsigned int)role);
