@@ -48,6 +48,9 @@ class AirPortRTW89Front : public IO80211Controller {
 public:
     /* Packets the family sent to awdl0, from AirPortRTW89AwdlInterface. */
     UInt32 awdlOutput(mbuf_t m);
+    /* Asks the family to enable AWDL, once the interface is up. */
+    void awdlEnableIfReady();
+    static void awdlEnableThread(thread_call_param_t p0, thread_call_param_t p1);
     /* One log line into the driver's ring; false if the driver is not there. */
     bool logLine(const char *line);
     /* IOService */
@@ -128,6 +131,10 @@ private:
     unsigned int _awdlRxFed = 0;
     unsigned int _awdlRxNoVif = 0;
     unsigned int _awdlRxNoBuf = 0;
+    /* Switching the family's AWDL engine on, once, off the workloop. */
+    thread_call_t _awdlEnableCall = nullptr;
+    bool _awdlEnableAsked = false;
+    volatile SInt32 _awdlEnableBusy = 0;
     const IONetworkMedium *_medium = nullptr;
     IOEthernetAddress _mac = {};
     bool _haveMac = false;

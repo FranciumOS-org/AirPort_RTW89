@@ -156,6 +156,7 @@ bool AirPortRTW89Front::start(IOService *provider)
     _backLock = IOLockAlloc();
     if (!_backLock)
         return false;
+    _awdlEnableCall = thread_call_allocate(awdlEnableThread, this);
     _mac = kPlaceholderMac;
 
     if (!super::start(provider)) {
@@ -177,6 +178,16 @@ bool AirPortRTW89Front::start(IOService *provider)
 void AirPortRTW89Front::stop(IOService *provider)
 {
     disconnectBack();
+    if (_awdlEnableCall) {
+        /* Nothing new starts once this is set, and one already running is
+         * waited for: thread_call_cancel() does not wait, and the interface
+         * is about to be detached underneath it. Same reason, and the same
+         * shape, as the AWDL clock's stop in the driver. */
+        _awdlEnableAsked = true;
+        thread_call_cancel(_awdlEnableCall);
+        for (unsigned int ms = 0; _awdlEnableBusy && ms < 2000; ms++)
+            IOSleep(1);
+    }
     opDestroyVif(this);
     if (_netif) {
         detachInterface(_netif, true);
@@ -191,6 +202,11 @@ void AirPortRTW89Front::stop(IOService *provider)
 
 void AirPortRTW89Front::free()
 {
+    if (_awdlEnableCall) {
+        thread_call_cancel(_awdlEnableCall);
+        thread_call_free(_awdlEnableCall);
+        _awdlEnableCall = nullptr;
+    }
     if (_backLock) {
         IOLockFree(_backLock);
         _backLock = nullptr;
@@ -233,6 +249,59 @@ bool AirPortRTW89Front::backEnter()
 void AirPortRTW89Front::backLeave()
 {
     OSDecrementAtomic(&_backCalls);
+}
+
+/*
+ * Switch the family's AWDL engine on, once, when it will actually take.
+ *
+ * configure() -- which sets the flags actionFrameProcessInput() tests before
+ * it will look at a received frame -- refuses in two ways that both matter
+ * here. It wants the interface's enabled byte at 0x169 set, which happens
+ * when awdl0 is brought up rather than when it is created; and it aborts if
+ * it finds itself on the controller's workloop thread, which is where every
+ * natural place to call this from runs. So the condition is polled from the
+ * receive path and the call itself is made on a thread_call, which is
+ * neither.
+ */
+void AirPortRTW89Front::awdlEnableThread(thread_call_param_t p0, thread_call_param_t p1)
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(p0);
+    IO80211VirtualInterface *vif;
+    const uint8_t *pm;
+    IOReturn ret;
+
+    OSIncrementAtomic(&self->_awdlEnableBusy);
+    vif = self->_vif;
+    if (!vif) {
+        OSDecrementAtomic(&self->_awdlEnableBusy);
+        return;
+    }
+    pm = *reinterpret_cast<const uint8_t *const *>(reinterpret_cast<const uint8_t *>(vif) + 0xb0);
+    if (!pm) {
+        OSDecrementAtomic(&self->_awdlEnableBusy);
+        return;
+    }
+    ret = rtw89_peer_manager_enable(const_cast<uint8_t *>(pm), "rtw89 front");
+    LOG("asked the family to enable AWDL: 0x%x, _enabling %u, _enabled %u, state flags 0x%x",
+        ret, pm[0x2f5], pm[0x2f4], *reinterpret_cast<const unsigned int *>(pm + 0x8528));
+    OSDecrementAtomic(&self->_awdlEnableBusy);
+}
+
+void AirPortRTW89Front::awdlEnableIfReady()
+{
+    IO80211VirtualInterface *vif = _vif;
+    const uint8_t *vraw, *pm;
+
+    if (_awdlEnableAsked || !vif || !_awdlEnableCall)
+        return;
+    vraw = reinterpret_cast<const uint8_t *>(vif);
+    if (!vraw[0x169])           /* the interface is not up yet */
+        return;
+    pm = *reinterpret_cast<const uint8_t *const *>(vraw + 0xb0);
+    if (!pm || pm[0x2f5] || pm[0x2f4])  /* already enabling, or enabled */
+        return;
+    _awdlEnableAsked = true;
+    thread_call_enter(_awdlEnableCall);
 }
 
 bool AirPortRTW89Front::logLine(const char *line)
@@ -531,16 +600,15 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
 
         LOG("AWDL link state %d -> %d -> %d, peer manager %s", before, afterDown, afterUp,
             pm ? "there" : "MISSING");
-        if (pm) {
-            const uint8_t *pmb = reinterpret_cast<const uint8_t *>(pm);
-            IOReturn ret;
-
-            LOG("    after the family's own run: _enabling %u", pmb[0x2f5]);
-            /* and now the same call it makes, to see whether it was made */
-            ret = rtw89_peer_manager_enable(pm, "rtw89 front");
-            LOG("    enable() called directly: 0x%x, _enabling now %u, link state %d",
-                ret, pmb[0x2f5], *reinterpret_cast<const int *>(raw + 0xfc));
-        }
+        /*
+         * No enable() from here. It was tried, and it is worse than useless
+         * this early: configure() refuses while the interface's own enabled
+         * byte at 0x169 is clear, and that is set when the interface is
+         * brought up, which has not happened yet at creation. Meanwhile
+         * enableGated() returns at once when _enabling is already set, so the
+         * premature call left that byte at 1 and blocked every later enable
+         * for good. It is asked for from awdlEnableIfReady() instead.
+         */
     }
     LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
         (unsigned int)role);
@@ -619,6 +687,7 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
      * itself, never the packet it was handed. */
     rtw89_vif_bpf_tap_input(vif, m, 12, hdr, sizeof(hdr));
     self->freePacket(m);
+    self->awdlEnableIfReady();
     if (self->_awdlRxFed++ % 100 == 0) {
         /*
          * What becomes of the frame, as the family decides it.
