@@ -582,7 +582,19 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
      * the link-up branch triggers is spent on an engine that cannot
      * configure itself. That was measured -- _enabled 1, state flags 0x21,
      * bit 1 clear, every frame still dropped.
+     *
+     * But it is still called here, because this call is what gets the
+     * interface up in the first place. Taking it out stopped everything: no
+     * enable, no frames handed over, nothing in the log at all. The link
+     * state it writes does not stick -- it has read back 1 every time -- yet
+     * setLinkState() also posts the kernel event userspace watches, and
+     * without it nothing ever brings awdl0 up, so the enabled byte at 0x169
+     * that awdlEnableIfReady() waits for is never set. The one before the
+     * enable is the one the family reads; this one is the one that starts
+     * the sequence.
      */
+    if (role == APPLE80211_VIF_AWDL)
+        vif->setLinkState(kIO80211NetworkLinkUp, 1);
     LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
         (unsigned int)role);
     return 0;
