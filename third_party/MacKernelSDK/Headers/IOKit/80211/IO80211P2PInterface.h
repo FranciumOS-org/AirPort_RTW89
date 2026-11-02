@@ -7,59 +7,19 @@ class IO80211P2PInterface : public IO80211VirtualInterface {
     OSDeclareDefaultStructors(IO80211P2PInterface)
 
 public:
-    virtual void free(void) APPLE_KEXT_OVERRIDE;
-#if __IO80211_TARGET >= __MAC_11_0
-    virtual bool willTerminate(IOService *,uint) APPLE_KEXT_OVERRIDE;
-#endif
-    virtual IOReturn configureReport(IOReportChannelList   *channels,
-                                     IOReportConfigureAction action,
-                                     void                  *result,
-                                     void                  *destination) APPLE_KEXT_OVERRIDE;
-    virtual IOReturn updateReport(IOReportChannelList      *channels,
-                                  IOReportUpdateAction      action,
-                                  void                     *result,
-                                  void                     *destination) APPLE_KEXT_OVERRIDE;
-
-    virtual bool terminate( IOOptionBits options = 0 ) APPLE_KEXT_OVERRIDE;
-    virtual bool attach(IOService *) APPLE_KEXT_OVERRIDE;
-    virtual void detach(IOService *) APPLE_KEXT_OVERRIDE;
-#if __IO80211_TARGET >= __MAC_10_15
-    virtual IOReturn newUserClient(task_t,void *,UInt,OSDictionary *,IOUserClient **) APPLE_KEXT_OVERRIDE;
-#endif
-    virtual const char * stringFromReturn( IOReturn rtn ) APPLE_KEXT_OVERRIDE;
-    virtual int errnoFromReturn( IOReturn rtn ) APPLE_KEXT_OVERRIDE;
-    virtual IOReturn powerStateWillChangeTo(
-                                            IOPMPowerFlags  capabilities,
-                                            unsigned long   stateNumber,
-                                            IOService *     whatDevice ) APPLE_KEXT_OVERRIDE;
-
-    virtual IOReturn powerStateDidChangeTo(
-                                           IOPMPowerFlags  capabilities,
-                                           unsigned long   stateNumber,
-                                           IOService *     whatDevice ) APPLE_KEXT_OVERRIDE;
-    virtual bool init(IO80211Controller *,ether_addr *,uint,char const*) APPLE_KEXT_OVERRIDE;
+    /*
+     * Only the five methods IO80211FamilyLegacy's own IO80211P2PInterface
+     * vtable actually overrides. This header used to redeclare about
+     * twenty-five of them; every one that the family does not define is a
+     * vtable slot naming a symbol that does not exist, and a subclass built
+     * here inherits all of them. The front then does not load at boot -- no
+     * panic, no message, no Wi-Fi -- which is how it was found. The rest are
+     * inherited from IO80211VirtualInterface and keep their slots either way,
+     * so nothing is lost by leaving them out. Checked against the vtable at
+     * __ZTV19IO80211P2PInterface in v1.0.0; tools/check_imports.py now holds
+     * the build to it.
+     */
     virtual bool createPeerManager(ether_addr *,IO80211PeerManager **) APPLE_KEXT_OVERRIDE;
-    virtual UInt getMediumType() APPLE_KEXT_OVERRIDE;
-    virtual void setLinkState(IO80211LinkState,uint) APPLE_KEXT_OVERRIDE;
-    virtual bool dequeueOutputPacketsWithServiceClass(uint,IOMbufServiceClass,mbuf_t*,mbuf_t*,UInt *,unsigned long long *) APPLE_KEXT_OVERRIDE;
-    virtual UInt32 outputPacket (mbuf_t m, void* param) APPLE_KEXT_OVERRIDE;
-    virtual void setEnabledBySystem(bool) APPLE_KEXT_OVERRIDE;
-    virtual void handleIoctl(unsigned long,void *) APPLE_KEXT_OVERRIDE;
-    virtual UInt32 inputPacket(mbuf_t,packet_info_tag *) APPLE_KEXT_OVERRIDE;
-    virtual IOReturn controllerWillChangePowerState(IO80211Controller *,unsigned long,UInt,IOService *) APPLE_KEXT_OVERRIDE;
-    virtual IOReturn controllerDidChangePowerState(IO80211Controller *,unsigned long,UInt,IOService *) APPLE_KEXT_OVERRIDE;
-    virtual bool handleDebugCmd(apple80211_debug_command *) APPLE_KEXT_OVERRIDE;
-    virtual IOReturn postPeerPresence(ether_addr *,int,int,int,char *) APPLE_KEXT_OVERRIDE;
-    virtual IOReturn postPeerAbsence(ether_addr *) APPLE_KEXT_OVERRIDE;
-#if __IO80211_TARGET >= __MAC_10_15
-    virtual IOReturn postPeerPresenceIPv6(ether_addr *,int,int,int,char *,unsigned char *) APPLE_KEXT_OVERRIDE;
-#endif
-    virtual void signalOutputThread() APPLE_KEXT_OVERRIDE;
-    virtual bool isOutputFlowControlled() APPLE_KEXT_OVERRIDE;
-    virtual void setOutputFlowControlled() APPLE_KEXT_OVERRIDE;
-    virtual void clearOutputFlowControlled() APPLE_KEXT_OVERRIDE;
-    virtual void outputStart(uint) APPLE_KEXT_OVERRIDE;
-    virtual UInt32 configureAQMOutput() APPLE_KEXT_OVERRIDE;
     virtual void setUnitNumber(char const*) APPLE_KEXT_OVERRIDE;
     virtual bool initIfnetEparams(ifnet_init_eparams *) APPLE_KEXT_OVERRIDE;
     virtual bool attachToBpf() APPLE_KEXT_OVERRIDE;

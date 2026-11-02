@@ -28,11 +28,25 @@ public:
                        void *param = 0) override;
 };
 
+/*
+ * The AWDL interface itself, so that packets the family sends to awdl0 have
+ * somewhere to go. The family's own IO80211P2PInterface::outputPacket() is
+ * where a transfer's packets went before this existed: discovery worked, a
+ * peer appeared in AirDrop, and every packet of the connection that followed
+ * was dropped on the floor, which is what "Waiting..." looks like.
+ */
+class AirPortRTW89AwdlInterface : public IO80211P2PInterface {
+    OSDeclareDefaultStructors(AirPortRTW89AwdlInterface)
+
+public:
+    UInt32 outputPacket(mbuf_t m, void *param) override;
+};
+
 class AirPortRTW89Front : public IO80211Controller {
     OSDeclareDefaultStructors(AirPortRTW89Front)
 
 public:
-    /* Packets the family sent to awdl0, told apart in outputPacket(). */
+    /* Packets the family sent to awdl0, from AirPortRTW89AwdlInterface. */
     UInt32 awdlOutput(mbuf_t m);
     /* IOService */
     bool start(IOService *provider) override;

@@ -353,7 +353,12 @@ $(BUILD_DIR)/kext/%.o: $(KEXT_SRC)/%.c
 	@$(CC) $(FW_CFLAGS) -c $< -o $@
 
 # The front: the IO80211Controller, injected by OpenCore (src/front/rtw89_front_api.h).
+# Every symbol it leaves undefined has to come from the kernel or from the
+# injected family: one that comes from neither does not fail the build, it
+# fails the boot, silently and with no Wi-Fi. So the family is checked against
+# here, out of the same copy the EFI installs.
 FRONT_SRC    := $(PROJ_ROOT)/src/front
+FAMILY_BIN   := $(PROJ_ROOT)/efi/kit/IO80211FamilyLegacy.kext/Contents/MacOS/IO80211FamilyLegacy
 FRONT_BUNDLE := $(BUILD_DIR)/out/AirPortRTW89Front.kext
 front:
 	@rm -rf $(FRONT_BUNDLE)
@@ -369,6 +374,8 @@ front:
 	    -o $(FRONT_BUNDLE)/Contents/MacOS/AirPortRTW89Front
 	@codesign --force --sign - $(FRONT_BUNDLE) 2>/dev/null || true
 	@echo "  KEXT $(FRONT_BUNDLE)"
+	@python3 tools/check_imports.py $(FRONT_BUNDLE)/Contents/MacOS/AirPortRTW89Front \
+	    $(BUILD_DIR)/log/front-imports.md --also $(FAMILY_BIN)
 
 # The smoke test gates the bundle: nothing gets packaged that crashed there.
 # It runs again only when what it tests has changed since it last passed

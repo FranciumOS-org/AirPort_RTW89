@@ -51,11 +51,16 @@ public:
     virtual IOReturn controllerWillChangePowerState(IO80211Controller *,unsigned long,UInt,IOService *);
     virtual IOReturn controllerDidChangePowerState(IO80211Controller *,unsigned long,UInt,IOService *);
     virtual bool handleDebugCmd(apple80211_debug_command *);
-    virtual IOReturn postPeerPresence(ether_addr *,int,int,int,char *);
-    virtual IOReturn postPeerAbsence(ether_addr *);
-#if __IO80211_TARGET >= __MAC_10_15
-    virtual IOReturn postPeerPresenceIPv6(ether_addr *,int,int,int,char *,unsigned char *);
-#endif
+    /*
+     * IO80211FamilyLegacy has no postPeerPresence/postPeerAbsence/
+     * postPeerPresenceIPv6 in this vtable, and exports no such symbols.
+     * Declaring them here put three slots in the vtable of any subclass we
+     * build, each referring to a method that does not exist: the front kext
+     * then failed to load with unresolved symbols, which on this machine
+     * meant no Wi-Fi at all and no panic to say why. The slots are kept as
+     * padding only if the family ever grows them back -- removed, not
+     * renamed, because the family's own layout is what has to match.
+     */
     virtual void signalOutputThread();
     virtual bool isOutputFlowControlled();
     virtual void setOutputFlowControlled();
