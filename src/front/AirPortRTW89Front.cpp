@@ -281,6 +281,24 @@ void AirPortRTW89Front::awdlEnableThread(thread_call_param_t p0, thread_call_par
         OSDecrementAtomic(&self->_awdlEnableBusy);
         return;
     }
+    /*
+     * The link has to be up before this, not after. doEnable() ends by
+     * calling interfaceStateChange(), and that returns at its first branch --
+     * "Interface link is down, nothing to do" -- while the interface's link
+     * state at 0xfc is 1. Past that branch is the only call to enableAWDL(),
+     * which is the only thing that sets the bit actionFrameProcessInput()
+     * tests. So with the link down the engine enables itself and still looks
+     * at nothing: _enabled 1 and state flags 0x21, bit 1 clear, every frame
+     * dropped, which is exactly what was measured.
+     *
+     * Here rather than at interface creation also means the family has
+     * everything else by now -- the interface is up and configure() has had
+     * its settings taken -- and this is not the workloop thread.
+     */
+    vif->setLinkState(kIO80211NetworkLinkUp, 1);
+    LOG("brought the AWDL link up before enabling: state %d",
+        *reinterpret_cast<const int *>(reinterpret_cast<const uint8_t *>(vif) + 0xfc));
+
     ret = rtw89_peer_manager_enable(const_cast<uint8_t *>(pm), "rtw89 front");
     LOG("asked the family to enable AWDL: 0x%x, _enabling %u, _enabled %u, state flags 0x%x",
         ret, pm[0x2f5], pm[0x2f4], *reinterpret_cast<const unsigned int *>(pm + 0x8528));
@@ -550,66 +568,21 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
             strlcpy(bsd_name, name, IFNAMSIZ);
     }
     /*
-     * Tell the family the interface can carry packets.  Nothing else does it
-     * for a virtual interface: IO80211VirtualInterface::setLinkState() posts
-     * the kernel event that ifconfig reports as "status: active" and that
-     * userspace watches, and it takes a branch of its own once the state is
-     * up.  Until it is called awdl0 stays inactive, sharingd sees no usable
-     * AWDL interface and never asks for AWDL at all, so the engine sits idle
-     * however many frames it is handed.
+     * The AWDL link is brought up in awdlEnableThread(), not here.
      *
-     * Broadcom does the same for its AWDL interface, from setPOWER: it logs
-     * "Indicate AWDL interface LINK UP" and calls setLinkState(2, 1).
+     * It belongs immediately before the enable, because the family reads it
+     * there: doEnable() ends in interfaceStateChange(), which returns at
+     * "Interface link is down, nothing to do" unless the link state is up,
+     * and past that branch is the only call to enableAWDL() -- the only
+     * thing that sets the bit actionFrameProcessInput() tests before it will
+     * look at a received frame.
+     *
+     * At creation it is too early for any of that: the interface is not yet
+     * up, so configure() refuses to take the settings, and the enable that
+     * the link-up branch triggers is spent on an engine that cannot
+     * configure itself. That was measured -- _enabled 1, state flags 0x21,
+     * bit 1 clear, every frame still dropped.
      */
-    if (role == APPLE80211_VIF_AWDL) {
-        /*
-         * Down first, then up, because what matters is the transition and not
-         * the state. setLinkState() returns at its first instruction when the
-         * interface is already in the state being set, and everything AWDL
-         * needs hangs off the path after that: the link-up branch is what
-         * calls IO80211PeerManager::enable(), which reaches doEnable() and
-         * configure(), which is what finally sets the flags that
-         * actionFrameProcessInput() tests before it will look at a received
-         * frame at all.
-         *
-         * Setting up alone did nothing. The family had already brought the
-         * link up inside init(), so the call returned immediately, enable()
-         * was never called -- it logs and nothing of it ever appeared -- and
-         * the AWDL engine stayed idle while frames from a dozen peers were
-         * handed to it and discarded.
-         */
-        /*
-         * What the family's own code tests before it will do any of that,
-         * read straight out of the object. Both offsets come from
-         * IO80211FamilyLegacy's disassembly, the same place the vtable
-         * indices this file already depends on come from: setLinkState()
-         * compares the link state at 0xfc and returns if it is unchanged,
-         * and both of its branches do nothing at all unless the peer manager
-         * at 0xb0 is there. Read only, and only to say so in the log --
-         * every inference about this path so far has been wrong once.
-         */
-        const uint8_t *raw = reinterpret_cast<const uint8_t *>(vif);
-        void *pm = *reinterpret_cast<void *const *>(raw + 0xb0);
-        int before = *reinterpret_cast<const int *>(raw + 0xfc);
-
-        vif->setLinkState(kIO80211NetworkLinkDown, 0);
-        const int afterDown = *reinterpret_cast<const int *>(raw + 0xfc);
-
-        vif->setLinkState(kIO80211NetworkLinkUp, 1);
-        const int afterUp = *reinterpret_cast<const int *>(raw + 0xfc);
-
-        LOG("AWDL link state %d -> %d -> %d, peer manager %s", before, afterDown, afterUp,
-            pm ? "there" : "MISSING");
-        /*
-         * No enable() from here. It was tried, and it is worse than useless
-         * this early: configure() refuses while the interface's own enabled
-         * byte at 0x169 is clear, and that is set when the interface is
-         * brought up, which has not happened yet at creation. Meanwhile
-         * enableGated() returns at once when _enabling is already set, so the
-         * premature call left that byte at 1 and blocked every later enable
-         * for good. It is asked for from awdlEnableIfReady() instead.
-         */
-    }
     LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
         (unsigned int)role);
     return 0;
