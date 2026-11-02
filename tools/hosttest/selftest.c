@@ -1117,6 +1117,12 @@ static void test_awdl_tx_guard(void)
         vif = rtw89_m80211_vif_alloc(hw, NL80211_IFTYPE_STATION, own);
         CHECK(vif != NULL);
         if (vif) {
+            /* Zeroed deliberately rather than trusted to arrive that way:
+             * a vif whose private area happened to hold an earlier test's
+             * bytes made this pass or fail by chip round. The shape being
+             * pinned is a dlink_pool of zeroes, which is what a torn-down
+             * vif leaves and what sent the driver eight bytes below zero. */
+            memset(vif->drv_priv, 0, 128);
             CHECK(!rtw89_compat_vif_can_tx(vif));
             rtw89_m80211_vif_free(vif);
         }

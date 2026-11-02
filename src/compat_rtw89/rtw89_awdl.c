@@ -634,11 +634,25 @@ int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
                                       gDataSeq++ & AWDL_SEQ_MASK);
     if (!len)
         return -EINVAL;
-    if (!gTx.data_sent && !gTx.data_failed)
+    if (!gTx.data_sent && !gTx.data_failed) {
         awdl_log("the first data frame: %u bytes of Ethernet in %u on air, to "
                  "%02x:%02x:%02x:%02x:%02x:%02x, type %02x%02x",
                  (unsigned int)eth_len, (unsigned int)len,
                  eth[0], eth[1], eth[2], eth[3], eth[4], eth[5], eth[12], eth[13]);
+        /*
+         * What awdl0 actually hands down, which is not what was assumed.
+         * The first one read 00 5c where an EtherType belongs, and 0x5c is
+         * 92, which is this frame's length less its 14-byte header: an 802.3
+         * length field, not a type. So the payload begins with an LLC header
+         * of its own, and if that LLC is already Apple's AWDL one then
+         * wrapping it again here is wrong and the peer sees nonsense.
+         *
+         * The layout this builds is the published one and has never been
+         * checked against a frame from this machine, so the frame is logged
+         * before anything is decided about it.
+         */
+        awdl_log_hex("what awdl0 handed down", eth, eth_len < 48 ? eth_len : 48);
+    }
     err = rtw89_mlme_tx_awdl(frame, len);
     if (err) {
         if (!gTx.data_failed++)
