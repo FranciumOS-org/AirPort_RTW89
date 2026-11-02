@@ -225,6 +225,16 @@ static uint8_t awdlSocialChannel()
     return AWDL_SOCIAL_CHANNEL;
 }
 
+/* Whether that boot-arg was given, which also makes it outrank the
+ * association's channel; see awdlClockUpdate(). */
+static bool awdlChannelAsked()
+{
+    unsigned int chan = 0;
+
+    return PE_parse_boot_argn("rtw89awdlchan", &chan, sizeof(chan)) &&
+           (chan == 6 || chan == 44 || chan == 149);
+}
+
 static unsigned int channelOfFreq(unsigned int freq)
 {
     if (freq == 2484)
@@ -2393,8 +2403,22 @@ void AirPort_RTW89::awdlClockUpdate()
      */
     want = _ns->vifUp && _ns->awdlTemplateLen > 0 && !_ns->awdlSyncOff;
     rtw89_glue_link(&link);
-    channel = isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
-                                : awdlSocialChannel();
+    /*
+     * The association's channel, unless a channel was asked for at boot.
+     *
+     * Following the association looked right -- one radio cannot hold both --
+     * but in practice macOS joins and drops a 5 GHz network every few seconds
+     * while AirDrop is open, and every change tears the schedule down and
+     * starts it again: 738 windows, then 1765, then 503, never long enough
+     * for a peer to see a stable timeline from us. With rtw89awdlchan set the
+     * channel is held through all of that, which costs the association on
+     * another band and is exactly what the boot-arg is for.
+     */
+    if (awdlChannelAsked())
+        channel = awdlSocialChannel();
+    else
+        channel = isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
+                                    : awdlSocialChannel();
     /*
      * A frame goes out on whatever channel the radio is on, and its own sync
      * parameters tell peers which channel the next window is on. Those have
