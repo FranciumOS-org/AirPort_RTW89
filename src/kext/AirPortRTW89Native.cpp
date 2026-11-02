@@ -67,6 +67,7 @@ struct AirPort_RTW89::NativeState {
     bool awdlSyncOff = false;       /* macOS asked for sync off, explicitly */
     uint8_t awdlClockChannel = 0;   /* the channel the schedule is describing */
     bool awdlClockOn = false;       /* whether the window clock is running */
+    unsigned int awdlScanHeld = 0;  /* scans answered from the cache for it */
     /* The sync frame the family builds for us to put on air. Broadcom's
      * setAWDL_SYNC_FRAME_TEMPLATE allocates 0x724 bytes for it, so that is the
      * size the family expects to be able to hand over. */
@@ -1655,6 +1656,32 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         /* a second request while one runs is answered by the same scan */
         if (_ns->scanInProgress)
             return kIOReturnSuccess;
+        /*
+         * Not while the AWDL clock is running on a channel of its own.
+         *
+         * One radio cannot scan and hold an availability window at the same
+         * time, and unassociated macOS scans more or less constantly. The
+         * cost was measured: with the clock on a social channel and nothing
+         * associated, 430 windows were missed in 29 s where an idle run
+         * missed none, and of 5632 frames offered to the AWDL path only 10
+         * were on the AWDL BSSID -- the radio was somewhere else nearly all
+         * the time, so peers were neither heard nor able to hear us.
+         *
+         * Answered from what has been heard instead, the same way a request
+         * between connected scans is. The cost is that a network appearing
+         * while AWDL runs unassociated will not show up until it stops,
+         * which is a trade only -rtw89awdl asks for.
+         */
+        if (_ns->awdlClockOn && !isConnected(link)) {
+            UInt32 result = 0;
+
+            if (!_ns->awdlScanHeld++)
+                LOG("awdl: the clock is running on channel %u, so scans are "
+                    "answered from the cache; the radio stays where peers are",
+                    (unsigned int)_ns->awdlClockChannel);
+            nativePost(APPLE80211_M_SCAN_DONE, &result, sizeof(result));
+            return kIOReturnSuccess;
+        }
         _ns->scanCursor = 0;
         /*
          * What was actually asked for. Until now the request was thrown away
