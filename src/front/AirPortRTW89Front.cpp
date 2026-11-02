@@ -68,6 +68,28 @@ extern "C" void rtw89_awdl_interface_state_change(void *peerManager, unsigned in
 extern "C" int rtw89_awdl_enable_awdl(void *peerManager)
     __asm__("__ZN22IO80211AWDLPeerManager10enableAWDLEv");
 
+/*
+ * The other half of the gate on received frames, and the half that was still
+ * shut. actionFrameProcessInput() looks at nothing unless both the state
+ * flag bit above and the word at 0xcd4 are set, and 0xcd4 is written in
+ * exactly one place in the family:
+ *
+ *   setAwdlSyncState(p):  ...  do_ioctl(SET, AWDL_SYNC_STATE, p)
+ *                              if (ok) _syncState = p->state
+ *                              do_ioctl(SET, AWDL_SYNC_ENABLED, { .enabled = 1 })
+ *
+ * and the only caller of that is the ioctl table -- so it happens when
+ * userspace asks for it, which on this machine it never does, because the
+ * engine was brought up here rather than along the family's own path. It
+ * skips configure() when the configured bit is already set, which it is by
+ * the time this runs, so the call is just the two settings and the write.
+ */
+struct rtw89_awdl_sync_state { unsigned int version; unsigned int state; };
+
+extern "C" int rtw89_awdl_set_sync_state(void *peerManager,
+                                         struct rtw89_awdl_sync_state *state)
+    __asm__("__ZN22IO80211AWDLPeerManager16setAwdlSyncStateEP26apple80211_awdl_sync_state");
+
 /* The front whose back takes the log lines; see LOG above. */
 static AirPortRTW89Front *gLogFront;
 
@@ -336,9 +358,23 @@ void AirPortRTW89Front::awdlEnableThread(thread_call_param_t p0, thread_call_par
     if (!(*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2)) {
         int e = rtw89_awdl_enable_awdl(const_cast<uint8_t *>(pm));
 
-        LOG("    after enableAWDL(): %d, state flags 0x%x, AWDL enabled %u", e,
+        LOG("    after enableAWDL(): %d, state flags 0x%x, sync state %u", e,
             *reinterpret_cast<const unsigned int *>(pm + 0x8528),
             *reinterpret_cast<const unsigned int *>(pm + 0xcd4));
+    }
+
+    /*
+     * And the sync state, which is the last thing standing between a frame
+     * from a peer and the family looking at it. Asking for state 1 is what
+     * userspace asks for when it is the one driving this.
+     */
+    if (!*reinterpret_cast<const unsigned int *>(pm + 0xcd4)) {
+        struct rtw89_awdl_sync_state want = { APPLE80211_VERSION, 1 };
+        int e = rtw89_awdl_set_sync_state(const_cast<uint8_t *>(pm), &want);
+
+        LOG("    after setAwdlSyncState(1): %d, sync state %u, state flags 0x%x", e,
+            *reinterpret_cast<const unsigned int *>(pm + 0xcd4),
+            *reinterpret_cast<const unsigned int *>(pm + 0x8528));
     }
     OSDecrementAtomic(&self->_awdlEnableBusy);
 }
