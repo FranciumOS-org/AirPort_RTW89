@@ -494,9 +494,24 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
          * the AWDL engine stayed idle while frames from a dozen peers were
          * handed to it and discarded.
          */
+        /*
+         * What the family's own code tests before it will do any of that,
+         * read straight out of the object. Both offsets come from
+         * IO80211FamilyLegacy's disassembly, the same place the vtable
+         * indices this file already depends on come from: setLinkState()
+         * compares the link state at 0xfc and returns if it is unchanged,
+         * and both of its branches do nothing at all unless the peer manager
+         * at 0xb0 is there. Read only, and only to say so in the log --
+         * every inference about this path so far has been wrong once.
+         */
+        const uint8_t *raw = reinterpret_cast<const uint8_t *>(vif);
+        void *pm = *reinterpret_cast<void *const *>(raw + 0xb0);
+        int before = *reinterpret_cast<const int *>(raw + 0xfc);
+
         vif->setLinkState(kIO80211NetworkLinkDown, 0);
         vif->setLinkState(kIO80211NetworkLinkUp, 1);
-        LOG("told the family the AWDL interface's link went down and up again");
+        LOG("AWDL link state %d -> %d, peer manager %s", before,
+            *reinterpret_cast<const int *>(raw + 0xfc), pm ? "there" : "MISSING");
     }
     LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
         (unsigned int)role);
