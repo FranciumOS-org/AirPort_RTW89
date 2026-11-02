@@ -35,6 +35,11 @@
 void rtw89_awdl_timing_start(void);
 void rtw89_awdl_timing_stop(void);
 
+/* The AWDL availability window clock: calls into the compat side once per
+ * window so it can keep the schedule and transmit on it. */
+void rtw89_awdl_clock_start(uint8_t channel);
+void rtw89_awdl_clock_stop(void);
+
 class AirPort_RTW89 : public IOEthernetController {
     OSDeclareDefaultStructors(AirPort_RTW89)
 

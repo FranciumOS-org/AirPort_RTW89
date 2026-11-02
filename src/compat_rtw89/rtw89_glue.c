@@ -2108,6 +2108,21 @@ void rtw89_glue_awdl_watch(bool on)
     rtw89_awdl_watch(on);
 }
 
+void rtw89_glue_awdl_tx_start(uint8_t channel)
+{
+    rtw89_awdl_tx_start(channel);
+}
+
+void rtw89_glue_awdl_tx_stop(void)
+{
+    rtw89_awdl_tx_stop();
+}
+
+void rtw89_glue_awdl_tick(uint32_t now_us)
+{
+    rtw89_awdl_tick(now_us);
+}
+
 void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac[6])
 {
     rtw89_awdl_set_template(tlvs, len, mac);

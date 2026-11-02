@@ -255,6 +255,10 @@ bool rtw89_mlme_authorized(void);
 size_t rtw89_mlme_assoc_rsn_ie(u8 *buf, size_t max);
 /* For tests: see every management frame the MLME transmits. */
 void rtw89_mlme_set_tx_tap(void (*tap)(const u8 *frame, size_t len));
+
+/* Put an AWDL frame on air as it is: no encryption, no management
+ * protection, and on whatever channel the radio is already on. */
+int rtw89_mlme_tx_awdl(const u8 *frame, size_t len);
 /* The AP's beacons while associated, FCS on; takes the skb. Any context. */
 void rtw89_mlme_rx_beacon(struct sk_buff *skb);
 /* The driver reports missed beacons / is done with a frame. Any context. */

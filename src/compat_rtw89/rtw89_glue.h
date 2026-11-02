@@ -343,6 +343,11 @@ void rtw89_glue_awdl_watch(bool on);
 /* Hand received AWDL action frames up through platform.awdl_frame as well. */
 void rtw89_glue_awdl_deliver(bool on);
 
+/* The transmit loop: the kext owns the clock, this owns the frames. */
+void rtw89_glue_awdl_tx_start(uint8_t channel);
+void rtw89_glue_awdl_tx_stop(void);
+void rtw89_glue_awdl_tick(uint32_t now_us);
+
 /* The sync frame template IO80211 built, and the AWDL address it is for. */
 void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac[6]);
 

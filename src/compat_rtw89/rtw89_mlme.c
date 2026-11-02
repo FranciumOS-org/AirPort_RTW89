@@ -3688,6 +3688,32 @@ void rtw89_mlme_set_tx_tap(void (*tap)(const u8 *frame, size_t len))
     mlme.tx_tap = tap;
 }
 
+/*
+ * Put a frame the AWDL side built on air as it is.
+ *
+ * It goes out unencrypted and unprotected whatever the link is doing: an AWDL
+ * action frame is addressed to Apple's AWDL address, not to the access point,
+ * and is not part of the association, so mlme_tx_mgmt()'s management
+ * protection must not touch it.  Everything else is the ordinary path, which
+ * means the radio has to be up and on the right channel already -- the caller
+ * owns the schedule, this only hands the frame to the chip.
+ */
+int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
+{
+    struct sk_buff *skb;
+
+    if (!frame || !len)
+        return -EINVAL;
+    if (!mlme.hw || !mlme.vif || !mlme.local || !mlme.chan)
+        return -ENETDOWN;       /* no radio to send it with yet */
+    skb = mlme_alloc_frame(len);
+    if (!skb)
+        return -ENOMEM;
+    memcpy(skb_put(skb, len), frame, len);
+    mlme_tx_frame(skb, IEEE80211_TX_INTFL_DONT_ENCRYPT);
+    return 0;
+}
+
 void rtw89_mlme_start(struct ieee80211_hw *hw, struct ieee80211_vif *vif, void (*notify)(void))
 {
     void (*tap)(const u8 *, size_t) = mlme.tx_tap;

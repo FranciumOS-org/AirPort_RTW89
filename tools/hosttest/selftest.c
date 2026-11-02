@@ -721,6 +721,7 @@ static struct sk_buff *awdl_frame(u8 subtype, size_t body_extra)
 }
 
 static void test_awdl_build(void);
+static void test_awdl_sync_params(void);
 
 static void test_awdl(void)
 {
@@ -876,6 +877,8 @@ static void test_awdl_build(void)
     CHECK(off == len - sizeof(struct ieee80211_hdr_3addr));     /* no slack */
     CHECK(seen == 7);
 
+    test_awdl_sync_params();
+
     /* and our own receiver accepts what we built */
     skb = dev_alloc_skb(len);
     CHECK(skb != NULL);
@@ -902,4 +905,71 @@ int rtw89_selftest(void)
 
     rtw88_compat_exit();
     return failures;
+}
+
+/*
+ * The schedule we transmit, checked against a frame a real iPhone sent on
+ * 2026-10-18.  Everything that is not our own schedule, our own address or
+ * our own channel sequence has to match that capture byte for byte: those
+ * fields are only known from it, so the capture is the specification.
+ */
+static void test_awdl_sync_params(void)
+{
+    /* straight off the air, the payload of its TLV 4 */
+    static const u8 real[73] = {
+        0x06,0x07,0x00,0x06,0x00,0x10,0x00,0x6e,0x00,0x00,0x10,0x10,
+        0x00,0x10,0x00,0x00,0x00,0x03,0x03,0x03,0x03,0xbe,0xd8,0xdc,
+        0x7c,0xa4,0x53,0x04,0x00,0x13,0x04,0x00,0x00,0x0f,0x01,0x00,
+        0x03,0xff,0xff,0x2b,0x06,0x00,0x00,0x1d,0x97,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x2b,0x06,0x00,0x00,0x1d,
+        0x97,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x20,
+        0xd4,
+    };
+    /* what is ours to choose, and so may differ from the capture */
+    static const u8 ours[] = {
+        1, 2,                       /* transmit down counter */
+        15, 16,                     /* TU left in the window */
+        21, 22, 23, 24, 25, 26,     /* master address */
+        29, 30,                     /* window number */
+        71, 72,                     /* unidentified, we send zero */
+    };
+    const u8 master[ETH_ALEN] = { 0xaa, 0xa6, 0x2f, 0xd2, 0xe3, 0x10 };
+    struct rtw89_awdl_schedule s = {
+        .channel = 6,
+        .tx_down_counter = 9,
+        .remaining_aw = 11,
+        .aw_seq = 0x0344,
+        .master = master,
+    };
+    u8 buf[RTW89_AWDL_SYNC_PARAMS_LEN];
+    size_t i, j;
+
+    CHECK(rtw89_awdl_build_sync_params(buf, sizeof(buf) - 1, &s) == 0);  /* too small */
+    CHECK(rtw89_awdl_build_sync_params(buf, sizeof(buf), &s) == sizeof(buf));
+
+    /* our own fields went in where we meant them to */
+    CHECK(buf[0] == 6 && buf[3] == 6);
+    CHECK(buf[1] == 9 && buf[2] == 0);
+    CHECK(buf[15] == 11 && buf[16] == 0);
+    CHECK(buf[29] == 0x44 && buf[30] == 0x03);
+    CHECK(memcmp(buf + 21, master, ETH_ALEN) == 0);
+
+    /* the schedule says we are on our channel in every slot */
+    for (i = 0; i < 16; i++) {
+        CHECK(buf[39 + 2 * i] == 0x2b);
+        CHECK(buf[39 + 2 * i + 1] == 6);
+    }
+
+    /* and everything else is what the real frame carried */
+    for (i = 0; i < sizeof(buf); i++) {
+        bool mine = false;
+
+        for (j = 0; j < sizeof(ours); j++)
+            if (ours[j] == i)
+                mine = true;
+        if (i >= 39 && i <= 70)         /* the channel sequence is ours too */
+            mine = true;
+        if (!mine)
+            CHECK(buf[i] == real[i]);
+    }
 }
