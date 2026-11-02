@@ -955,6 +955,20 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
     case APPLE80211_IOC_AWDL_ELECTION_RSSI_THRESHOLDS:
     case APPLE80211_IOC_AWDL_SOCIAL_TIME_SLOTS:
     case APPLE80211_IOC_AWDL_MIN_RATE:
+    /*
+     * The tail of the same sequence, refused on the first run through: the
+     * channel sequence, the presence mode, the extension state machine
+     * parameters and the sync state. The first of these is the one worth a
+     * second look later -- the channel sequence is the schedule, and we claim
+     * every slot on our own channel rather than following what the family
+     * hands down here -- but taking it is what lets configure() finish, and
+     * the frames we transmit are built from the template and our own clock
+     * either way.
+     */
+    case APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE:
+    case APPLE80211_IOC_AWDL_PRESENCE_MODE:
+    case APPLE80211_IOC_AWDL_EXTENSION_STATE_MACHINE_PARAMETERS:
+    case APPLE80211_IOC_AWDL_SYNC_STATE:
         if (!isSet)
             return EOPNOTSUPP;
         /* The first six bytes of an AWDL_BSSID payload are the address, and
