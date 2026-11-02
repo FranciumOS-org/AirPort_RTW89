@@ -627,6 +627,18 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
             LOG("    peer manager's interface %s, that interface's controller %s us",
                 pmIface == vif ? "is ours" : (pmIface ? "is SOMETHING ELSE" : "is MISSING"),
                 ifCtrl == self ? "is" : (ifCtrl ? "is NOT" : "is MISSING;"));
+            /*
+             * enableGated() is four instructions: if _enabling at 0x2f5 is
+             * already set it returns, otherwise it sets it and calls
+             * doEnable(). So _enabling says whether executeCommand() ever
+             * dispatched the action at all -- 0 means it did not, and the
+             * fault is in our controller's command gate rather than anywhere
+             * in the family; 1 with the flags still zero means doEnable()
+             * ran and gave up inside. _enabled at 0x2f4 is the other half.
+             */
+            LOG("    peer manager _enabling %u, _enabled %u",
+                *reinterpret_cast<const uint8_t *>(pm + 0x2f5),
+                *reinterpret_cast<const uint8_t *>(pm + 0x2f4));
         }
     }
 }
