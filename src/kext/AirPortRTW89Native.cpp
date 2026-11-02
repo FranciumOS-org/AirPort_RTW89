@@ -592,6 +592,7 @@ bool AirPort_RTW89::connectFront()
     back.power = backPower;
     back.virtual_request = backVirtualRequest;
     back.awdl_output = backAwdlOutput;
+    back.log = backLog;
 
     /* The receive half of the AWDL work: log the sync frames Apple devices
      * are already sending, to measure their timeline before joining it, and
@@ -801,6 +802,18 @@ uint32_t AirPort_RTW89::backOutput(void *ctx, mbuf_t m)
     }
     OSDecrementAtomic(&me->_txBusy);
     return result;
+}
+
+/*
+ * One line of the front's log, put in the same ring as ours so that the two
+ * halves of an event read in order. The driver is built with IOLog redefined
+ * to the ring's own function, so this is simply IOLog; the front is not, and
+ * its own IOLog reaches nothing on a kext loaded from the EFI.
+ */
+void AirPort_RTW89::backLog(void *ctx, const char *line)
+{
+    if (line)
+        IOLog("%s\n", line);
 }
 
 /*

@@ -27,7 +27,7 @@
 #include <stdint.h>
 #include <sys/kernel_types.h>   /* mbuf_t */
 
-#define RTW89_FRONT_API_VERSION 5
+#define RTW89_FRONT_API_VERSION 6
 #define RTW89_FRONT_CLASS       "AirPortRTW89Front"
 /* callPlatformFunction(name, true, back ops, front ops out, 0, 0) */
 #define RTW89_FRONT_CONNECT     "RTW89FrontConnect"
@@ -114,6 +114,18 @@ struct rtw89_back_ops {
      * every packet of the connection going nowhere.
      */
     uint32_t (*awdl_output)(void *ctx, mbuf_t m);
+    /*
+     * One already-formatted line for the driver's log ring, the one
+     * `rtw89ctl log` reads.
+     *
+     * The front's own IOLog goes nowhere. Loaded from the EFI it does not
+     * reach the unified log, and the kernel message buffer is too small to
+     * hold it -- an hour of running produced not one front line anywhere,
+     * the one written at probe included. That is why the driver has a ring
+     * at all (src/kext/rtw89_logring.cpp); the front borrows it, so that
+     * both halves of one event can be read in one place and in order.
+     */
+    void (*log)(void *ctx, const char *line);
 };
 
 #ifdef __cplusplus

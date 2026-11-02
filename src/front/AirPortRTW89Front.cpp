@@ -11,7 +11,14 @@
 #include <sys/errno.h>
 #include <sys/kpi_mbuf.h>
 
-#define LOG(fmt, ...) IOLog("AirPortRTW89Front: " fmt "\n", ##__VA_ARGS__)
+/*
+ * Every front line goes to the driver's log ring, because the front's own
+ * IOLog reaches nothing: not the unified log, not dmesg for longer than a
+ * few seconds. Before the driver connects there is nowhere to put a line but
+ * IOLog, so that is still the fallback, and those early lines are the ones
+ * that may well be lost.
+ */
+#define LOG(fmt, ...) rtw89FrontLog("AirPortRTW89Front: " fmt, ##__VA_ARGS__)
 
 /* Until the driver proper has read the real address from the chip. */
 static const IOEthernetAddress kPlaceholderMac = {{ 0x02, 0x00, 0x00, 0x00, 0x00, 0x00 }};
@@ -30,6 +37,26 @@ OSDefineMetaClassAndStructors(AirPortRTW89FrontInterface, IO80211Interface)
 
 /* One card, one front: set through rtw89_front_ops.set_apple_rsn(). */
 static volatile bool gAppleRsn;
+
+/* The front whose back takes the log lines; see LOG above. */
+static AirPortRTW89Front *gLogFront;
+
+static void rtw89FrontLog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+static void rtw89FrontLog(const char *fmt, ...)
+{
+    AirPortRTW89Front *front = gLogFront;
+    char line[512];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+
+    if (front && front->logLine(line))
+        return;
+    IOLog("%s\n", line);
+}
 
 /*
  * The one front, for the AWDL interface to hand its packets back to. The
@@ -193,6 +220,19 @@ void AirPortRTW89Front::backLeave()
     OSDecrementAtomic(&_backCalls);
 }
 
+bool AirPortRTW89Front::logLine(const char *line)
+{
+    bool done = false;
+
+    const bool there = backEnter();
+    if (there && _back.log) {
+        _back.log(_back.ctx, line);
+        done = true;
+    }
+    backLeave();
+    return done;
+}
+
 IOReturn AirPortRTW89Front::callPlatformFunction(const OSSymbol *functionName, bool waitForFunction,
                                                  void *param1, void *param2, void *param3,
                                                  void *param4)
@@ -268,6 +308,7 @@ IOReturn AirPortRTW89Front::connectBack(const struct rtw89_back_ops *back,
     front->destroy_vif = opDestroyVif;
     front->awdl_rx = opAwdlRx;
 
+    gLogFront = this;
     setProperty("RTW89 Back Connected", kOSBooleanTrue);
     LOG("driver connected, address %02x:%02x:%02x:%02x:%02x:%02x", _mac.bytes[0], _mac.bytes[1],
         _mac.bytes[2], _mac.bytes[3], _mac.bytes[4], _mac.bytes[5]);
@@ -294,11 +335,13 @@ IOReturn AirPortRTW89Front::disconnectBack()
     IOLockUnlock(_backLock);
 
     if (was) {
+        /* the last line that can still reach the ring */
+        LOG("driver disconnected");
         setProperty("RTW89 Back Connected", kOSBooleanFalse);
         if (_netif)
             opSetLink(this, false, 0, 0);
-        LOG("driver disconnected");
     }
+    gLogFront = nullptr;
     return kIOReturnSuccess;
 }
 

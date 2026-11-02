@@ -48,6 +48,8 @@ class AirPortRTW89Front : public IO80211Controller {
 public:
     /* Packets the family sent to awdl0, from AirPortRTW89AwdlInterface. */
     UInt32 awdlOutput(mbuf_t m);
+    /* One log line into the driver's ring; false if the driver is not there. */
+    bool logLine(const char *line);
     /* IOService */
     bool start(IOService *provider) override;
     void stop(IOService *provider) override;
