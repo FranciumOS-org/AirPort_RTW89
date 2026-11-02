@@ -123,6 +123,7 @@ private:
     static void scanDone(void *ctx, bool aborted);
     static void backGetMac(void *ctx, uint8_t mac[6]);
     static int backSetMac(void *ctx, const uint8_t mac[6]);
+    static uint32_t backAwdlOutput(void *ctx, mbuf_t m);
     static int backRequest(void *ctx, unsigned int type, int number, void *interface, void *data);
     static int backIoctl(void *ctx, void *interface, void *vif, void *ifnet, unsigned long cmd,
                          void *data, bool *handled);

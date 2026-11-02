@@ -31,6 +31,33 @@ OSDefineMetaClassAndStructors(AirPortRTW89FrontInterface, IO80211Interface)
 /* One card, one front: set through rtw89_front_ops.set_apple_rsn(). */
 static volatile bool gAppleRsn;
 
+/*
+ * The one front, for the AWDL interface to hand its packets back to. The
+ * interface is built by the family through createVirtualInterface() and has
+ * no pointer of its own to the controller that owns it; there is one card and
+ * one front, the same assumption gAppleRsn above already makes.
+ */
+static AirPortRTW89Front *gFront;
+
+OSDefineMetaClassAndStructors(AirPortRTW89AwdlInterface, IO80211P2PInterface)
+
+/*
+ * Everything the family sends over awdl0: the mDNS that finds a peer and then
+ * the TCP that carries the transfer. It arrives as a plain Ethernet frame,
+ * the same shape the controller's own outputPacket() takes, and goes to the
+ * driver to be put inside an AWDL data frame.
+ */
+UInt32 AirPortRTW89AwdlInterface::outputPacket(mbuf_t m, void *param)
+{
+    AirPortRTW89Front *front = gFront;
+
+    if (front)
+        return front->awdlOutput(m);
+    if (m)
+        mbuf_freem(m);
+    return kIOReturnOutputDropped;
+}
+
 UInt32 AirPortRTW89FrontInterface::inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options,
                                                void *param)
 {
@@ -317,12 +344,14 @@ void AirPortRTW89Front::opSetAppleRsn(void *ctx, bool on)
  */
 IO80211VirtualInterface *AirPortRTW89Front::createVirtualInterface(ether_addr *addr, UInt role)
 {
-    IO80211P2PInterface *vif;
+    AirPortRTW89AwdlInterface *vif;
 
     if (role != APPLE80211_VIF_AWDL)
         return super::createVirtualInterface(addr, role);
 
-    vif = OSTypeAlloc(IO80211P2PInterface);
+    /* Ours, not the family's plain one, only so that outputPacket() is a
+     * method we own: everything else about it is IO80211P2PInterface. */
+    vif = OSTypeAlloc(AirPortRTW89AwdlInterface);
     if (!vif) {
         LOG("out of memory for the AWDL interface");
         return nullptr;
@@ -372,6 +401,7 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
         return ENODEV;
     }
     self->_vif = vif;
+    gFront = self;
     name = vif->getBSDName();
     if (bsd_name) {
         bzero(bsd_name, IFNAMSIZ);
@@ -483,6 +513,9 @@ void AirPortRTW89Front::opDestroyVif(void *ctx)
     if (!vif)
         return;
     self->_vif = nullptr;
+    /* before the detach, so no packet can arrive with nowhere to go */
+    if (gFront == self)
+        gFront = nullptr;
     self->detachVirtualInterface(vif, true);
     LOG("virtual interface down");
 }
@@ -631,6 +664,23 @@ IOReturn AirPortRTW89Front::disable(IONetworkInterface *iface)
         _back.enable(_back.ctx, false);
     backLeave();
     IO80211Controller::setLinkStatus(kIONetworkLinkValid | kIONetworkLinkNoNetworkChange);
+    return ret;
+}
+
+/* The same path as outputPacket() below, for awdl0 rather than en1. */
+UInt32 AirPortRTW89Front::awdlOutput(mbuf_t m)
+{
+    UInt32 ret;
+
+    const bool there = backEnter();
+    if (there && _back.awdl_output) {
+        ret = _back.awdl_output(_back.ctx, m);
+    } else {
+        if (m)
+            mbuf_freem(m);
+        ret = kIOReturnOutputDropped;
+    }
+    backLeave();
     return ret;
 }
 

@@ -27,7 +27,7 @@
 #include <stdint.h>
 #include <sys/kernel_types.h>   /* mbuf_t */
 
-#define RTW89_FRONT_API_VERSION 4
+#define RTW89_FRONT_API_VERSION 5
 #define RTW89_FRONT_CLASS       "AirPortRTW89Front"
 /* callPlatformFunction(name, true, back ops, front ops out, 0, 0) */
 #define RTW89_FRONT_CONNECT     "RTW89FrontConnect"
@@ -104,6 +104,16 @@ struct rtw89_back_ops {
      * virtual interface (awdl0) */
     int (*virtual_request)(void *ctx, unsigned int type, int number, void *virtual_interface,
                            void *data);
+    /*
+     * An Ethernet frame the family handed to awdl0, from
+     * IO80211VirtualInterface::outputPacket(). Same contract as output()
+     * above: the mbuf is the back's unless it stalls.
+     *
+     * Discovery works without this -- a peer finds us from the sync frames
+     * alone -- but a transfer does not: AirDrop stops at "Waiting..." with
+     * every packet of the connection going nowhere.
+     */
+    uint32_t (*awdl_output)(void *ctx, mbuf_t m);
 };
 
 #ifdef __cplusplus

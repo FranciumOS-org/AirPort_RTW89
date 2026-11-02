@@ -591,6 +591,7 @@ bool AirPort_RTW89::connectFront()
     back.output = backOutput;
     back.power = backPower;
     back.virtual_request = backVirtualRequest;
+    back.awdl_output = backAwdlOutput;
 
     /* The receive half of the AWDL work: log the sync frames Apple devices
      * are already sending, to measure their timeline before joining it, and
@@ -800,6 +801,26 @@ uint32_t AirPort_RTW89::backOutput(void *ctx, mbuf_t m)
     }
     OSDecrementAtomic(&me->_txBusy);
     return result;
+}
+
+/*
+ * A packet the family sent to awdl0. Unlike backOutput() above there is no
+ * queue behind this and nothing to stall against: AWDL frames go out inside
+ * availability windows, so a packet that cannot go now is dropped rather than
+ * offered again later, when its window has passed anyway.
+ */
+uint32_t AirPort_RTW89::backAwdlOutput(void *ctx, mbuf_t m)
+{
+    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
+    size_t len = mbuf_pkthdr_len(m);
+    uint8_t eth[1536];
+
+    OSIncrementAtomic(&me->_txBusy);
+    if (len >= 14 && len <= sizeof(eth) && mbuf_copydata(m, 0, len, eth) == 0)
+        rtw89_glue_awdl_data_tx(eth, len);
+    mbuf_freem(m);
+    OSDecrementAtomic(&me->_txBusy);
+    return kIOReturnOutputSuccess;
 }
 
 int AirPort_RTW89::backRequest(void *ctx, unsigned int type, int number, void *interface, void *data)

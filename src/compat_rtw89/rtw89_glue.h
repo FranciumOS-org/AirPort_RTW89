@@ -356,6 +356,11 @@ void rtw89_glue_awdl_tick(uint32_t now_us);
 /* How many sync frames went out, and how many could not. */
 void rtw89_glue_awdl_tx_counts(uint32_t *sent, uint32_t *failed);
 
+/* An Ethernet frame the family sent to awdl0, to go out as an AWDL data
+ * frame. Returns 0, or a negative errno when there is nothing to send it on. */
+int rtw89_glue_awdl_data_tx(const uint8_t *eth, size_t len);
+void rtw89_glue_awdl_data_counts(uint32_t *sent, uint32_t *failed);
+
 /* The sync frame template IO80211 built, and the AWDL address it is for. */
 void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac[6]);
 

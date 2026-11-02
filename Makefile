@@ -394,7 +394,11 @@ $(HOSTTEST_STAMP): $(ALL_OBJS) $(wildcard tools/hosttest/*.c) $(SAE_SRCS) \
 # Run `make hosttest` before you install.
 #
 ifeq ($(NOTEST),1)
-KEXT_DEPS :=
+# Still the objects themselves: the stamp was carrying that dependency, and
+# without it this linked whatever was last compiled. It caught itself on the
+# KPI check -- an undefined symbol whose source had been edited minutes
+# earlier -- which is the sort of thing that otherwise reaches the machine.
+KEXT_DEPS := $(ALL_OBJS)
 else
 KEXT_DEPS := $(HOSTTEST_STAMP)
 endif

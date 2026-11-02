@@ -111,4 +111,13 @@ void rtw89_awdl_tick(u32 now_us);
 /* How many frames went out, and how many could not. */
 void rtw89_awdl_tx_counts(u32 *sent, u32 *failed);
 
+/*
+ * Data frames: what a transfer travels in, once peers know about each other.
+ * @eth is a whole Ethernet frame as the family handed it to awdl0.
+ */
+size_t rtw89_awdl_build_data_frame(u8 *buf, size_t size, const u8 *src,
+                                   const u8 *eth, size_t eth_len, u16 seq);
+int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len);
+void rtw89_awdl_data_counts(u32 *sent, u32 *failed);
+
 #endif /* RTW89_AWDL_H */

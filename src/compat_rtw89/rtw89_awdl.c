@@ -446,6 +446,8 @@ static struct {
     u32  windows;
     u32  sent;
     u32  failed;
+    u32  data_sent;
+    u32  data_failed;
 } gTx;
 
 void rtw89_awdl_tx_start(u8 channel)
@@ -543,4 +545,114 @@ void rtw89_awdl_tick(u32 now_us)
     if (gTx.sent++ < 4 || !(gTx.sent % 64))
         awdl_log("sync frame %u sent, %u bytes, window %u", gTx.sent,
                  (unsigned int)len, (unsigned int)gTx.aw_seq);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Data frames                                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * What a transfer travels in. The sync frames above only make peers aware of
+ * each other; AirDrop stops at "Waiting..." until the mDNS and the TCP that
+ * follow it can actually move, and those arrive from the family as ordinary
+ * Ethernet frames on awdl0.
+ *
+ * An AWDL data frame is an 802.11 data frame addressed the way the sync
+ * frames are -- the peer, us, and Apple's AWDL address as the BSSID -- with
+ * Apple's own SNAP header in place of the usual one, and a short AWDL header
+ * carrying the EtherType the Ethernet frame had. The payload is the Ethernet
+ * frame with its 14-byte header removed: the addresses are already in the
+ * 802.11 header and the EtherType is in the AWDL one.
+ *
+ * The layout is the published one (the AWDL reverse-engineering work), not
+ * something measured here, so the first thing the counters will tell us is
+ * whether a peer accepts it.
+ */
+#define AWDL_DATA_HDR_LEN   12      /* SNAP (6) + AWDL data header (6) */
+
+static u16 gDataSeq;
+
+size_t rtw89_awdl_build_data_frame(u8 *buf, size_t size, const u8 *src,
+                                   const u8 *eth, size_t eth_len, u16 seq)
+{
+    struct ieee80211_hdr_3addr *hdr;
+    size_t payload, need;
+    u8 *p;
+
+    if (!buf || !src || !eth || eth_len < ETH_HLEN)
+        return 0;
+    payload = eth_len - ETH_HLEN;
+    need = sizeof(*hdr) + AWDL_DATA_HDR_LEN + payload;
+    if (need > size)
+        return 0;
+
+    memset(buf, 0, sizeof(*hdr) + AWDL_DATA_HDR_LEN);
+    hdr = (struct ieee80211_hdr_3addr *)buf;
+    hdr->frame_control = cpu_to_le16(IEEE80211_FTYPE_DATA | IEEE80211_STYPE_DATA);
+    hdr->duration_id = 0;
+    /* where the Ethernet frame was going, which for mDNS is a multicast group */
+    memcpy(hdr->addr1, eth, ETH_ALEN);
+    memcpy(hdr->addr2, src, ETH_ALEN);
+    memcpy(hdr->addr3, kAwdlBssid, ETH_ALEN);
+    hdr->seq_ctrl = cpu_to_le16((u16)(seq << 4));
+
+    p = buf + sizeof(*hdr);
+    /* SNAP, with Apple's OUI where a normal frame has 00:00:00 */
+    p[0] = 0xaa;
+    p[1] = 0xaa;
+    p[2] = 0x03;
+    p[3] = 0x00;
+    p[4] = 0x17;
+    p[5] = 0xf2;
+    /* the AWDL data header: 0x0300, then the EtherType the Ethernet frame had */
+    p[6] = 0x03;
+    p[7] = 0x00;
+    p[8] = 0x00;
+    p[9] = 0x00;
+    p[10] = eth[12];
+    p[11] = eth[13];
+
+    memcpy(buf + sizeof(*hdr) + AWDL_DATA_HDR_LEN, eth + ETH_HLEN, payload);
+    return need;
+}
+
+int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
+{
+    u8 frame[sizeof(struct ieee80211_hdr_3addr) + AWDL_DATA_HDR_LEN + 2048];
+    const u8 *mac = NULL;
+    size_t len;
+    int err;
+
+    if (!gTx.on)
+        return -ENETDOWN;       /* no schedule: nothing a peer would hear */
+    if (!rtw89_awdl_get_template(NULL, &mac) || !mac)
+        return -ENETDOWN;
+    if (eth_len < ETH_HLEN || eth_len > 2048 + ETH_HLEN)
+        return -EINVAL;
+
+    len = rtw89_awdl_build_data_frame(frame, sizeof(frame), mac, eth, eth_len,
+                                      gDataSeq++ & AWDL_SEQ_MASK);
+    if (!len)
+        return -EINVAL;
+    if (!gTx.data_sent && !gTx.data_failed)
+        awdl_log("the first data frame: %u bytes of Ethernet in %u on air, to "
+                 "%02x:%02x:%02x:%02x:%02x:%02x, type %02x%02x",
+                 (unsigned int)eth_len, (unsigned int)len,
+                 eth[0], eth[1], eth[2], eth[3], eth[4], eth[5], eth[12], eth[13]);
+    err = rtw89_mlme_tx_awdl(frame, len);
+    if (err) {
+        if (!gTx.data_failed++)
+            awdl_log("the first data frame could not be sent: %d", err);
+    } else {
+        gTx.data_sent++;
+    }
+    return err;
+}
+
+void rtw89_awdl_data_counts(u32 *sent, u32 *failed)
+{
+    if (sent)
+        *sent = gTx.data_sent;
+    if (failed)
+        *failed = gTx.data_failed;
 }
