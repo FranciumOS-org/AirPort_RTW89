@@ -589,9 +589,31 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
      * itself, never the packet it was handed. */
     rtw89_vif_bpf_tap_input(vif, m, 12, hdr, sizeof(hdr));
     self->freePacket(m);
-    if (self->_awdlRxFed++ % 100 == 0)
+    if (self->_awdlRxFed++ % 100 == 0) {
+        /*
+         * What becomes of the frame, as the family decides it.
+         * actionFrameProcessInput() looks at a frame only when the AWDL peer
+         * manager's 0xcd4 is non-zero and bit 1 of its 0x8528 is set; both
+         * are set by configure(), which runs from enable(), which the link-up
+         * branch of setLinkState() calls. The link state at 0xfc is what that
+         * branch is chosen by, and it has been seen going back down to 1
+         * after we set it up, which is why it is printed every time rather
+         * than once. All three offsets are read-only and come from
+         * IO80211FamilyLegacy's disassembly.
+         */
+        const uint8_t *vraw = reinterpret_cast<const uint8_t *>(vif);
+        const uint8_t *pm = *reinterpret_cast<const uint8_t *const *>(vraw + 0xb0);
+
         LOG("handed AWDL frame %u to IO80211 (channel %u, from %02x:%02x:%02x:%02x:%02x:%02x)",
             self->_awdlRxFed, channel, peer[0], peer[1], peer[2], peer[3], peer[4], peer[5]);
+        if (pm)
+            LOG("    link state %d, AWDL enabled %u, state flags 0x%x -> frame %s",
+                *reinterpret_cast<const int *>(vraw + 0xfc),
+                *reinterpret_cast<const unsigned int *>(pm + 0xcd4),
+                *reinterpret_cast<const unsigned int *>(pm + 0x8528),
+                (*reinterpret_cast<const unsigned int *>(pm + 0xcd4) &&
+                 (*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2)) ? "looked at" : "DROPPED");
+    }
 }
 
 void AirPortRTW89Front::opDestroyVif(void *ctx)
