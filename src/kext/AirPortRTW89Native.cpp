@@ -930,6 +930,43 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
      * answers EINVAL when it does not match, then reports what its firmware
      * says. We have no firmware AWDL block, so our own state is the answer.
      */
+    /*
+     * What IO80211AWDLPeerManager::configure() sets on its way through.
+     *
+     * configure() is what finally sets the flags that decide whether a
+     * received AWDL frame is looked at at all, and it gives up on the first
+     * of these it cannot set -- "Unable to set BSSID", and then nothing is
+     * ever enabled. That is where this stopped for a whole afternoon: every
+     * other piece worked, frames went out on schedule and came back in and
+     * were handed over, and the engine behind them had never been switched
+     * on because of one refusal here.
+     *
+     * There is no AWDL block in this chip's firmware to program with any of
+     * it. The BSSID is already what rtw89_awdl.c addresses frames to, the
+     * channel sequence and timing are worked out here rather than offloaded,
+     * and the election is the family's business. So these are accepted and
+     * logged rather than acted on: taking them is what lets the engine run.
+     * Gets are still refused, because answering a question about state we do
+     * not keep would be worse than saying we cannot.
+     */
+    case APPLE80211_IOC_AWDL_BSSID:
+    case APPLE80211_IOC_AWDL_ELECTION_ID:
+    case APPLE80211_IOC_AWDL_MASTER_CHANNEL:
+    case APPLE80211_IOC_AWDL_ELECTION_RSSI_THRESHOLDS:
+    case APPLE80211_IOC_AWDL_SOCIAL_TIME_SLOTS:
+    case APPLE80211_IOC_AWDL_MIN_RATE:
+        if (!isSet)
+            return EOPNOTSUPP;
+        /* The first six bytes of an AWDL_BSSID payload are the address, and
+         * it is worth seeing whether it is the one we already transmit to. */
+        if (number == APPLE80211_IOC_AWDL_BSSID) {
+            const uint8_t *b = static_cast<const uint8_t *>(data);
+
+            LOG("awdl: the family set the BSSID, payload starts "
+                "%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5]);
+        }
+        return kIOReturnSuccess;
+
     case APPLE80211_IOC_AWDL_SYNC_ENABLED: {
         struct apple80211_awdl_sync_enabled *d =
             static_cast<struct apple80211_awdl_sync_enabled *>(data);
