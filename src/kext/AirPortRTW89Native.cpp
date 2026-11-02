@@ -215,24 +215,56 @@ struct Scratch {
  * three is worth holding is a question for the card rather than for a guess,
  * and this makes it one reboot instead of one build.
  */
+/*
+ * Read once and said out loud, because 6 is also the default: every run so
+ * far reported "channel 6" whether the boot-arg had been understood or not,
+ * and a later switch to the association's channel showed that it had not.
+ * Both forms are accepted -- PE_parse_boot_argn fills an int for
+ * rtw89awdlchan=44 and a string for some boot loaders -- and what was found
+ * is logged rather than assumed.
+ */
+static bool gAwdlChanRead;
+static unsigned int gAwdlChan;
+
+static void awdlReadChannelArg()
+{
+    unsigned int n = 0;
+    char str[8] = {};
+
+    if (gAwdlChanRead)
+        return;
+    gAwdlChanRead = true;
+    if (PE_parse_boot_argn("rtw89awdlchan", &n, sizeof(n)) &&
+        (n == 6 || n == 44 || n == 149))
+        gAwdlChan = n;
+    else if (PE_parse_boot_argn("rtw89awdlchan", str, sizeof(str) - 1)) {
+        unsigned int v = 0;
+
+        for (size_t i = 0; i < sizeof(str) && str[i] >= '0' && str[i] <= '9'; i++)
+            v = v * 10 + (unsigned int)(str[i] - '0');
+        if (v == 6 || v == 44 || v == 149)
+            gAwdlChan = v;
+    }
+    if (gAwdlChan)
+        IOLog("AirPort_RTW89: awdl: boot-arg rtw89awdlchan asks for channel %u; "
+              "it is held whatever the association does\n", gAwdlChan);
+    else
+        IOLog("AirPort_RTW89: awdl: no rtw89awdlchan boot-arg, so the channel "
+              "follows the association and falls back to %u\n", AWDL_SOCIAL_CHANNEL);
+}
+
 static uint8_t awdlSocialChannel()
 {
-    unsigned int chan = 0;
-
-    if (PE_parse_boot_argn("rtw89awdlchan", &chan, sizeof(chan)) &&
-        (chan == 6 || chan == 44 || chan == 149))
-        return (uint8_t)chan;
-    return AWDL_SOCIAL_CHANNEL;
+    awdlReadChannelArg();
+    return gAwdlChan ? (uint8_t)gAwdlChan : AWDL_SOCIAL_CHANNEL;
 }
 
 /* Whether that boot-arg was given, which also makes it outrank the
  * association's channel; see awdlClockUpdate(). */
 static bool awdlChannelAsked()
 {
-    unsigned int chan = 0;
-
-    return PE_parse_boot_argn("rtw89awdlchan", &chan, sizeof(chan)) &&
-           (chan == 6 || chan == 44 || chan == 149);
+    awdlReadChannelArg();
+    return gAwdlChan != 0;
 }
 
 static unsigned int channelOfFreq(unsigned int freq)
