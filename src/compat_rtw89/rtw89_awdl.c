@@ -145,6 +145,9 @@ static void awdl_log_hex(const char *what, const u8 *v, size_t len)
     }
 }
 
+/* What has come back the other way; see rtw89_awdl_rx(). */
+static struct { u32 data_seen; } gRx;
+
 bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
 {
     const struct ieee80211_mgmt *mgmt = (const void *)skb->data;
@@ -154,11 +157,46 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
     u32 phy_tx, target_tx;
     unsigned int slot;
 
+    if (len < sizeof(struct ieee80211_hdr_3addr))
+        return false;
+    if (!ether_addr_equal(mgmt->bssid, kAwdlBssid))
+        return false;
+    /*
+     * A data frame on the AWDL BSSID, which is what a transfer is made of.
+     * Only action frames were recognised here before, so these fell through
+     * to mac80211, which has no station for this BSSID and dropped them:
+     * awdl0 received nothing at all while the sync frames flowed both ways.
+     *
+     * The payload past the 24-byte header is already what the stack above
+     * expects -- Apple's SNAP header and AWDL data header, as our own
+     * transmit side learned -- so all that is missing is the 802.3 header
+     * the interface works in, built from the addresses the 802.11 header
+     * carries.
+     */
+    if (ieee80211_is_data(mgmt->frame_control)) {
+        const u8 *body = (const u8 *)mgmt + sizeof(struct ieee80211_hdr_3addr);
+        size_t payload = len - sizeof(struct ieee80211_hdr_3addr);
+        u8 eth[ETH_HLEN + 2048];
+
+        if (!payload || payload > sizeof(eth) - ETH_HLEN)
+            return false;
+        memcpy(eth, mgmt->da, ETH_ALEN);
+        memcpy(eth + ETH_ALEN, mgmt->sa, ETH_ALEN);
+        eth[12] = (u8)(payload >> 8);
+        eth[13] = (u8)payload;
+        memcpy(eth + ETH_HLEN, body, payload);
+        if (!gRx.data_seen++)
+            awdl_log("the first data frame from a peer: %u bytes on air, %u to "
+                     "awdl0, from %02x:%02x:%02x:%02x:%02x:%02x",
+                     (unsigned int)len, (unsigned int)(payload + ETH_HLEN),
+                     mgmt->sa[0], mgmt->sa[1], mgmt->sa[2],
+                     mgmt->sa[3], mgmt->sa[4], mgmt->sa[5]);
+        rtw89_glue_awdl_data(eth, payload + ETH_HLEN);
+        return true;
+    }
     if (len < sizeof(struct ieee80211_hdr_3addr) + AWDL_FIXED_LEN)
         return false;
     if (!ieee80211_is_action(mgmt->frame_control))
-        return false;
-    if (!ether_addr_equal(mgmt->bssid, kAwdlBssid))
         return false;
 
     body = (const u8 *)mgmt + sizeof(struct ieee80211_hdr_3addr);

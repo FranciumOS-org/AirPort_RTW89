@@ -27,7 +27,7 @@
 #include <stdint.h>
 #include <sys/kernel_types.h>   /* mbuf_t */
 
-#define RTW89_FRONT_API_VERSION 6
+#define RTW89_FRONT_API_VERSION 7
 #define RTW89_FRONT_CLASS       "AirPortRTW89Front"
 /* callPlatformFunction(name, true, back ops, front ops out, 0, 0) */
 #define RTW89_FRONT_CONNECT     "RTW89FrontConnect"
@@ -75,6 +75,18 @@ struct rtw89_front_ops {
      * @channel the channel it arrived on. Only valid during the call. */
     void (*awdl_rx)(void *ctx, const uint8_t *frame, size_t len,
                     const uint8_t peer[6], uint32_t channel);
+    /*
+     * A received AWDL data frame, already turned into the 802.3 frame awdl0
+     * works in: destination, source, length, and then the payload exactly as
+     * it arrived -- Apple's SNAP header and AWDL data header included, since
+     * the stack above expects to find them there.
+     *
+     * The action frames above only carry discovery. A transfer needs this:
+     * without it awdl0 receives nothing at all (Ipkts 0 with the sync frames
+     * flowing), so the mDNS reply and every packet of the TCP that follows
+     * are lost and AirDrop never gets past "Waiting...".
+     */
+    void (*awdl_data_rx)(void *ctx, const uint8_t *eth, size_t len);
 };
 
 /* What the back does for the front. */

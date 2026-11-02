@@ -2198,6 +2198,13 @@ void rtw89_glue_awdl_frame(const u8 *frame, size_t len, const u8 peer[6], u32 ch
         glue.plat.awdl_frame(glue.plat.ctx, frame, len, peer, channel);
 }
 
+/* From rtw89_awdl.c as well, with the frame already in 802.3 form. */
+void rtw89_glue_awdl_data(const u8 *eth, size_t len)
+{
+    if (glue.plat.awdl_data)
+        glue.plat.awdl_data(glue.plat.ctx, eth, len);
+}
+
 void rtw89_glue_set_rejoin(bool on)
 {
     if (!glue.active)

@@ -483,6 +483,7 @@ IOReturn AirPortRTW89Front::connectBack(const struct rtw89_back_ops *back,
     front->create_vif = opCreateVif;
     front->destroy_vif = opDestroyVif;
     front->awdl_rx = opAwdlRx;
+    front->awdl_data_rx = opAwdlDataRx;
 
     gLogFront = this;
     setProperty("RTW89 Back Connected", kOSBooleanTrue);
@@ -799,6 +800,41 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
                 *reinterpret_cast<const uint8_t *>(pm + 0x2f4));
         }
     }
+}
+
+/*
+ * A received AWDL data frame on its way to awdl0, which is where a transfer
+ * lives. The action frames go to the peer manager through bpfTapInput(); a
+ * data frame goes to the interface itself.
+ *
+ * IO80211VirtualInterface::inputPacket() sets the receive interface from the
+ * virtual interface's own ifnet, lets the peer manager look at the frame --
+ * it reads the destination and source out of the 802.3 header, which is why
+ * the driver builds one -- and pushes it up. The packet becomes the family's
+ * either way: it is pushed on or freed inside, and nothing comes back.
+ *
+ * The packet_info_tag is a structure with no layout in any header here. The
+ * family only passes the pointer along and never reads through it on this
+ * path, so a zeroed one of generous size is enough and is what is sent.
+ */
+void AirPortRTW89Front::opAwdlDataRx(void *ctx, const uint8_t *eth, size_t len)
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+    IO80211VirtualInterface *vif = self->_vif;
+    uint8_t tag[64] = {};
+    mbuf_t m;
+
+    self->_awdlDataInSeen++;
+    if (!vif || !eth || !len)
+        return;
+    m = self->allocatePacket((unsigned int)len);
+    if (!m)
+        return;
+    memcpy(mbuf_data(m), eth, len);
+    vif->inputPacket(m, reinterpret_cast<packet_info_tag *>(tag));
+    if (!self->_awdlDataInUp++)
+        LOG("the first data frame from a peer went up to awdl0, %u bytes",
+            (unsigned int)len);
 }
 
 void AirPortRTW89Front::opDestroyVif(void *ctx)

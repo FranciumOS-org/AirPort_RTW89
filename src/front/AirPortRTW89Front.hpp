@@ -119,6 +119,7 @@ private:
     static void opDestroyVif(void *ctx);
     static void opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
                          const uint8_t peer[6], uint32_t channel);
+    static void opAwdlDataRx(void *ctx, const uint8_t *eth, size_t len);
 
     IOPCIDevice *_pci = nullptr;
     IO80211WorkLoop *_workLoop = nullptr;
@@ -131,6 +132,9 @@ private:
     unsigned int _awdlRxFed = 0;
     unsigned int _awdlRxNoVif = 0;
     unsigned int _awdlRxNoBuf = 0;
+    /* and of the received AWDL data frames (see opAwdlDataRx) */
+    unsigned int _awdlDataInSeen = 0;
+    unsigned int _awdlDataInUp = 0;
     /* Switching the family's AWDL engine on, once, off the workloop. */
     thread_call_t _awdlEnableCall = nullptr;
     bool _awdlEnableAsked = false;

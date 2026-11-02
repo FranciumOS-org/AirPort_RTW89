@@ -1113,15 +1113,20 @@ static void test_awdl_tx_guard(void)
     hw = ieee80211_alloc_hw(128, &st_ops);
     CHECK(hw != NULL);
     if (hw) {
+        /*
+         * The private area the driver reads through vif_to_rtwvif(), which
+         * the real driver sizes the same way. Without this it is zero bytes
+         * long, and an earlier attempt to zero it anyway wrote past the
+         * allocation -- which is what made this test pass or fail by chip
+         * round. kzalloc() zeroes what it hands back, so a size is all that
+         * is needed: a dlink_pool of zeroes is the shape being pinned, which
+         * is what a torn-down vif leaves and what sent the driver eight
+         * bytes below zero.
+         */
+        hw->vif_data_size = 1024;
         vif = rtw89_m80211_vif_alloc(hw, NL80211_IFTYPE_STATION, own);
         CHECK(vif != NULL);
         if (vif) {
-            /* Zeroed deliberately rather than trusted to arrive that way:
-             * a vif whose private area happened to hold an earlier test's
-             * bytes made this pass or fail by chip round. The shape being
-             * pinned is a dlink_pool of zeroes, which is what a torn-down
-             * vif leaves and what sent the driver eight bytes below zero. */
-            memset(vif->drv_priv, 0, 128);
             CHECK(!rtw89_compat_vif_can_tx(vif));
             rtw89_m80211_vif_free(vif);
         }

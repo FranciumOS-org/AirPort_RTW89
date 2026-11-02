@@ -867,6 +867,16 @@ void AirPort_RTW89::awdlFrame(void *ctx, const uint8_t *frame, size_t len,
         me->_ns->front.awdl_rx(me->_ns->front.ctx, frame, len, peer, channel);
 }
 
+/* And a received AWDL data frame, which goes to awdl0 itself rather than to
+ * the engine. Here for the same reason as the one above. */
+void AirPort_RTW89::awdlData(void *ctx, const uint8_t *eth, size_t len)
+{
+    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
+
+    if (me->_ns && me->_ns->front.awdl_data_rx)
+        me->_ns->front.awdl_data_rx(me->_ns->front.ctx, eth, len);
+}
+
 int AirPort_RTW89::backVirtualRequest(void *ctx, unsigned int type, int number,
                                       void *virtual_interface, void *data)
 {
