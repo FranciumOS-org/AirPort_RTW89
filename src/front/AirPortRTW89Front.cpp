@@ -606,13 +606,28 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
 
         LOG("handed AWDL frame %u to IO80211 (channel %u, from %02x:%02x:%02x:%02x:%02x:%02x)",
             self->_awdlRxFed, channel, peer[0], peer[1], peer[2], peer[3], peer[4], peer[5]);
-        if (pm)
+        if (pm) {
+            /*
+             * The chain IO80211PeerManager::enable() walks before it will do
+             * anything: getController() takes the interface from the peer
+             * manager's 0xb8 and the controller from that interface's 0xc8,
+             * and returns nothing if either is missing -- in which case
+             * enable() skips its executeCommand() and returns in silence,
+             * leaving exactly the zeroed flags seen here.
+             */
+            const void *pmIface = *reinterpret_cast<const void *const *>(pm + 0xb8);
+            const void *ifCtrl = *reinterpret_cast<const void *const *>(vraw + 0xc8);
+
             LOG("    link state %d, AWDL enabled %u, state flags 0x%x -> frame %s",
                 *reinterpret_cast<const int *>(vraw + 0xfc),
                 *reinterpret_cast<const unsigned int *>(pm + 0xcd4),
                 *reinterpret_cast<const unsigned int *>(pm + 0x8528),
                 (*reinterpret_cast<const unsigned int *>(pm + 0xcd4) &&
                  (*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2)) ? "looked at" : "DROPPED");
+            LOG("    peer manager's interface %s, that interface's controller %s us",
+                pmIface == vif ? "is ours" : (pmIface ? "is SOMETHING ELSE" : "is MISSING"),
+                ifCtrl == self ? "is" : (ifCtrl ? "is NOT" : "is MISSING;"));
+        }
     }
 }
 
