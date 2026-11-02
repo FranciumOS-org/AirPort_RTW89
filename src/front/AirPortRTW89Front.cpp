@@ -53,6 +53,21 @@ static volatile bool gAppleRsn;
 extern "C" IOReturn rtw89_peer_manager_enable(void *peerManager, const char *why)
     __asm__("__ZN18IO80211PeerManager6enableEPKc");
 
+/*
+ * The two steps past enable() that actually switch the engine on, by their
+ * symbols for the same reason as the call above.
+ *
+ * doEnable() ends by calling interfaceStateChange(7) -- the 7 is taken from
+ * its own call site -- and only past that is enableAWDL(), which is the only
+ * thing in the family that sets the bit actionFrameProcessInput() tests.
+ * With the link up that chain should run on its own; if it does not, these
+ * say so, and enableAWDL() is the step that matters.
+ */
+extern "C" void rtw89_awdl_interface_state_change(void *peerManager, unsigned int source)
+    __asm__("__ZN22IO80211AWDLPeerManager20interfaceStateChangeE18StateChangedSource");
+extern "C" int rtw89_awdl_enable_awdl(void *peerManager)
+    __asm__("__ZN22IO80211AWDLPeerManager10enableAWDLEv");
+
 /* The front whose back takes the log lines; see LOG above. */
 static AirPortRTW89Front *gLogFront;
 
@@ -302,6 +317,29 @@ void AirPortRTW89Front::awdlEnableThread(thread_call_param_t p0, thread_call_par
     ret = rtw89_peer_manager_enable(const_cast<uint8_t *>(pm), "rtw89 front");
     LOG("asked the family to enable AWDL: 0x%x, _enabling %u, _enabled %u, state flags 0x%x",
         ret, pm[0x2f5], pm[0x2f4], *reinterpret_cast<const unsigned int *>(pm + 0x8528));
+
+    /*
+     * Bit 1 of the state flags is the whole question for received frames, and
+     * enable() alone has never set it: the flags come back 0x21, which is
+     * what configure() leaves, with no sign of enableAWDL() having run. So
+     * the two steps after it are taken here when they have not happened by
+     * themselves. interfaceStateChange(7) first, since that is what doEnable()
+     * calls and it does the surrounding work; enableAWDL() after, since that
+     * is the step that sets the bit, and knowing which of the two was needed
+     * is worth the line it costs.
+     */
+    if (!(*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2)) {
+        rtw89_awdl_interface_state_change(const_cast<uint8_t *>(pm), 7);
+        LOG("    after interfaceStateChange(7): state flags 0x%x",
+            *reinterpret_cast<const unsigned int *>(pm + 0x8528));
+    }
+    if (!(*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2)) {
+        int e = rtw89_awdl_enable_awdl(const_cast<uint8_t *>(pm));
+
+        LOG("    after enableAWDL(): %d, state flags 0x%x, AWDL enabled %u", e,
+            *reinterpret_cast<const unsigned int *>(pm + 0x8528),
+            *reinterpret_cast<const unsigned int *>(pm + 0xcd4));
+    }
     OSDecrementAtomic(&self->_awdlEnableBusy);
 }
 
@@ -893,6 +931,13 @@ IOReturn AirPortRTW89Front::disable(IONetworkInterface *iface)
 UInt32 AirPortRTW89Front::awdlOutput(mbuf_t m)
 {
     UInt32 ret;
+
+    /* awdl0 has started sending -- its Opkts moved off zero for the first
+     * time once the link came up -- and whether any of it reaches here is a
+     * separate question from whether it reaches the air. */
+    if (!_awdlOutSeen++)
+        LOG("the first packet from awdl0 reached the driver, %u bytes",
+            m ? (unsigned int)mbuf_pkthdr_len(m) : 0);
 
     const bool there = backEnter();
     if (there && _back.awdl_output) {

@@ -135,6 +135,7 @@ private:
     thread_call_t _awdlEnableCall = nullptr;
     bool _awdlEnableAsked = false;
     volatile SInt32 _awdlEnableBusy = 0;
+    unsigned int _awdlOutSeen = 0;
     const IONetworkMedium *_medium = nullptr;
     IOEthernetAddress _mac = {};
     bool _haveMac = false;
