@@ -64,6 +64,7 @@ struct AirPort_RTW89::NativeState {
     uint8_t vifMac[6] = {};     /* the AWDL address, the sender of our frames */
     bool vifUp = false;
     bool awdlSyncEnabled = false;   /* what macOS last asked for on awdl0 */
+    bool awdlSyncOff = false;       /* macOS asked for sync off, explicitly */
     bool awdlClockOn = false;       /* whether the window clock is running */
     /* The sync frame the family builds for us to put on air. Broadcom's
      * setAWDL_SYNC_FRAME_TEMPLATE allocates 0x724 bytes for it, so that is the
@@ -893,20 +894,37 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
         struct apple80211_awdl_sync_enabled *d =
             static_cast<struct apple80211_awdl_sync_enabled *>(data);
 
+        /*
+         * Not refused on the version any more. Answering EINVAL here is what
+         * the Broadcom driver does, and it cost a boot to learn what that
+         * means for us: the family asked this question, got 22 back, and
+         * never asked for sync to be turned on -- so the clock, which waited
+         * for that, never ran. The engine had already given us the template,
+         * the election metric and the peer traffic registration by then, so
+         * it was configuring a driver it had just been told was broken.
+         *
+         * The version is logged instead, because what the family actually
+         * sends here is worth knowing and this is the only place it shows.
+         */
         if (d->version != APPLE80211_VERSION)
-            return EINVAL;
+            LOG("awdl: sync-enabled %s carries version %u, not %d; answering anyway",
+                isSet ? "set" : "get", (unsigned int)d->version, APPLE80211_VERSION);
         if (isSet) {
             _ns->awdlSyncEnabled = d->enabled != 0;
+            _ns->awdlSyncOff = !_ns->awdlSyncEnabled;
             LOG("awdl: macOS asks for sync %s", _ns->awdlSyncEnabled ? "on" : "off");
             awdlClockUpdate();
             return kIOReturnSuccess;
         }
         bzero(d, sizeof(*d));
         d->version = APPLE80211_VERSION;
-        /* What macOS last asked for, which is the truth: nothing is
-         * synchronised until the driver drives an availability-window
-         * timeline. Claiming otherwise was tried and changed nothing. */
-        d->enabled = _ns->awdlSyncEnabled;
+        /*
+         * Whether we are actually keeping the timeline, which is now a real
+         * question rather than a flag macOS set: the clock runs or it does
+         * not. Reporting what macOS last asked for was fine while nothing
+         * transmitted; it is a lie once something does.
+         */
+        d->enabled = _ns->awdlClockOn;
         return kIOReturnSuccess;
     }
     /*
@@ -2201,11 +2219,20 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
 void AirPort_RTW89::awdlClockUpdate()
 {
     struct rtw89_glue_link link;
+    uint8_t channel;
     bool want;
 
     if (!_ns)
         return;
-    want = _ns->vifUp && _ns->awdlSyncEnabled && _ns->awdlTemplateLen > 0;
+    /*
+     * The template is the signal, not the sync flag. macOS never set the flag
+     * on this card: it asked for sync state, was refused on a version check,
+     * and went on to configure us anyway -- template, election metric, peer
+     * traffic registration. Those sets are the engine coming up, and the
+     * template is the last of them, so that is what the clock waits for.
+     * An explicit "sync off" still stops it.
+     */
+    want = _ns->vifUp && _ns->awdlTemplateLen > 0 && !_ns->awdlSyncOff;
     if (want == _ns->awdlClockOn)
         return;
     _ns->awdlClockOn = want;
@@ -2214,8 +2241,20 @@ void AirPort_RTW89::awdlClockUpdate()
         return;
     }
     rtw89_glue_link(&link);
-    rtw89_awdl_clock_start(isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
-                                             : AWDL_SOCIAL_CHANNEL);
+    channel = isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
+                                : AWDL_SOCIAL_CHANNEL;
+    /*
+     * AWDL peers listen on the social channels and nowhere else. Sitting on
+     * any other one, we can still hear them -- the receive spike heard
+     * channel 6 while this card was associated on 5 GHz -- but a frame we
+     * send goes out on our channel, where there is no one. Said plainly in
+     * the log, because the counters will otherwise show frames going out and
+     * nothing ever answering, which looks like a different bug.
+     */
+    if (channel != 6 && channel != 44 && channel != 149)
+        LOG("awdl: channel %u is not a social channel (6, 44, 149): peers will "
+            "not hear us until the card sits on one", (unsigned int)channel);
+    rtw89_awdl_clock_start(channel);
 }
 
 /*
