@@ -3715,6 +3715,9 @@ void rtw89_mlme_set_tx_tap(void (*tap)(const u8 *frame, size_t len))
  * means the radio has to be up and on the right channel already -- the caller
  * owns the schedule, this only hands the frame to the chip.
  */
+/* rtw89_core_wrap.c: needs core.c's static link helpers. */
+bool rtw89_compat_vif_can_tx(struct ieee80211_vif *vif);
+
 int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
 {
     struct sk_buff *skb;
@@ -3723,6 +3726,11 @@ int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
         return -EINVAL;
     if (!mlme.hw || !mlme.vif || !mlme.local || !mlme.chan)
         return -ENETDOWN;       /* no radio to send it with yet */
+    /* Those four being set is not enough: during teardown they still point at
+     * a vif whose link pool has gone, and sending then panicked the machine.
+     * See rtw89_compat_vif_can_tx() for what the driver does with it. */
+    if (!rtw89_compat_vif_can_tx(mlme.vif))
+        return -ENETDOWN;
     skb = mlme_alloc_frame(len);
     if (!skb)
         return -ENOMEM;

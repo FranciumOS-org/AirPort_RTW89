@@ -724,6 +724,8 @@ static void test_awdl_build(void);
 static void test_awdl_tick(void);
 static void test_awdl_data(void);
 static void test_awdl_sync_params(void);
+static void test_awdl_tx_guard(void);
+bool rtw89_compat_vif_can_tx(struct ieee80211_vif *vif);
 
 static void test_awdl(void)
 {
@@ -785,6 +787,7 @@ static void test_awdl(void)
     test_awdl_build();
     test_awdl_tick();
     test_awdl_data();
+    test_awdl_tx_guard();
 }
 
 /*
@@ -1084,4 +1087,40 @@ static void test_awdl_sync_params(void)
         if (!mine)
             CHECK(buf[i] == real[i]);
     }
+}
+
+/*
+ * The check that stands between the availability-window clock and a panic.
+ *
+ * A vif that has been torn down -- or never set up -- keeps a zeroed
+ * dlink_pool, and the driver's rtw89_get_designated_link() turns that into
+ * container_of(NULL, struct rtw89_vif_link, dlink_schd): a pointer eight
+ * bytes below zero. It is not NULL, so the driver's own `if (!rtwvif_link)`
+ * passes, and the next line dereferences it. That is the panic at
+ * rtw89_core_tx_write_link+0x2e with CR2 0xfffffffffffffff8, hit twice from
+ * rtw89_awdl_tick() while the radio was going down.
+ *
+ * A freshly allocated vif has exactly that zeroed pool, so it stands in for
+ * the torn-down one: neither it nor a missing vif may be sent on.
+ */
+static void test_awdl_tx_guard(void)
+{
+    static const u8 own[ETH_ALEN] = { 0x02, 0, 0, 0, 0, 0x01 };
+    struct ieee80211_vif *vif;
+    struct ieee80211_hw *hw;
+
+    CHECK(!rtw89_compat_vif_can_tx(NULL));
+
+    hw = ieee80211_alloc_hw(128, &st_ops);
+    CHECK(hw != NULL);
+    if (hw) {
+        vif = rtw89_m80211_vif_alloc(hw, NL80211_IFTYPE_STATION, own);
+        CHECK(vif != NULL);
+        if (vif) {
+            CHECK(!rtw89_compat_vif_can_tx(vif));
+            rtw89_m80211_vif_free(vif);
+        }
+        ieee80211_free_hw(hw);
+    }
+    IOLog("== awdl tx guard test: %d failure(s)\n", failures);
 }
