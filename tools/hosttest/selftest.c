@@ -792,34 +792,40 @@ static void test_awdl(void)
 
 /*
  * The data frames a transfer travels in: an Ethernet frame goes in, an 802.11
- * data frame comes out with Apple's SNAP header, the EtherType moved into the
- * AWDL header, and the Ethernet header gone -- its addresses are in the 802.11
- * header already.
+ * data frame comes out as the 802.11 header followed by awdl0's payload
+ * unchanged: the family has already put Apple's SNAP and AWDL data header
+ * there, so only the 802.3 header is dropped -- its addresses are in the
+ * 802.11 header already.
  */
 static void test_awdl_data(void)
 {
     static const u8 mac[6] = { 0x02, 0x11, 0x22, 0x33, 0x44, 0x55 };
     static const u8 bssid[6] = { 0x00, 0x25, 0x00, 0xff, 0x94, 0x73 };
-    u8 eth[14 + 8], buf[128];
+    u8 eth[14 + 16], buf[128];
     size_t len;
-    unsigned int i;
 
     /* to an IPv6 multicast group, as the mDNS that finds a peer is */
     static const u8 dst[6] = { 0x33, 0x33, 0x00, 0x00, 0x00, 0xfb };
 
+    /* what awdl0 hands down: an 802.3 header, then Apple's own SNAP and
+     * AWDL data header, already built by the family */
+    static const u8 payload[16] = {
+        0xaa, 0xaa, 0x03, 0x00, 0x17, 0xf2, 0x08, 0x00,
+        0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 0x86, 0xdd,
+    };
+
     memcpy(eth, dst, 6);
     memcpy(eth + 6, mac, 6);
-    eth[12] = 0x86;             /* IPv6 */
-    eth[13] = 0xdd;
-    for (i = 0; i < 8; i++)
-        eth[14 + i] = (u8)(0xa0 + i);
+    eth[12] = 0x00;             /* an 802.3 length, not an EtherType */
+    eth[13] = 0x10;
+    memcpy(eth + 14, payload, sizeof(payload));
 
-    /* too short to be an Ethernet frame at all, and no room to build into */
+    /* too short to be a frame at all, and no room to build into */
     CHECK(rtw89_awdl_build_data_frame(buf, sizeof(buf), mac, eth, 13, 0) == 0);
     CHECK(rtw89_awdl_build_data_frame(buf, 20, mac, eth, sizeof(eth), 0) == 0);
 
     len = rtw89_awdl_build_data_frame(buf, sizeof(buf), mac, eth, sizeof(eth), 7);
-    CHECK(len == 24 + 12 + 8);
+    CHECK(len == 24 + sizeof(payload));
 
     CHECK(buf[0] == 0x08 && buf[1] == 0x00);    /* data, no flags */
     CHECK(memcmp(buf + 4, dst, 6) == 0);        /* addr1: where it was going */
@@ -827,16 +833,9 @@ static void test_awdl_data(void)
     CHECK(memcmp(buf + 16, bssid, 6) == 0);     /* addr3: Apple's AWDL address */
     CHECK(buf[22] == (7 << 4) && buf[23] == 0); /* the sequence number */
 
-    /* SNAP with Apple's OUI, where an ordinary frame has 00:00:00 */
-    CHECK(buf[24] == 0xaa && buf[25] == 0xaa && buf[26] == 0x03);
-    CHECK(buf[27] == 0x00 && buf[28] == 0x17 && buf[29] == 0xf2);
-    /* the AWDL data header, carrying the EtherType the Ethernet frame had */
-    CHECK(buf[30] == 0x03 && buf[31] == 0x00);
-    CHECK(buf[34] == 0x86 && buf[35] == 0xdd);
-
-    /* the payload, with the Ethernet header dropped */
-    for (i = 0; i < 8; i++)
-        CHECK(buf[36 + i] == (u8)(0xa0 + i));
+    /* the payload goes on air exactly as the family built it, with its own
+     * SNAP header kept and no second one added */
+    CHECK(memcmp(buf + 24, payload, sizeof(payload)) == 0);
 
     /* nothing goes out while no schedule is running */
     CHECK(!rtw89_awdl_transmitting());

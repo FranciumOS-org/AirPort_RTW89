@@ -554,21 +554,23 @@ void rtw89_awdl_tick(u32 now_us)
 /*
  * What a transfer travels in. The sync frames above only make peers aware of
  * each other; AirDrop stops at "Waiting..." until the mDNS and the TCP that
- * follow it can actually move, and those arrive from the family as ordinary
- * Ethernet frames on awdl0.
+ * follow it can actually move, and those arrive from the family on awdl0.
  *
- * An AWDL data frame is an 802.11 data frame addressed the way the sync
- * frames are -- the peer, us, and Apple's AWDL address as the BSSID -- with
- * Apple's own SNAP header in place of the usual one, and a short AWDL header
- * carrying the EtherType the Ethernet frame had. The payload is the Ethernet
- * frame with its 14-byte header removed: the addresses are already in the
- * 802.11 header and the EtherType is in the AWDL one.
+ * What arrives is not the plain Ethernet frame this code first assumed. A
+ * frame from this machine, logged byte for byte, reads:
  *
- * The layout is the published one (the AWDL reverse-engineering work), not
- * something measured here, so the first thing the counters will tell us is
- * whether a peer accepts it.
+ *   33 33 00 00 00 16  ea e5 39 33 01 2b  00 5c
+ *   aa aa 03  00 17 f2  08 00  03 04 00 00 00 00  86 dd  ...
+ *
+ * The two bytes where an EtherType belongs are 0x005c -- 92, this frame's
+ * length less its 14-byte header -- so it is an 802.3 length field, and what
+ * follows it is already Apple's own SNAP header (OUI 00:17:f2) and the AWDL
+ * data header carrying the real EtherType. The family builds all of that
+ * itself. So the only thing missing is the 802.11 header: drop the 14-byte
+ * 802.3 header, whose addresses the 802.11 header carries anyway, and put the
+ * rest on air untouched. Wrapping it a second time, as this did before, left
+ * a peer with two SNAP headers and nothing it would read.
  */
-#define AWDL_DATA_HDR_LEN   12      /* SNAP (6) + AWDL data header (6) */
 
 static u16 gDataSeq;
 
@@ -577,48 +579,32 @@ size_t rtw89_awdl_build_data_frame(u8 *buf, size_t size, const u8 *src,
 {
     struct ieee80211_hdr_3addr *hdr;
     size_t payload, need;
-    u8 *p;
 
     if (!buf || !src || !eth || eth_len < ETH_HLEN)
         return 0;
     payload = eth_len - ETH_HLEN;
-    need = sizeof(*hdr) + AWDL_DATA_HDR_LEN + payload;
+    need = sizeof(*hdr) + payload;
     if (need > size)
         return 0;
 
-    memset(buf, 0, sizeof(*hdr) + AWDL_DATA_HDR_LEN);
+    memset(buf, 0, sizeof(*hdr));
     hdr = (struct ieee80211_hdr_3addr *)buf;
     hdr->frame_control = cpu_to_le16(IEEE80211_FTYPE_DATA | IEEE80211_STYPE_DATA);
     hdr->duration_id = 0;
-    /* where the Ethernet frame was going, which for mDNS is a multicast group */
+    /* where the frame was going, which for mDNS is a multicast group */
     memcpy(hdr->addr1, eth, ETH_ALEN);
     memcpy(hdr->addr2, src, ETH_ALEN);
     memcpy(hdr->addr3, kAwdlBssid, ETH_ALEN);
     hdr->seq_ctrl = cpu_to_le16((u16)(seq << 4));
 
-    p = buf + sizeof(*hdr);
-    /* SNAP, with Apple's OUI where a normal frame has 00:00:00 */
-    p[0] = 0xaa;
-    p[1] = 0xaa;
-    p[2] = 0x03;
-    p[3] = 0x00;
-    p[4] = 0x17;
-    p[5] = 0xf2;
-    /* the AWDL data header: 0x0300, then the EtherType the Ethernet frame had */
-    p[6] = 0x03;
-    p[7] = 0x00;
-    p[8] = 0x00;
-    p[9] = 0x00;
-    p[10] = eth[12];
-    p[11] = eth[13];
-
-    memcpy(buf + sizeof(*hdr) + AWDL_DATA_HDR_LEN, eth + ETH_HLEN, payload);
+    /* the payload as the family built it: SNAP, AWDL header and all */
+    memcpy(buf + sizeof(*hdr), eth + ETH_HLEN, payload);
     return need;
 }
 
 int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
 {
-    u8 frame[sizeof(struct ieee80211_hdr_3addr) + AWDL_DATA_HDR_LEN + 2048];
+    u8 frame[sizeof(struct ieee80211_hdr_3addr) + 2048];
     const u8 *mac = NULL;
     size_t len;
     int err;
@@ -635,23 +621,12 @@ int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
     if (!len)
         return -EINVAL;
     if (!gTx.data_sent && !gTx.data_failed) {
-        awdl_log("the first data frame: %u bytes of Ethernet in %u on air, to "
-                 "%02x:%02x:%02x:%02x:%02x:%02x, type %02x%02x",
+        awdl_log("the first data frame: %u bytes from awdl0 in %u on air, to "
+                 "%02x:%02x:%02x:%02x:%02x:%02x, 802.3 length %u",
                  (unsigned int)eth_len, (unsigned int)len,
-                 eth[0], eth[1], eth[2], eth[3], eth[4], eth[5], eth[12], eth[13]);
-        /*
-         * What awdl0 actually hands down, which is not what was assumed.
-         * The first one read 00 5c where an EtherType belongs, and 0x5c is
-         * 92, which is this frame's length less its 14-byte header: an 802.3
-         * length field, not a type. So the payload begins with an LLC header
-         * of its own, and if that LLC is already Apple's AWDL one then
-         * wrapping it again here is wrong and the peer sees nonsense.
-         *
-         * The layout this builds is the published one and has never been
-         * checked against a frame from this machine, so the frame is logged
-         * before anything is decided about it.
-         */
-        awdl_log_hex("what awdl0 handed down", eth, eth_len < 48 ? eth_len : 48);
+                 eth[0], eth[1], eth[2], eth[3], eth[4], eth[5],
+                 (unsigned int)((eth[12] << 8) | eth[13]));
+        awdl_log_hex("as the family built it", eth, eth_len < 48 ? eth_len : 48);
     }
     err = rtw89_mlme_tx_awdl(frame, len);
     if (err) {
