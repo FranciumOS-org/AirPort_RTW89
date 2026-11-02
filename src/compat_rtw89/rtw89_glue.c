@@ -2202,9 +2202,17 @@ void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac
  * operation never does. configure_filter() was called exactly once, with
  * changed_flags 0, which applies nothing.
  *
- * FIF_OTHER_BSS is the flag that clears A1_MATCH, so it goes on with AWDL and
- * off again with it. Promiscuous receive costs interrupts and some power,
- * which is reason enough not to leave it on when nothing wants it.
+ * FIF_OTHER_BSS clears A1_MATCH, and on its own it was not enough: pinned to
+ * a social channel with a schedule that held and 19968 frames reaching the
+ * AWDL path, 6 were on the AWDL BSSID. Two more bits were still set. AWDL
+ * action frames go to broadcast and its data frames to 33:33:.. IPv6
+ * multicast, and B_AX_A_BC and B_AX_A_MC throw both away -- which is why
+ * rtw89's own scan path clears all three together. So all three flags are
+ * asked for here.
+ *
+ * They go on with AWDL and off again with it. Promiscuous receive costs
+ * interrupts and some power, which is reason enough not to leave it on when
+ * nothing wants it.
  */
 void rtw89_glue_awdl_deliver(bool on)
 {
@@ -2218,13 +2226,16 @@ void rtw89_glue_awdl_deliver(bool on)
         return;
     glue.awdl_other_bss = on;
     {
-        unsigned int filter = on ? FIF_OTHER_BSS : 0;
+        const unsigned int want = FIF_OTHER_BSS | FIF_ALLMULTI |
+                                  FIF_BCN_PRBRESP_PROMISC;
+        unsigned int filter = on ? want : 0;
 
         wiphy_lock(hw->wiphy);
-        local->ops->configure_filter(hw, FIF_OTHER_BSS, &filter, 0);
+        local->ops->configure_filter(hw, want, &filter, 0);
         wiphy_unlock(hw->wiphy);
     }
-    IOLog("[rtw89 awdl] frames addressed to other BSSIDs: %s\n", on ? "on" : "off");
+    IOLog("[rtw89 awdl] unfiltered receive (other BSSIDs, multicast, broadcast): %s\n",
+          on ? "on" : "off");
 }
 
 /* From rtw89_awdl.c, on the receive thread. */
