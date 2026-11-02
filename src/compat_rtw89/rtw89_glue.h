@@ -135,6 +135,11 @@ int rtw89_glue_scan(void);
  * not been heard yet.
  */
 int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len);
+
+/* A scan macOS asked for by name and/or by channel (frequencies in MHz).
+ * Never sliced and never answered from an earlier scan. */
+int rtw89_glue_scan_directed(const uint8_t *ssid, size_t ssid_len,
+                             const uint16_t *freqs, size_t n_freqs);
 bool rtw89_glue_scanning(void);
 
 struct rtw89_glue_bss {

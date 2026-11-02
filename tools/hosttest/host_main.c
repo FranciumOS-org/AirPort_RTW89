@@ -2275,6 +2275,17 @@ static int test_probed_device(void)
     EXPECT(bss[0].mode == 0 && bss[0].width == 20 && bss[0].security == RTW89_GLUE_SEC_WEP_WPA1);
 
     EXPECT(rtw89_glue_scan() != 0);                         /* radio is down */
+    /* and the directed one refuses the same way, and refuses nonsense */
+    {
+        static const uint8_t name[] = "PHONE-HOTSPOT";
+        static const uint16_t ch6[] = { 2437 };
+        uint8_t toolong[64];
+
+        EXPECT(rtw89_glue_scan_directed(name, sizeof(name) - 1, ch6, 1) != 0);
+        EXPECT(rtw89_glue_scan_directed(NULL, 0, ch6, 1) != 0);
+        memset(toolong, 'x', sizeof(toolong));
+        EXPECT(rtw89_glue_scan_directed(toolong, sizeof(toolong), NULL, 0) != 0);     /* an SSID longer than 802.11 allows */
+    }
 
     /* fakechip_core.c stubs the hardware start, so up() gets as far as adding
      * the interface; whether that and the scan succeed depends on commands

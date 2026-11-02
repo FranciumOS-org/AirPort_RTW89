@@ -1452,7 +1452,8 @@ bool rtw89_glue_scanning(void)
     return glue.scanning;
 }
 
-static int glue_scan_locked(const u8 *name, size_t name_len);
+static int glue_scan_locked(const u8 *name, size_t name_len,
+                            const u16 *want_freqs, size_t n_want);
 
 int rtw89_glue_scan(void)
 {
@@ -1461,7 +1462,7 @@ int rtw89_glue_scan(void)
     if (!glue.active)
         return -ENETDOWN;
     mutex_lock(&glue.cmd_lock);
-    ret = glue_scan_locked(NULL, 0);
+    ret = glue_scan_locked(NULL, 0, NULL, 0);
     mutex_unlock(&glue.cmd_lock);
     return ret;
 }
@@ -1475,12 +1476,33 @@ int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len)
     if (!ssid_len || ssid_len > IEEE80211_MAX_SSID_LEN)
         return -EINVAL;
     mutex_lock(&glue.cmd_lock);
-    ret = glue_scan_locked(ssid, ssid_len);
+    ret = glue_scan_locked(ssid, ssid_len, NULL, 0);
     mutex_unlock(&glue.cmd_lock);
     return ret;
 }
 
-static int glue_scan_locked(const u8 *name, size_t name_len)
+/*
+ * A scan macOS asked for by name, by channel, or both.  Unlike the plain
+ * scan this is never answered from what was heard earlier and never sliced:
+ * it is asked for when something is expected to have just appeared.
+ */
+int rtw89_glue_scan_directed(const uint8_t *ssid, size_t ssid_len,
+                             const uint16_t *freqs, size_t n_freqs)
+{
+    int ret;
+
+    if (!glue.active)
+        return -ENETDOWN;
+    if (ssid_len > IEEE80211_MAX_SSID_LEN)
+        return -EINVAL;
+    mutex_lock(&glue.cmd_lock);
+    ret = glue_scan_locked(ssid_len ? ssid : NULL, ssid_len, freqs, n_freqs);
+    mutex_unlock(&glue.cmd_lock);
+    return ret;
+}
+
+static int glue_scan_locked(const u8 *name, size_t name_len,
+                            const u16 *want_freqs, size_t n_want)
 {
     struct rtw89_m80211_local *local;
     struct ieee80211_scan_request *sreq;
@@ -1525,7 +1547,7 @@ static int glue_scan_locked(const u8 *name, size_t name_len)
      * network by name, all of them.
      */
     {
-        bool slice = glue.vif->cfg.assoc && !name;
+        bool slice = glue.vif->cfg.assoc && !name && !n_want;
         unsigned int k = 0, taken = 0, from = slice ? glue.scan_slice_pos : 0;
 
         for (band = 0; band < NUM_NL80211_BANDS; band++) {
@@ -1533,6 +1555,19 @@ static int glue_scan_locked(const u8 *name, size_t name_len)
             for (i = 0; sband && i < sband->n_channels; i++) {
                 if (!glue_scan_channel(&sband->channels[i]))
                     continue;
+                /* Asked for particular channels, only those: macOS knows
+                 * where the hotspot it just switched on is, and a scan of
+                 * one channel costs the link a fraction of a full sweep. */
+                if (n_want) {
+                    size_t w;
+                    bool wanted = false;
+
+                    for (w = 0; w < n_want; w++)
+                        if (want_freqs[w] == sband->channels[i].center_freq)
+                            wanted = true;
+                    if (!wanted)
+                        continue;
+                }
                 if (k++ < from)
                     continue;
                 if (slice && taken == GLUE_SCAN_SLICE)
@@ -1802,7 +1837,15 @@ static int glue_join_locked(const u8 *ssid, size_t ssid_len, const u8 *bssid, co
      * same network the same key works with.
      */
     memset(glue.asked_bssid, 0, ETH_ALEN);
-    if (best && best->pub.freq < 5000) {
+    /*
+     * Only when the caller left the access point open.  Asked for one by
+     * address, it gets that one: swapping in a different radio of the same
+     * name is the right guess when macOS picked by signal alone, and simply
+     * the wrong network when macOS named a target -- a phone's hotspot, say,
+     * whose other band is a different device entirely.  Reported as joining
+     * 5745 MHz when macOS asked for channel 6 (issue #7).
+     */
+    if (best && !bssid && best->pub.freq < 5000) {
         struct rtw89_glue_bss_entry *alt = NULL;
 
         for (i = 0; i < glue.n_bss; i++) {
@@ -2072,7 +2115,7 @@ static void glue_rejoin_work(struct work_struct *work)
         }
     } else if (!glue.rejoin_scanned) {
         glue.rejoin_scanned = true;
-        if (!glue_scan_locked(NULL, 0))
+        if (!glue_scan_locked(NULL, 0, NULL, 0))
             goto out;
         /* no scan to be had: try with what was heard before */
     }

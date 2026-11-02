@@ -210,6 +210,44 @@ static unsigned int channelOfFreq(unsigned int freq)
     return 0;
 }
 
+/* 6 GHz: not in the SDK's list. Read off IO80211.framework (Sequoia), which
+ * tests this bit before it treats a scan channel as 6 GHz (PSC or not). */
+enum { kChannelFlag6GHz = 0x2000 };
+
+/*
+ * The other way, for the channels macOS names in a scan request.  Its own
+ * flags say which band, since channel numbers repeat across them; 0 for a
+ * channel this driver would not scan anyway.
+ */
+static unsigned int freqOfChannel(unsigned int channel, unsigned int flags)
+{
+    if (flags & APPLE80211_C_FLAG_2GHZ) {
+        if (channel == 14)
+            return 2484;
+        if (channel >= 1 && channel <= 13)
+            return 2407 + 5 * channel;
+        return 0;
+    }
+    if (flags & kChannelFlag6GHz) {
+        if (channel == 2)
+            return 5935;
+        if (channel >= 1 && channel <= 233)
+            return 5950 + 5 * channel;
+        return 0;
+    }
+    if (flags & APPLE80211_C_FLAG_5GHZ) {
+        if (channel >= 1 && channel <= 184)
+            return 5000 + 5 * channel;
+        return 0;
+    }
+    /* no band given: the one the number is unambiguous in */
+    if (channel >= 1 && channel <= 14)
+        return channel == 14 ? 2484 : 2407 + 5 * channel;
+    if (channel >= 36 && channel <= 184)
+        return 5000 + 5 * channel;
+    return 0;
+}
+
 /* What apple80211Request() returns is an IOReturn or a small errno; the BSD
  * ioctl path wants an errno. */
 static int errnoOf(SInt32 r)
@@ -252,10 +290,6 @@ static bool isJoining(const struct rtw89_glue_link &link)
 {
     return link.state == RTW89_GLUE_LINK_JOINING || link.state == RTW89_GLUE_LINK_ASSOCIATED;
 }
-
-/* 6 GHz: not in the SDK's list. Read off IO80211.framework (Sequoia), which
- * tests this bit before it treats a scan channel as 6 GHz (PSC or not). */
-enum { kChannelFlag6GHz = 0x2000 };
 
 /* The band comes from the frequency: 6 GHz reuses the channel numbers. */
 static uint32_t channelFlags(unsigned int freq, unsigned int width)
@@ -968,7 +1002,15 @@ int AirPort_RTW89::backIoctl(void *ctx, void *interface, void *vif, void *ifnet,
     const uint32_t len = req->req_len;
     const user_addr_t reqData = (user_addr_t)req->req_data;
 
-    if (isSet && reqType == APPLE80211_IOC_ASSOCIATE && (len == 900 || len == 908) && reqData) {
+    /*
+     * The join request macOS sends: 856 bytes on Sonoma, 900 on Sequoia, 908
+     * on Tahoe.  Only the size differs -- the first kHostAssocPrefix bytes,
+     * which is all that is read, are laid out the same in all three -- so
+     * Sonoma was failing to associate for want of its number being listed
+     * (issue #4).
+     */
+    if (isSet && reqType == APPLE80211_IOC_ASSOCIATE &&
+        (len == 856 || len == 900 || len == 908) && reqData) {
         uint8_t prefix[kHostAssocPrefix];
         struct HostAssoc host;
 
@@ -1454,6 +1496,9 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
 
     case APPLE80211_IOC_SCAN_REQ:
     case APPLE80211_IOC_SCAN_REQ_MULTIPLE: {
+        uint8_t wantSsid[APPLE80211_MAX_SSID_LEN];
+        uint16_t wantFreqs[16];
+        size_t wantSsidLen = 0, nWantFreqs = 0;
         int ret;
 
         if (!isSet)
@@ -1462,14 +1507,47 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         if (_ns->scanInProgress)
             return kIOReturnSuccess;
         _ns->scanCursor = 0;
-        if (link.state != RTW89_GLUE_LINK_DOWN) {
+        /*
+         * What was actually asked for. Until now the request was thrown away
+         * and every scan was a wildcard one: macOS says which network and
+         * which channel when it switches a phone's hotspot on, and looking
+         * everywhere instead is both slower and, while connected, liable to
+         * be answered out of the cache below before the hotspot is ever
+         * heard (issue #7).
+         */
+        if (number == APPLE80211_IOC_SCAN_REQ) {
+            const struct apple80211_scan_data *d =
+                static_cast<const struct apple80211_scan_data *>(data);
+            uint32_t n = d->num_channels;
+
+            if (d->ssid_len > 0 && d->ssid_len <= sizeof(wantSsid)) {
+                wantSsidLen = d->ssid_len;
+                memcpy(wantSsid, d->ssid, wantSsidLen);
+            }
+            if (n > APPLE80211_MAX_CHANNELS)
+                n = APPLE80211_MAX_CHANNELS;
+            for (uint32_t i = 0; i < n && nWantFreqs < sizeof(wantFreqs) / sizeof(wantFreqs[0]); i++) {
+                uint16_t freq = (uint16_t)freqOfChannel(d->channels[i].channel,
+                                                        d->channels[i].flags);
+
+                if (freq)
+                    wantFreqs[nWantFreqs++] = freq;
+            }
+        }
+
+        if (link.state != RTW89_GLUE_LINK_DOWN && !wantSsidLen && !nWantFreqs) {
             /*
-             * Connected: a real scan at most every kConnectedScanGap, the
-             * firmware going back to the access point's channel in between
-             * (rtw89's hw_scan with the operating channel, as on Linux).
-             * Requests in between, and any while joining, are answered from
-             * what has been heard. Without the real ones a network that comes
-             * up later (a phone's hotspot) never appeared in the list.
+             * Connected, and nothing in particular asked for: a real scan at
+             * most every kConnectedScanGap, the firmware going back to the
+             * access point's channel in between (rtw89's hw_scan with the
+             * operating channel, as on Linux). Requests in between, and any
+             * while joining, are answered from what has been heard. Without
+             * the real ones a network that comes up later never appeared in
+             * the list.
+             *
+             * A request that names a network or a channel never comes here:
+             * it is asked for because something is expected to have just
+             * appeared, which is exactly what the cache cannot know about.
              */
             const uint64_t kConnectedScanGap = 30ULL * 1000 * 1000 * 1000;
             uint64_t now;
@@ -1486,7 +1564,11 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         }
         _ns->scanInProgress = true;
         IOLockLock(_commandLock);
-        ret = rtw89_glue_scan();
+        if (wantSsidLen || nWantFreqs)
+            ret = rtw89_glue_scan_directed(wantSsidLen ? wantSsid : nullptr, wantSsidLen,
+                                           nWantFreqs ? wantFreqs : nullptr, nWantFreqs);
+        else
+            ret = rtw89_glue_scan();
         IOLockUnlock(_commandLock);
         if (ret) {
             _ns->scanInProgress = false;
