@@ -102,6 +102,7 @@ static struct {
     u32 rejoins;                        /* times it came back */
     unsigned long scan_started;
     bool scan_connected;                /* the scan started while associated */
+    bool awdl_other_bss;                /* the AWDL receive filter is relaxed */
     unsigned int scan_slice_pos;        /* where the next connected scan starts */
     u32 last_scan_channels;
     u32 scans_connected;
@@ -2190,9 +2191,40 @@ void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac
     rtw89_awdl_set_template(tlvs, len, mac);
 }
 
+/*
+ * Receiving AWDL means receiving frames addressed to someone else: every one
+ * of them carries Apple's BSSID, and a unicast one between two peers is not
+ * addressed to us at all. The chip drops those by default -- B_AX_A_A1_MATCH
+ * in the receive filter -- which is why, with the clock keeping perfect time
+ * on a social channel and nothing competing for the radio, only 11 frames out
+ * of 8192 offered to the AWDL path were on the AWDL BSSID. The phase-0 spike
+ * heard a dozen peers because it had asked for an unfiltered receive; normal
+ * operation never does. configure_filter() was called exactly once, with
+ * changed_flags 0, which applies nothing.
+ *
+ * FIF_OTHER_BSS is the flag that clears A1_MATCH, so it goes on with AWDL and
+ * off again with it. Promiscuous receive costs interrupts and some power,
+ * which is reason enough not to leave it on when nothing wants it.
+ */
 void rtw89_glue_awdl_deliver(bool on)
 {
+    struct ieee80211_hw *hw = glue_hw();
+    struct rtw89_m80211_local *local = hw ? hw_to_local(hw) : NULL;
+
     rtw89_awdl_deliver(on);
+    if (!glue.up || !local || !local->ops->configure_filter)
+        return;
+    if (on == glue.awdl_other_bss)
+        return;
+    glue.awdl_other_bss = on;
+    {
+        unsigned int filter = on ? FIF_OTHER_BSS : 0;
+
+        wiphy_lock(hw->wiphy);
+        local->ops->configure_filter(hw, FIF_OTHER_BSS, &filter, 0);
+        wiphy_unlock(hw->wiphy);
+    }
+    IOLog("[rtw89 awdl] frames addressed to other BSSIDs: %s\n", on ? "on" : "off");
 }
 
 /* From rtw89_awdl.c, on the receive thread. */
