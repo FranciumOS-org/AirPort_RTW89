@@ -65,6 +65,7 @@ struct AirPort_RTW89::NativeState {
     bool vifUp = false;
     bool awdlSyncEnabled = false;   /* what macOS last asked for on awdl0 */
     bool awdlSyncOff = false;       /* macOS asked for sync off, explicitly */
+    uint8_t awdlClockChannel = 0;   /* the channel the schedule is describing */
     bool awdlClockOn = false;       /* whether the window clock is running */
     /* The sync frame the family builds for us to put on air. Broadcom's
      * setAWDL_SYNC_FRAME_TEMPLATE allocates 0x724 bytes for it, so that is the
@@ -695,6 +696,9 @@ void AirPort_RTW89::nativeLink(const struct rtw89_glue_link &link)
 
         _ns->linkUp = true;
         _ns->front.set_link(_ns->front.ctx, true, mbit * 1000000ULL, 0);
+        /* the radio has a channel and a vif now: the schedule follows it, and
+         * frames stop being refused with ENETDOWN as they were before this */
+        awdlClockUpdate();
         /* the join macOS asked for is complete: associated and keys in place */
         nativePost(APPLE80211_M_ASSOC_DONE, nullptr, 0);
         LOG("native link up");
@@ -706,6 +710,8 @@ void AirPort_RTW89::nativeLink(const struct rtw89_glue_link &link)
         if (_ns->deauthReason)
             nativePost(APPLE80211_M_DEAUTH_RECEIVED, nullptr, 0);
         nativePost(APPLE80211_M_LINK_CHANGED, nullptr, 0);
+        /* back to the social channel the schedule describes when unassociated */
+        awdlClockUpdate();
         LOG("native link down");
     } else if (!up && !joining && _ns->wasJoining) {
         /* a join that did not get there: macOS is waiting to hear */
@@ -2233,6 +2239,24 @@ void AirPort_RTW89::awdlClockUpdate()
      * An explicit "sync off" still stops it.
      */
     want = _ns->vifUp && _ns->awdlTemplateLen > 0 && !_ns->awdlSyncOff;
+    rtw89_glue_link(&link);
+    channel = isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
+                                : AWDL_SOCIAL_CHANNEL;
+    /*
+     * A frame goes out on whatever channel the radio is on, and its own sync
+     * parameters tell peers which channel the next window is on. Those have
+     * to be the same channel. The first run started unassociated on 6 and the
+     * card then associated on 149: every frame after that went out on 149
+     * saying "next window on channel 6", which a peer that believed it would
+     * have acted on. So a channel change restarts the schedule rather than
+     * leaving it describing where we used to be.
+     */
+    if (want && _ns->awdlClockOn && channel != _ns->awdlClockChannel) {
+        LOG("awdl: the card moved from channel %u to %u; restarting the schedule",
+            (unsigned int)_ns->awdlClockChannel, (unsigned int)channel);
+        rtw89_awdl_clock_stop();
+        _ns->awdlClockOn = false;
+    }
     if (want == _ns->awdlClockOn)
         return;
     _ns->awdlClockOn = want;
@@ -2240,9 +2264,7 @@ void AirPort_RTW89::awdlClockUpdate()
         rtw89_awdl_clock_stop();
         return;
     }
-    rtw89_glue_link(&link);
-    channel = isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
-                                : AWDL_SOCIAL_CHANNEL;
+    _ns->awdlClockChannel = channel;
     /*
      * AWDL peers listen on the social channels and nowhere else. Sitting on
      * any other one, we can still hear them -- the receive spike heard
