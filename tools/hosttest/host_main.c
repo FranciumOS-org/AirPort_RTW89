@@ -1950,13 +1950,13 @@ static int test_join(void)
     EXPECT(link_state() == RTW89_GLUE_LINK_DOWN);
 
     /* One network on both bands, as most home routers have it: the 5 GHz side
-     * when its signal is good, even if the 2.4 GHz one is stronger, and even
-     * when macOS asks for the 2.4 GHz one; not when the 5 GHz one is weak, nor
-     * when its key would not work there (WPA3 only). */
+     * when its signal is good, even if the 2.4 GHz one is stronger; not when
+     * macOS named an access point, nor when the 5 GHz one is weak, nor when
+     * its key would not work there (WPA3 only). */
     dual_beacon("dualban1", 0xa1, ap_ies, sizeof(ap_ies), 2437, -30);
     dual_beacon("dualban1", 0xa5, ap5_ies, sizeof(ap5_ies), 5180, -37);
     EXPECT(dual_join("dualban1", -1) == 5180);
-    EXPECT(dual_join("dualban1", 0xa1) == 5180);
+    EXPECT(dual_join("dualban1", 0xa1) == 2437);  /* named: that one (issue #7) */
     EXPECT(dual_join("dualban1", 0xa5) == 5180);
     dual_beacon("dualban2", 0xb1, ap_ies, sizeof(ap_ies), 2437, -30);
     dual_beacon("dualban2", 0xb5, ap5_ies, sizeof(ap5_ies), 5180, -75);
