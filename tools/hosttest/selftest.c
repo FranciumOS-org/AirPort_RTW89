@@ -722,6 +722,7 @@ static struct sk_buff *awdl_frame(u8 subtype, size_t body_extra)
 
 static void test_awdl_build(void);
 static void test_awdl_tick(void);
+static void test_awdl_data(void);
 static void test_awdl_sync_params(void);
 
 static void test_awdl(void)
@@ -783,6 +784,60 @@ static void test_awdl(void)
 
     test_awdl_build();
     test_awdl_tick();
+    test_awdl_data();
+}
+
+/*
+ * The data frames a transfer travels in: an Ethernet frame goes in, an 802.11
+ * data frame comes out with Apple's SNAP header, the EtherType moved into the
+ * AWDL header, and the Ethernet header gone -- its addresses are in the 802.11
+ * header already.
+ */
+static void test_awdl_data(void)
+{
+    static const u8 mac[6] = { 0x02, 0x11, 0x22, 0x33, 0x44, 0x55 };
+    static const u8 bssid[6] = { 0x00, 0x25, 0x00, 0xff, 0x94, 0x73 };
+    u8 eth[14 + 8], buf[128];
+    size_t len;
+    unsigned int i;
+
+    /* to an IPv6 multicast group, as the mDNS that finds a peer is */
+    static const u8 dst[6] = { 0x33, 0x33, 0x00, 0x00, 0x00, 0xfb };
+
+    memcpy(eth, dst, 6);
+    memcpy(eth + 6, mac, 6);
+    eth[12] = 0x86;             /* IPv6 */
+    eth[13] = 0xdd;
+    for (i = 0; i < 8; i++)
+        eth[14 + i] = (u8)(0xa0 + i);
+
+    /* too short to be an Ethernet frame at all, and no room to build into */
+    CHECK(rtw89_awdl_build_data_frame(buf, sizeof(buf), mac, eth, 13, 0) == 0);
+    CHECK(rtw89_awdl_build_data_frame(buf, 20, mac, eth, sizeof(eth), 0) == 0);
+
+    len = rtw89_awdl_build_data_frame(buf, sizeof(buf), mac, eth, sizeof(eth), 7);
+    CHECK(len == 24 + 12 + 8);
+
+    CHECK(buf[0] == 0x08 && buf[1] == 0x00);    /* data, no flags */
+    CHECK(memcmp(buf + 4, dst, 6) == 0);        /* addr1: where it was going */
+    CHECK(memcmp(buf + 10, mac, 6) == 0);       /* addr2: our AWDL address */
+    CHECK(memcmp(buf + 16, bssid, 6) == 0);     /* addr3: Apple's AWDL address */
+    CHECK(buf[22] == (7 << 4) && buf[23] == 0); /* the sequence number */
+
+    /* SNAP with Apple's OUI, where an ordinary frame has 00:00:00 */
+    CHECK(buf[24] == 0xaa && buf[25] == 0xaa && buf[26] == 0x03);
+    CHECK(buf[27] == 0x00 && buf[28] == 0x17 && buf[29] == 0xf2);
+    /* the AWDL data header, carrying the EtherType the Ethernet frame had */
+    CHECK(buf[30] == 0x03 && buf[31] == 0x00);
+    CHECK(buf[34] == 0x86 && buf[35] == 0xdd);
+
+    /* the payload, with the Ethernet header dropped */
+    for (i = 0; i < 8; i++)
+        CHECK(buf[36 + i] == (u8)(0xa0 + i));
+
+    /* nothing goes out while no schedule is running */
+    CHECK(!rtw89_awdl_transmitting());
+    CHECK(rtw89_awdl_data_tx(eth, sizeof(eth)) != 0);
 }
 
 /*

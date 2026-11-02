@@ -494,10 +494,22 @@ static struct sk_buff *mlme_alloc_frame(size_t len)
 }
 
 /* Hand a frame of our own to the driver, as ieee80211_tx_skb() ends up doing. */
-static void mlme_tx_frame(struct sk_buff *skb, u32 flags)
+/*
+ * @sta is the station the frame belongs to, and NULL for one that belongs to
+ * no association at all -- an AWDL frame, which is addressed to a peer the AP
+ * has never heard of.
+ *
+ * It decides which half of rtw89_core_tx_write() runs, and the two are not
+ * equally careful. The vif half checks that the designated link exists and
+ * returns -ENOLINK when it does not; the station half reads
+ * rtwsta_link->rtwvif_link and passes it on unchecked. Sending AWDL frames
+ * with the AP's station attached took that second path and panicked the
+ * machine on a half-built link, inside rtw89_core_tx_write_link().
+ */
+static void mlme_tx_frame_sta(struct sk_buff *skb, u32 flags, struct ieee80211_sta *sta)
 {
     struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
-    struct ieee80211_tx_control control = { .sta = mlme.sta };
+    struct ieee80211_tx_control control = { .sta = sta };
 
     memset(info, 0, sizeof(*info));
     info->flags = flags;
@@ -510,6 +522,11 @@ static void mlme_tx_frame(struct sk_buff *skb, u32 flags)
     if (mlme.tx_tap)
         mlme.tx_tap(skb->data, skb->len);
     mlme.local->ops->tx(mlme.hw, &control, skb);
+}
+
+static void mlme_tx_frame(struct sk_buff *skb, u32 flags)
+{
+    mlme_tx_frame_sta(skb, flags, mlme.sta);
 }
 
 /*
@@ -3710,7 +3727,9 @@ int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
     if (!skb)
         return -ENOMEM;
     memcpy(skb_put(skb, len), frame, len);
-    mlme_tx_frame(skb, IEEE80211_TX_INTFL_DONT_ENCRYPT);
+    /* no station: see mlme_tx_frame_sta() for why this one must not carry the
+     * AP's, and what happened when it did */
+    mlme_tx_frame_sta(skb, IEEE80211_TX_INTFL_DONT_ENCRYPT, NULL);
     return 0;
 }
 
