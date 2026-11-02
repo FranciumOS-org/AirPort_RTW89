@@ -201,6 +201,28 @@ struct Scratch {
 /* Where 2.4 GHz AWDL peers listen when we have no association to follow. */
 #define AWDL_SOCIAL_CHANNEL 6
 
+/*
+ * Which social channel to sit on, unassociated: 6 unless boot-arg
+ * rtw89awdlchan says otherwise.
+ *
+ * Sitting on 6 the card hears almost no AWDL at all -- 11 frames on the AWDL
+ * BSSID against 7168 offered to the path in a minute, while every sync frame
+ * we sent went out on time. Peers answer on the channel their own schedule
+ * names, and the one capture taken from an iPhone gave master channel 6 with
+ * the next window on 44, so most of its time is spent on 5 GHz. Which of the
+ * three is worth holding is a question for the card rather than for a guess,
+ * and this makes it one reboot instead of one build.
+ */
+static uint8_t awdlSocialChannel()
+{
+    unsigned int chan = 0;
+
+    if (PE_parse_boot_argn("rtw89awdlchan", &chan, sizeof(chan)) &&
+        (chan == 6 || chan == 44 || chan == 149))
+        return (uint8_t)chan;
+    return AWDL_SOCIAL_CHANNEL;
+}
+
 static unsigned int channelOfFreq(unsigned int freq)
 {
     if (freq == 2484)
@@ -2336,7 +2358,7 @@ void AirPort_RTW89::awdlClockUpdate()
     want = _ns->vifUp && _ns->awdlTemplateLen > 0 && !_ns->awdlSyncOff;
     rtw89_glue_link(&link);
     channel = isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
-                                : AWDL_SOCIAL_CHANNEL;
+                                : awdlSocialChannel();
     /*
      * A frame goes out on whatever channel the radio is on, and its own sync
      * parameters tell peers which channel the next window is on. Those have
