@@ -721,6 +721,7 @@ static struct sk_buff *awdl_frame(u8 subtype, size_t body_extra)
 }
 
 static void test_awdl_build(void);
+static void test_awdl_tick(void);
 static void test_awdl_sync_params(void);
 
 static void test_awdl(void)
@@ -781,6 +782,62 @@ static void test_awdl(void)
     kfree_skb(skb);
 
     test_awdl_build();
+    test_awdl_tick();
+}
+
+/*
+ * The transmit loop's cadence. The clock in the kext calls the tick once per
+ * availability window and this decides which windows carry a frame: one in
+ * every seven, so a frame lands every 110 TU or so, at a window boundary.
+ *
+ * Nothing can be transmitted here -- there is no radio and no association --
+ * so what is counted is the attempts. A frame attempted is a frame built, and
+ * the build is checked for real in test_awdl_build(); the question here is
+ * only whether the loop decides to send at the right moments, and whether it
+ * stays silent before the family has given it a template.
+ */
+static void test_awdl_tick(void)
+{
+    static const u8 tlvs[] = {
+        0x15, 0x02, 0x00, 0x71, 0x01,               /* version */
+    };
+    static const u8 mac[6] = { 0x02, 0x11, 0x22, 0x33, 0x44, 0x55 };
+    u32 sent = 0, failed = 0, i;
+
+    /* a tick before the loop is started does nothing at all */
+    rtw89_awdl_set_template(NULL, 0, NULL);
+    CHECK(!rtw89_awdl_transmitting());
+    rtw89_awdl_tick(0);
+    rtw89_awdl_tx_counts(&sent, &failed);
+    CHECK(sent == 0 && failed == 0);
+
+    /* started, but with no template: the windows pass and nothing is built */
+    rtw89_awdl_tx_start(6);
+    CHECK(rtw89_awdl_transmitting());
+    for (i = 0; i < 21; i++)
+        rtw89_awdl_tick(i * 16384);
+    rtw89_awdl_tx_counts(&sent, &failed);
+    CHECK(sent == 0 && failed == 0);
+    rtw89_awdl_tx_stop();
+    CHECK(!rtw89_awdl_transmitting());
+
+    /* with one: the first window carries a frame, then every seventh */
+    rtw89_awdl_set_template(tlvs, sizeof(tlvs), mac);
+    rtw89_awdl_tx_start(6);
+    for (i = 0; i < 21; i++) {
+        rtw89_awdl_tick(i * 16384);
+        rtw89_awdl_tx_counts(&sent, &failed);
+        CHECK(sent + failed == i / 7 + 1);
+    }
+    rtw89_awdl_tx_stop();
+
+    /* stopped means stopped: later windows are not acted on */
+    rtw89_awdl_tx_counts(&sent, &failed);
+    i = sent + failed;
+    rtw89_awdl_tick(22 * 16384);
+    rtw89_awdl_tx_counts(&sent, &failed);
+    CHECK(sent + failed == i);
+    rtw89_awdl_set_template(NULL, 0, NULL);
 }
 
 /*

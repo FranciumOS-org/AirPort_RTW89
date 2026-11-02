@@ -209,6 +209,36 @@ HOST_OBJS := $(BUILD_DIR)/out/host_main.o $(BUILD_DIR)/out/host_kernel.o $(BUILD
 # PCI IDs of the chips other than the RTL8852BE (b852), one or two per family
 OTHER_CHIP_IDS := b851 8852 a85a b85b b520 c852 8922 892b 892d 882d 895d
 
+#
+# QUICK=1 tests only the card this is developed on: the RTL8852BE, register
+# fill 00, one emulated-chip round. That is what breaks while writing code, and
+# it is the difference between waiting out one run and waiting out all of them.
+#
+# It is not enough before a load or a release: the other chips are where rtw89
+# nulls an operation this one has (an RTL8852AE panicked on join for exactly
+# that reason), the ff fill is where an uninitialised register read shows up,
+# and the wide rounds cover 160 MHz and EHT. `make kext` and `make release`
+# run everything; use QUICK while iterating and once without it before you
+# install.
+#
+# Each entry is "<arguments>:<log name>", quoted because the arguments have
+# spaces in them: make pastes the text and the shell's own loop parses it.
+ifeq ($(QUICK),1)
+HOST_RUNS      := "00:hosttest_00"
+HOST_FAKE_RUNS := "00 ok:hosttest_fakechip"
+HOST_CHIP_IDS  :=
+HOST_SAE       :=
+HOST_LOGS      := hosttest_00 hosttest_fakechip
+else
+HOST_RUNS      := "00:hosttest_00" "ff:hosttest_ff"
+HOST_FAKE_RUNS := "00 ok:hosttest_fakechip" "00 wide c852:hosttest_wide_8852ce" \
+                  "00 wide c852 eht:hosttest_wide_eht"
+HOST_CHIP_IDS  := $(OTHER_CHIP_IDS)
+HOST_SAE       := yes
+HOST_LOGS      := hosttest_00 hosttest_ff hosttest_fakechip \
+                  hosttest_wide_8852ce hosttest_wide_eht sae_test_kernel
+endif
+
 define hostrun
 	@echo "  RUN  $(1) $(2)"
 	@perl -e 'alarm 600; exec @ARGV' $(1) $(2) > $(BUILD_DIR)/log/$(3).log 2>&1; \
@@ -243,28 +273,52 @@ hosttest: link
 	@cc $(ARCH) -o $(HOSTTEST) $(HOST_OBJS) $(LINKED_OBJ) -lz
 	@cc $(ARCH) -o $(HOSTTEST)_fakechip $(HOST_OBJS) $(BUILD_DIR)/out/fakechip_core.o \
 	    $(filter-out $(BUILD_DIR)/compat_rtw89/rtw89_core_wrap.o,$(ALL_OBJS)) -lz
-	$(call hostrun,$(HOSTTEST),00,hosttest_00)
-	$(call hostrun,$(HOSTTEST),ff,hosttest_ff)
-	@# the other chips against a dead device, side by side (each waits out
-	@# the chip's power-on timeouts): probe must fail cleanly
-	@for id in $(OTHER_CHIP_IDS); do for fill in 00 ff; do \
+	@cc -c -O1 -g -w $(filter-out -DMBEDTLS%,$(SAE_INC)) tools/hosttest/sae_test.c -o $(BUILD_DIR)/out/sae_test_main.o
+	@cc $(ARCH) -o $(SAETEST)_kernel $(BUILD_DIR)/out/sae_test_main.o $(SAE_KOBJS) \
+	    $(BUILD_DIR)/fw/rtw89_crypto.o $(BUILD_DIR)/out/host_kernel.o
+	@#
+	@# Every run below at once. They are separate processes over separate
+	@# emulated chips and share no state, and almost all of their time is
+	@# spent asleep: the association tests wait out beacons, handshakes,
+	@# retries and the 30 s scan cache in real time. Run one after another
+	@# that was about twenty minutes of a build on a machine that was idle
+	@# throughout. A recipe line is its own shell, so the launches and the
+	@# wait have to stay in this one line.
+	@#
+	@rm -f $(BUILD_DIR)/log/*.failed; \
+	for a in $(HOST_RUNS); do \
+	    perl -e 'alarm 600; exec @ARGV' $(HOSTTEST) $${a%%:*} \
+	        > $(BUILD_DIR)/log/$${a#*:}.log 2>&1 \
+	        || echo "  hosttest FAILED ($${a%%:*}), see $(BUILD_DIR)/log/$${a#*:}.log" \
+	        > $(BUILD_DIR)/log/$${a#*:}.failed & \
+	done; \
+	for a in $(HOST_FAKE_RUNS); do \
+	    perl -e 'alarm 600; exec @ARGV' $(HOSTTEST)_fakechip $${a%%:*} \
+	        > $(BUILD_DIR)/log/$${a#*:}.log 2>&1 \
+	        || echo "  hosttest FAILED ($${a%%:*}), see $(BUILD_DIR)/log/$${a#*:}.log" \
+	        > $(BUILD_DIR)/log/$${a#*:}.failed & \
+	done; \
+	[ -z "$(HOST_SAE)" ] || perl -e 'alarm 600; exec @ARGV' $(SAETEST)_kernel \
+	    > $(BUILD_DIR)/log/sae_test_kernel.log 2>&1 \
+	    || echo "  sae_test FAILED, see $(BUILD_DIR)/log/sae_test_kernel.log" \
+	    > $(BUILD_DIR)/log/sae_test_kernel.failed & \
+	for id in $(HOST_CHIP_IDS); do for fill in 00 ff; do \
 	    perl -e 'alarm 600; exec @ARGV' $(HOSTTEST) $$fill dead $$id \
 	        > $(BUILD_DIR)/log/hosttest_$${id}_$$fill.log 2>&1 \
 	        || echo "  hosttest FAILED for 10ec:$$id ($$fill), see $(BUILD_DIR)/log/hosttest_$${id}_$$fill.log" \
 	        > $(BUILD_DIR)/log/hosttest_$${id}_$$fill.failed & \
-	done; done; wait
-	@for id in $(OTHER_CHIP_IDS); do \
+	done; done; \
+	wait
+	@# what each of them said, in the order they used to run in
+	@for n in $(HOST_LOGS); do \
+	    echo "  RUN  $$n"; \
+	    grep -E '^==|WARN|BUG|HOST:|mlme\]' $(BUILD_DIR)/log/$$n.log; \
+	done
+	@for id in $(HOST_CHIP_IDS); do \
 	    echo "  RUN  10ec:$$id dead device: probe returned $$(grep -m1 'probe returned' $(BUILD_DIR)/log/hosttest_$${id}_00.log | sed 's/.*probe returned //')"; \
 	done
-	@if ls $(BUILD_DIR)/log/hosttest_*.failed >/dev/null 2>&1; then \
-	    cat $(BUILD_DIR)/log/hosttest_*.failed; rm -f $(BUILD_DIR)/log/hosttest_*.failed; exit 1; fi
-	$(call hostrun,$(HOSTTEST)_fakechip,00 ok,hosttest_fakechip)
-	$(call hostrun,$(HOSTTEST)_fakechip,00 wide c852,hosttest_wide_8852ce)
-	$(call hostrun,$(HOSTTEST)_fakechip,00 wide c852 eht,hosttest_wide_eht)
-	@cc -c -O1 -g -w $(filter-out -DMBEDTLS%,$(SAE_INC)) tools/hosttest/sae_test.c -o $(BUILD_DIR)/out/sae_test_main.o
-	@cc $(ARCH) -o $(SAETEST)_kernel $(BUILD_DIR)/out/sae_test_main.o $(SAE_KOBJS) \
-	    $(BUILD_DIR)/fw/rtw89_crypto.o $(BUILD_DIR)/out/host_kernel.o
-	$(call hostrun,$(SAETEST)_kernel,,sae_test_kernel)
+	@if ls $(BUILD_DIR)/log/*.failed >/dev/null 2>&1; then \
+	    cat $(BUILD_DIR)/log/*.failed; rm -f $(BUILD_DIR)/log/*.failed; exit 1; fi
 
 # ------------------------------------------------------------------ #
 # Kext bundle                                                          #
@@ -283,6 +337,7 @@ KEXT_CXXFLAGS := $(ARCH) $(MINOS) -isysroot $(SDK) -nostdinc \
 KEXT_OBJS     := $(BUILD_DIR)/kext/AirPortRTW89.o $(BUILD_DIR)/kext/AirPortRTW89Native.o \
                  $(BUILD_DIR)/kext/rtw89_logring.o \
                  $(BUILD_DIR)/kext/rtw89_awdl_timing.o \
+                 $(BUILD_DIR)/kext/rtw89_awdl_clock.o \
                  $(BUILD_DIR)/kext/kmod_info.o
 KEXT_BUNDLE   := $(BUILD_DIR)/out/AirPort_RTW89.kext
 KEXT_BIN      := $(KEXT_BUNDLE)/Contents/MacOS/AirPort_RTW89
@@ -319,14 +374,32 @@ front:
 # It runs again only when what it tests has changed since it last passed
 # (`make hosttest` runs it regardless): most of its time is the dead-device
 # runs waiting out each chip's power-on timeouts.
+# A quick round gets its own stamp, so a full build after one still runs the
+# full set rather than finding a stamp newer than the sources and skipping it.
+ifeq ($(QUICK),1)
+HOSTTEST_STAMP := $(BUILD_DIR)/out/hosttest.passed.quick
+else
 HOSTTEST_STAMP := $(BUILD_DIR)/out/hosttest.passed
+endif
 $(HOSTTEST_STAMP): $(ALL_OBJS) $(wildcard tools/hosttest/*.c) $(SAE_SRCS) \
                    $(COMPAT89_DIR)/rtw89_crypto.c Makefile
 	@rm -f $@
 	@$(MAKE) --no-print-directory hosttest
 	@touch $@
 
-kext: $(HOSTTEST_STAMP) $(KEXT_OBJS) $(KEXT_SRC)/Info.plist
+#
+# NOTEST=1 builds the kext without running the smoke tests at all. They are
+# what stands between a mistake and a panic on the machine this is developed
+# on, so this is for iterating on code that is not going to be loaded yet.
+# Run `make hosttest` before you install.
+#
+ifeq ($(NOTEST),1)
+KEXT_DEPS :=
+else
+KEXT_DEPS := $(HOSTTEST_STAMP)
+endif
+
+kext: $(KEXT_DEPS) $(KEXT_OBJS) $(KEXT_SRC)/Info.plist
 	@rm -rf $(BUILD_DIR)/out/AirPort_RTW89.kext
 	@mkdir -p $(dir $(KEXT_BIN))
 	@cp $(KEXT_SRC)/Info.plist $(KEXT_BUNDLE)/Contents/Info.plist

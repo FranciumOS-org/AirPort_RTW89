@@ -2166,6 +2166,11 @@ void rtw89_glue_awdl_tick(uint32_t now_us)
     rtw89_awdl_tick(now_us);
 }
 
+void rtw89_glue_awdl_tx_counts(uint32_t *sent, uint32_t *failed)
+{
+    rtw89_awdl_tx_counts(sent, failed);
+}
+
 void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac[6])
 {
     rtw89_awdl_set_template(tlvs, len, mac);

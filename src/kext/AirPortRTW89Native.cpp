@@ -64,6 +64,7 @@ struct AirPort_RTW89::NativeState {
     uint8_t vifMac[6] = {};     /* the AWDL address, the sender of our frames */
     bool vifUp = false;
     bool awdlSyncEnabled = false;   /* what macOS last asked for on awdl0 */
+    bool awdlClockOn = false;       /* whether the window clock is running */
     /* The sync frame the family builds for us to put on air. Broadcom's
      * setAWDL_SYNC_FRAME_TEMPLATE allocates 0x724 bytes for it, so that is the
      * size the family expects to be able to hand over. */
@@ -194,6 +195,9 @@ struct Scratch {
     Scratch(const Scratch &) = delete;
     Scratch &operator=(const Scratch &) = delete;
 };
+
+/* Where 2.4 GHz AWDL peers listen when we have no association to follow. */
+#define AWDL_SOCIAL_CHANNEL 6
 
 static unsigned int channelOfFreq(unsigned int freq)
 {
@@ -894,6 +898,7 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
         if (isSet) {
             _ns->awdlSyncEnabled = d->enabled != 0;
             LOG("awdl: macOS asks for sync %s", _ns->awdlSyncEnabled ? "on" : "off");
+            awdlClockUpdate();
             return kIOReturnSuccess;
         }
         bzero(d, sizeof(*d));
@@ -925,6 +930,7 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
             _ns->awdlTemplateLen = 0;
             rtw89_glue_awdl_template(nullptr, 0, nullptr);
             LOG("awdl: the sync frame template was cleared");
+            awdlClockUpdate();
             return kIOReturnSuccess;
         }
         n = d->payload_len;
@@ -939,6 +945,8 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
         /* over to the side that builds frames: these are the static TLVs the
          * transmit loop appends to the schedule it works out itself */
         rtw89_glue_awdl_template(_ns->awdlTemplate, n, _ns->vifMac);
+        /* the last of the three things the clock waits for, usually */
+        awdlClockUpdate();
         return kIOReturnSuccess;
     }
 
@@ -2179,6 +2187,38 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
 }
 
 /*
+ * The clock runs when all three are true: awdl0 exists, macOS has asked for
+ * sync, and the family has handed us a template. Any one of them going away
+ * stops it. Called from each of those three places rather than deciding in
+ * them, so the condition lives in one spot.
+ *
+ * The channel is the one the card already sits on, because we do not hop: a
+ * single radio cannot hold an association and an AWDL timeline on different
+ * channels at once, and dropping the association to chase channel 6 is not a
+ * trade the user asked for. Unassociated, we take social channel 6, which is
+ * where 2.4 GHz AWDL peers listen.
+ */
+void AirPort_RTW89::awdlClockUpdate()
+{
+    struct rtw89_glue_link link;
+    bool want;
+
+    if (!_ns)
+        return;
+    want = _ns->vifUp && _ns->awdlSyncEnabled && _ns->awdlTemplateLen > 0;
+    if (want == _ns->awdlClockOn)
+        return;
+    _ns->awdlClockOn = want;
+    if (!want) {
+        rtw89_awdl_clock_stop();
+        return;
+    }
+    rtw89_glue_link(&link);
+    rtw89_awdl_clock_start(isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
+                                             : AWDL_SOCIAL_CHANNEL);
+}
+
+/*
  * macOS asks for awdl0 with APPLE80211_IOC_VIRTUAL_IF_CREATE, role
  * APPLE80211_VIF_AWDL (6 on Ventura and later). The front hands the request to
  * the family, which builds the interface and names it; we only report the name
@@ -2225,6 +2265,7 @@ int AirPort_RTW89::nativeVirtualIfCreate(void *data)
     strlcpy(_ns->vifName, name, sizeof(_ns->vifName));
     /* There is somewhere to put received AWDL frames now. */
     rtw89_glue_awdl_deliver(true);
+    awdlClockUpdate();
     LOG("virtual interface %s is up", _ns->vifName);
     bzero(d->bsd_name, sizeof(d->bsd_name));
     memcpy(d->bsd_name, name, strnlen(name, sizeof(d->bsd_name)));
@@ -2240,8 +2281,9 @@ int AirPort_RTW89::nativeVirtualIfDelete(void *data)
     if (!_ns->vifUp || !_ns->front.destroy_vif)
         return kIOReturnUnsupported;
     rtw89_glue_awdl_deliver(false);
-    _ns->front.destroy_vif(_ns->front.ctx);
     _ns->vifUp = false;
+    awdlClockUpdate();
+    _ns->front.destroy_vif(_ns->front.ctx);
     bzero(_ns->vifName, sizeof(_ns->vifName));
     return kIOReturnSuccess;
 }
