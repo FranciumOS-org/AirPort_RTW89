@@ -32,31 +32,18 @@ OSDefineMetaClassAndStructors(AirPortRTW89FrontInterface, IO80211Interface)
 static volatile bool gAppleRsn;
 
 /*
- * The one front, for the AWDL interface to hand its packets back to. The
- * interface is built by the family through createVirtualInterface() and has
- * no pointer of its own to the controller that owns it; there is one card and
- * one front, the same assumption gAppleRsn above already makes.
+ * No subclass of the family's interface here, and that is deliberate. One was
+ * tried: a class deriving from IO80211P2PInterface that overrode
+ * outputPacket(). Overriding a single method drags in the whole of that
+ * class's virtual table -- 55 symbols the front had never needed -- and the
+ * front is an injected kext linking against an injected family. It did not
+ * load, so there was no Wi-Fi at all: the driver came up, the front did not,
+ * and nothing said why.
+ *
+ * So the packets are taken in the controller's own outputPacket() below,
+ * which the front already overrides, told apart by the param the family
+ * passes with them.
  */
-static AirPortRTW89Front *gFront;
-
-OSDefineMetaClassAndStructors(AirPortRTW89AwdlInterface, IO80211P2PInterface)
-
-/*
- * Everything the family sends over awdl0: the mDNS that finds a peer and then
- * the TCP that carries the transfer. It arrives as a plain Ethernet frame,
- * the same shape the controller's own outputPacket() takes, and goes to the
- * driver to be put inside an AWDL data frame.
- */
-UInt32 AirPortRTW89AwdlInterface::outputPacket(mbuf_t m, void *param)
-{
-    AirPortRTW89Front *front = gFront;
-
-    if (front)
-        return front->awdlOutput(m);
-    if (m)
-        mbuf_freem(m);
-    return kIOReturnOutputDropped;
-}
 
 UInt32 AirPortRTW89FrontInterface::inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options,
                                                void *param)
@@ -344,14 +331,12 @@ void AirPortRTW89Front::opSetAppleRsn(void *ctx, bool on)
  */
 IO80211VirtualInterface *AirPortRTW89Front::createVirtualInterface(ether_addr *addr, UInt role)
 {
-    AirPortRTW89AwdlInterface *vif;
+    IO80211P2PInterface *vif;
 
     if (role != APPLE80211_VIF_AWDL)
         return super::createVirtualInterface(addr, role);
 
-    /* Ours, not the family's plain one, only so that outputPacket() is a
-     * method we own: everything else about it is IO80211P2PInterface. */
-    vif = OSTypeAlloc(AirPortRTW89AwdlInterface);
+    vif = OSTypeAlloc(IO80211P2PInterface);
     if (!vif) {
         LOG("out of memory for the AWDL interface");
         return nullptr;
@@ -401,7 +386,6 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
         return ENODEV;
     }
     self->_vif = vif;
-    gFront = self;
     name = vif->getBSDName();
     if (bsd_name) {
         bzero(bsd_name, IFNAMSIZ);
@@ -513,9 +497,6 @@ void AirPortRTW89Front::opDestroyVif(void *ctx)
     if (!vif)
         return;
     self->_vif = nullptr;
-    /* before the detach, so no packet can arrive with nowhere to go */
-    if (gFront == self)
-        gFront = nullptr;
     self->detachVirtualInterface(vif, true);
     LOG("virtual interface down");
 }
@@ -687,6 +668,21 @@ UInt32 AirPortRTW89Front::awdlOutput(mbuf_t m)
 UInt32 AirPortRTW89Front::outputPacket(mbuf_t m, void *param)
 {
     UInt32 ret;
+
+    /*
+     * Which interface the packet came from. The family passes the virtual
+     * interface as the param for one of its own, so a packet carrying the
+     * AWDL interface we were given is one awdl0 sent. Logged once either way:
+     * whether vif packets reach the controller at all is the open question,
+     * and the answer decides whether the data path can live here.
+     */
+    if (param && _vif && param == _vif)
+        return awdlOutput(m);
+    if (param && !_awdlParamLogged) {
+        _awdlParamLogged = true;
+        LOG("outputPacket carried a param (%p) that is not the AWDL interface (%p)",
+            param, _vif);
+    }
 
     const bool there = backEnter();
     if (there) {
