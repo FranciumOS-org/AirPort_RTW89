@@ -6,10 +6,12 @@
  * ieee80211_auth, ieee80211_send_assoc, ieee80211_assoc_success,
  * ieee80211_set_associated, ieee80211_set_disassoc).
  *
- * Scope so far: open-system authentication and association; 802.11n, 802.11ac
- * and 802.11ax on channels up to 80 MHz wide; WPA2-PSK with CCMP: the
- * supplicant side of the 4-way and group key handshakes (IEEE 802.11
- * 12.7.6/12.7.7) and installing the keys in the driver; BlockAck sessions.
+ * Scope so far: open-system and SAE (WPA3-Personal) authentication and
+ * association; 802.11n, 802.11ac and 802.11ax on channels up to 80 MHz wide;
+ * WPA2-PSK, PSK-SHA256 and SAE with CCMP: the supplicant side of the 4-way and
+ * group key handshakes (IEEE 802.11 12.7.6/12.7.7) and installing the keys in
+ * the driver; protected management frames (802.11w), in software as
+ * mac80211 does for these chips; BlockAck sessions.
  * Data frames are rtw89_data.c's. While connected: the AP is probed when the
  * driver reports missed beacons, and its beacons are watched for changed
  * parameters and for a move to another channel (which is answered by leaving;
@@ -20,6 +22,7 @@
  */
 #include "rtw89_net80211.h"
 #include "rtw89_crypto.h"
+#include "rtw89_sae.h"
 
 #define MLME_AUTH_TIMEOUT   (HZ / 2)
 #define MLME_ASSOC_TIMEOUT  (HZ / 2)
@@ -28,6 +31,21 @@
 #define MLME_MAX_IES        1024
 #define MLME_PROBE_WAIT     (HZ / 2)    /* for a probing frame's fate (probe_wait_ms) */
 #define MLME_PROBE_TRIES    2           /* max_nullfunc_tries */
+#define MLME_SAE_TIMEOUT    HZ          /* for each SAE message: the AP computes too */
+#define MLME_SA_QUERY_WAIT  (HZ / 2)    /* for the AP's answer to an SA Query */
+#define MLME_COMEBACK_MAX   (2 * HZ)    /* longest "come back later" waited for */
+
+/* RSN key management suites, 00-0f-ac:<n> */
+#define AKM_8021X           1
+#define AKM_PSK             2
+#define AKM_PSK_SHA256      6
+#define AKM_SAE             8
+
+#define WLAN_RSNX_CAPAB_SAE_H2E             5   /* RSNXE bit: hash-to-element */
+#define WLAN_EID_EXT_ANTI_CLOGGING_TOKEN    93  /* the token's container (H2E) */
+
+#define RSN_CAP_MFPR        BIT(6)      /* management frame protection required */
+#define RSN_CAP_MFPC        BIT(7)      /* ... capable */
 
 static struct {
     bool running;
@@ -48,6 +66,7 @@ static struct {
     bool ht;                    /* AP and card both do 802.11n */
     bool vht;                   /* ... and 802.11ac */
     bool he;                    /* ... and 802.11ax */
+    bool eht;                   /* ... and 802.11be (Wi-Fi 7, one link) */
     unsigned int bw_limit;      /* MHz: the widest channel we may claim to the AP */
     struct cfg80211_chan_def chandef;   /* the channel and width we operate on */
     bool wmm;
@@ -61,6 +80,35 @@ static struct {
     u8 held_m1[160];            /* handshake message 1 that came before the PMK */
     u16 held_m1_len;
     u8 group_cipher[4];         /* group data cipher suite from the AP's RSN IE */
+
+    /* what the AP's RSN element offers, and what this join takes of it */
+    u32 ap_akms;                /* BIT(n) for each 00-0f-ac:n suite */
+    u16 ap_rsn_caps;
+    u8 akm;                     /* AKM_* in use */
+    u8 key_ver;                 /* EAPOL-Key descriptor version: 2, 3 or 0 */
+    bool mfp;                   /* management frame protection (802.11w) */
+    u8 own_rsn_ie[2 + 20];      /* the RSN element of the association request */
+    u8 own_rsn_len;
+
+    /* WPA3-Personal: SAE authentication (12.4) */
+    struct rtw89_sae *sae;
+    bool sae_h2e;               /* password element by hash-to-element */
+    u8 sae_password[64];        /* kept to start again with hash-to-element */
+    u8 sae_password_len;
+    u8 own_rsnxe[3];            /* RSN extension element (H2E), or none */
+    u8 own_rsnxe_len;
+    bool sae_confirm_sent;      /* own confirm out: waiting for the AP's */
+    bool sae_fallback;          /* the network takes WPA2 too: SAE may fail over to it */
+    u8 sae_token[64];           /* anti-clogging token the AP asked for */
+    u8 sae_token_len;
+
+    /* 802.11w: robust management frames from the AP, and SA Query (11.13) */
+    u64 mgmt_rx_pn;
+    bool mgmt_rx_pn_valid;
+    bool sa_query_pending;
+    u8 sa_query_id[WLAN_SA_QUERY_TR_ID_LEN];
+    u16 sa_query_reason;        /* of the unprotected frame that started it */
+    struct wiphy_delayed_work sa_query_work;
 
     struct ieee80211_chanctx_conf *chanctx;
     bool chanctx_assigned;
@@ -109,6 +157,9 @@ static struct {
     struct wiphy_work beacon_loss_work;
     struct wiphy_work probe_work;
     struct wiphy_delayed_work probe_timeout_work;
+    struct wiphy_delayed_work bcn_mon_work;     /* see mlme_bcn_mon_work() */
+    unsigned long last_beacon;                  /* jiffies of the AP's latest beacon */
+    u32 eapol_reports;                          /* handshake replies reported on */
 
     /* what the AP's beacons said last */
     u32 beacon_hash;
@@ -129,17 +180,6 @@ static struct {
     struct wiphy_delayed_work timeout_work;
 } mlme;
 
-/* The RSN element we put in the association request. Message 2 of the 4-way
- * handshake must repeat it byte for byte. */
-static const u8 mlme_rsn_ie[] = {
-    WLAN_EID_RSN, 20,
-    1, 0,                       /* version */
-    0x00, 0x0f, 0xac, 4,        /* group cipher: CCMP */
-    1, 0, 0x00, 0x0f, 0xac, 4,  /* pairwise: CCMP */
-    1, 0, 0x00, 0x0f, 0xac, 2,  /* AKM: PSK */
-    0, 0,                       /* capabilities */
-};
-
 static void mlme_set_state(enum rtw89_mlme_state state)
 {
     mlme.state = state;
@@ -158,6 +198,8 @@ static const u8 mlme_rsn_ie_8021x[] = {
 };
 
 #define mlme_info(fmt, ...) IOLog("[rtw89 mlme] " fmt "\n", ##__VA_ARGS__)
+
+static void mlme_bcn_mon_start(void);
 
 /* Not in mlme: it holds across stopping and starting the radio. */
 static bool mlme_he_off;
@@ -236,6 +278,33 @@ static const struct ieee80211_sta_he_cap *mlme_own_he_cap(void)
     return ieee80211_get_he_iftype_cap_vif(mlme.sband, mlme.vif);
 }
 
+/* The 802.11be elements; the capabilities checked against @he_cap, the
+ * 802.11ax capabilities of the same side (their widths size the rate maps). */
+static const u8 *mlme_eht_cap_ie(const u8 *ies, size_t len, const u8 *he_cap, u8 *cap_len)
+{
+    const u8 *cap = mlme_ext_elem(WLAN_EID_EXT_EHT_CAPABILITY, ies, len,
+                                  sizeof(struct ieee80211_eht_cap_elem_fixed), cap_len);
+
+    return cap && he_cap && ieee80211_eht_capa_size_ok(he_cap, cap, *cap_len, true) ? cap : NULL;
+}
+
+static const struct ieee80211_eht_operation *mlme_eht_oper_ie(const u8 *ies, size_t len)
+{
+    u8 oper_len;
+    const u8 *oper = mlme_ext_elem(WLAN_EID_EXT_EHT_OPERATION, ies, len,
+                                   sizeof(struct ieee80211_eht_operation), &oper_len);
+
+    return oper && ieee80211_eht_oper_size_ok(oper, oper_len) ? (const void *)oper : NULL;
+}
+
+static const struct ieee80211_sta_eht_cap *mlme_own_eht_cap(void)
+{
+    const struct ieee80211_sta_eht_cap *cap = ieee80211_get_eht_iftype_cap_vif(mlme.sband,
+                                                                               mlme.vif);
+
+    return cap && cap->has_eht ? cap : NULL;
+}
+
 /*
  * Supported and basic rates as bitmaps over @sband->bitrates, from the
  * Supported Rates and Extended Supported Rates elements (ieee80211_get_rates).
@@ -269,14 +338,21 @@ static void mlme_parse_rates(const u8 *ies, size_t len, u32 *rates, u32 *basic)
 
 /* What the AP's RSN element allows us to use. Returns 0 if CCMP with WPA2-PSK
  * (or, with @external, 802.1X) works. */
-static int mlme_check_rsn(const struct element *rsn, bool external)
+/*
+ * What the AP's RSN element offers: the ciphers (CCMP for both pairwise and
+ * group traffic, the only ones taken), the key management suites and the
+ * capabilities. Fills mlme.group_cipher, ap_akms and ap_rsn_caps.
+ */
+static int mlme_parse_rsn(const struct element *rsn)
 {
     static const u8 suite_ccmp[4] = { 0x00, 0x0f, 0xac, 4 };
-    const u8 suite_psk[4] = { 0x00, 0x0f, 0xac, (u8)(external ? 1 : 2) };
+    static const u8 suite_bip[4] = { 0x00, 0x0f, 0xac, 6 };
     const u8 *p = rsn->data, *end = rsn->data + rsn->datalen;
-    bool ccmp = false, psk = false;
-    u16 count, caps = 0;
+    bool ccmp = false;
+    u16 count;
 
+    mlme.ap_akms = 0;
+    mlme.ap_rsn_caps = 0;
     if (end - p < 8 || get_unaligned_le16(p) != 1)
         return -EINVAL;
     p += 2;
@@ -297,10 +373,30 @@ static int mlme_check_rsn(const struct element *rsn, bool external)
     if (end - p < count * 4)
         return -EINVAL;
     for (; count; count--, p += 4)
-        psk |= !memcmp(p, suite_psk, 4);
+        if (p[0] == 0x00 && p[1] == 0x0f && p[2] == 0xac && p[3] < 32)
+            mlme.ap_akms |= BIT(p[3]);
 
-    if (end - p >= 2)
-        caps = get_unaligned_le16(p);
+    if (end - p >= 2) {
+        mlme.ap_rsn_caps = get_unaligned_le16(p);
+        p += 2;
+    }
+    /* PMKIDs, then the group management cipher: BIP-CMAC-128 when absent */
+    if (end - p >= 2) {
+        count = get_unaligned_le16(p);
+        p += 2;
+        if (end - p < count * 16)
+            return -EINVAL;
+        p += count * 16;
+    }
+    if (end - p >= 4 && memcmp(p, suite_bip, 4) && (mlme.ap_rsn_caps & RSN_CAP_MFPC)) {
+        if (mlme.ap_rsn_caps & RSN_CAP_MFPR) {
+            mlme_info("the network protects management frames with %02x-%02x-%02x:%u, "
+                      "not BIP-CMAC-128", p[0], p[1], p[2], p[3]);
+            return -EOPNOTSUPP;
+        }
+        /* optional: not used */
+        mlme.ap_rsn_caps &= ~RSN_CAP_MFPC;
+    }
 
     if (!ccmp) {
         mlme_info("the network does not offer CCMP as pairwise cipher");
@@ -312,15 +408,79 @@ static int mlme_check_rsn(const struct element *rsn, bool external)
                   mlme.group_cipher[3]);
         return -EOPNOTSUPP;
     }
-    if (!psk) {
-        mlme_info("%s", external ? "the network does not offer 802.1X sign-in" :
-                  "the network does not offer WPA2-PSK (WPA3-only or enterprise)");
+    return 0;
+}
+
+/*
+ * The key management to use, from what the AP offers and what we have: SAE
+ * when there is a password and the AP offers it (WPA3-Personal, also on a
+ * WPA2/WPA3 network, as wpa_supplicant prefers it), else PSK. Management
+ * frame protection when SAE is used or the AP requires it, as wpa_supplicant
+ * does by default; and the RSN element for the association request, which
+ * message 2 of the 4-way handshake repeats byte for byte.
+ */
+static int mlme_choose_akm(bool sae, bool psk)
+{
+    const u32 akms = mlme.ap_akms;
+    const u16 caps = mlme.ap_rsn_caps;
+    u8 *ie = mlme.own_rsn_ie;
+    u16 own_caps = 0;
+
+    if (sae && (akms & BIT(AKM_SAE)))
+        mlme.akm = AKM_SAE;
+    else if (psk && (akms & BIT(AKM_PSK)))
+        mlme.akm = AKM_PSK;
+    else if (psk && (akms & BIT(AKM_PSK_SHA256)))
+        mlme.akm = AKM_PSK_SHA256;
+    else if (akms & BIT(AKM_SAE)) {
+        mlme_info("the network is WPA3-only, and no password came for it");
+        return -EOPNOTSUPP;
+    } else {
+        mlme_info("the network offers no key management this driver does (0x%x)", akms);
         return -EOPNOTSUPP;
     }
-    if (caps & BIT(6)) {    /* RSN capabilities: management frame protection required */
+
+    mlme.mfp = (caps & RSN_CAP_MFPC) &&
+               (mlme.akm != AKM_PSK || (caps & RSN_CAP_MFPR));
+    if (!mlme.mfp && (caps & RSN_CAP_MFPR)) {
+        mlme_info("the network requires management frame protection it cannot negotiate");
+        return -EOPNOTSUPP;
+    }
+    if (mlme.mfp)
+        own_caps = RSN_CAP_MFPC | (mlme.akm == AKM_SAE ? RSN_CAP_MFPR : 0);
+    mlme.key_ver = mlme.akm == AKM_PSK ? 2 : mlme.akm == AKM_PSK_SHA256 ? 3 : 0;
+
+    ie[0] = WLAN_EID_RSN;
+    ie[1] = 20;
+    ie[2] = 1;                                          /* version */
+    ie[3] = 0;
+    memcpy(ie + 4, "\x00\x0f\xac\x04", 4);              /* group cipher: CCMP */
+    memcpy(ie + 8, "\x01\x00\x00\x0f\xac\x04", 6);      /* pairwise: CCMP */
+    memcpy(ie + 14, "\x01\x00\x00\x0f\xac", 5);          /* one AKM */
+    ie[19] = mlme.akm;
+    put_unaligned_le16(own_caps, ie + 20);
+    mlme.own_rsn_len = 22;
+    return 0;
+}
+
+/* The checks of an 802.1X network, whose RSN element macOS's supplicant writes. */
+static int mlme_check_rsn_8021x(const struct element *rsn)
+{
+    int ret = mlme_parse_rsn(rsn);
+
+    if (ret)
+        return ret;
+    if (!(mlme.ap_akms & BIT(AKM_8021X))) {
+        mlme_info("the network does not offer 802.1X sign-in");
+        return -EOPNOTSUPP;
+    }
+    if (mlme.ap_rsn_caps & RSN_CAP_MFPR) {
         mlme_info("the network requires management frame protection");
         return -EOPNOTSUPP;
     }
+    mlme.akm = AKM_8021X;
+    mlme.key_ver = 2;
+    mlme.mfp = false;
     return 0;
 }
 
@@ -352,9 +512,103 @@ static void mlme_tx_frame(struct sk_buff *skb, u32 flags)
     mlme.local->ops->tx(mlme.hw, &control, skb);
 }
 
+/*
+ * A robust management frame under 802.11w (deauthentication, disassociation,
+ * most action frames), encrypted with the pairwise key. The hardware of most
+ * of these chips does not encrypt management frames (hw_mgmt_tx_encrypt), and
+ * mac80211 does it in software (IEEE80211_KEY_FLAG_SW_MGMT_TX); so does this
+ * for all of them. The packet number is the data path's, one counter per key.
+ */
+static struct sk_buff *mlme_protect(struct sk_buff *skb)
+{
+    const size_t hdrlen = sizeof(struct ieee80211_hdr_3addr);
+    struct ieee80211_key_conf *key = mlme.ptk_conf;
+    size_t body_len = skb->len - hdrlen;
+    struct sk_buff *out;
+    u8 *hdr, *ccmp, *body;
+    u64 pn;
+
+    out = mlme_alloc_frame(skb->len + IEEE80211_CCMP_HDR_LEN + IEEE80211_CCMP_MIC_LEN);
+    if (!out) {
+        kfree_skb(skb);
+        return NULL;
+    }
+    pn = (u64)atomic64_inc_return(&key->tx_pn);
+    hdr = skb_put(out, hdrlen);
+    memcpy(hdr, skb->data, hdrlen);
+    hdr[1] |= IEEE80211_FCTL_PROTECTED >> 8;
+    ccmp = skb_put_zero(out, IEEE80211_CCMP_HDR_LEN);
+    ccmp[0] = (u8)pn;
+    ccmp[1] = (u8)(pn >> 8);
+    ccmp[3] = 0x20 | (u8)(key->keyidx << 6);    /* extended IV, key id */
+    ccmp[4] = (u8)(pn >> 16);
+    ccmp[5] = (u8)(pn >> 24);
+    ccmp[6] = (u8)(pn >> 32);
+    ccmp[7] = (u8)(pn >> 40);
+    body = skb_put(out, body_len);
+    memcpy(body, skb->data + hdrlen, body_len);
+    rtw89_ccmp_encrypt(key->key, hdr, hdrlen, pn, body, body_len,
+                       skb_put(out, IEEE80211_CCMP_MIC_LEN));
+    kfree_skb(skb);
+    return out;
+}
+
+/* Whether a management frame is robust (12.6.6.2), @len bytes long. */
+static bool mlme_robust(const u8 *frame, size_t len)
+{
+    const struct ieee80211_mgmt *mgmt = (const void *)frame;
+
+    if (ieee80211_is_action(mgmt->frame_control) && len < IEEE80211_MIN_ACTION_SIZE(category))
+        return false;
+    return _ieee80211_is_robust_mgmt_frame((struct ieee80211_hdr *)frame);
+}
+
 static void mlme_tx_mgmt(struct sk_buff *skb)
 {
+    if (mlme.mfp && mlme.ptk_conf && mlme_robust(skb->data, skb->len)) {
+        skb = mlme_protect(skb);
+        if (!skb)
+            return;
+    }
     mlme_tx_frame(skb, 0);
+}
+
+/*
+ * A protected management frame from the AP: decrypted (by the hardware if it
+ * did, else here), its packet number checked against replays and the CCMP
+ * header and MIC removed, so it reads like any other. False if it is to be
+ * dropped.
+ */
+static bool mlme_unprotect(struct sk_buff *skb)
+{
+    const size_t hdrlen = sizeof(struct ieee80211_hdr_3addr);
+    const struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(skb);
+    u8 *hdr = skb->data, *ccmp = hdr + hdrlen;
+    size_t body_len;
+    u64 pn;
+
+    if (!mlme.mfp || !mlme.ptk_conf ||
+        skb->len < hdrlen + IEEE80211_CCMP_HDR_LEN + IEEE80211_CCMP_MIC_LEN ||
+        !(ccmp[3] & 0x20))
+        return false;
+    pn = ccmp[0] | (u64)ccmp[1] << 8 | (u64)ccmp[4] << 16 | (u64)ccmp[5] << 24 |
+         (u64)ccmp[6] << 32 | (u64)ccmp[7] << 40;
+    if (mlme.mgmt_rx_pn_valid && pn <= mlme.mgmt_rx_pn)
+        return false;
+    body_len = skb->len - hdrlen - IEEE80211_CCMP_HDR_LEN - IEEE80211_CCMP_MIC_LEN;
+    if (!(status->flag & RX_FLAG_DECRYPTED) &&
+        !rtw89_ccmp_decrypt(mlme.ptk_conf->key, hdr, hdrlen, pn,
+                            ccmp + IEEE80211_CCMP_HDR_LEN, body_len,
+                            ccmp + IEEE80211_CCMP_HDR_LEN + body_len))
+        return false;
+    mlme.mgmt_rx_pn = pn;
+    mlme.mgmt_rx_pn_valid = true;
+
+    memmove(hdr + IEEE80211_CCMP_HDR_LEN, hdr, hdrlen);
+    skb_pull(skb, IEEE80211_CCMP_HDR_LEN);
+    skb_trim(skb, skb->len - IEEE80211_CCMP_MIC_LEN);
+    skb->data[1] &= ~(IEEE80211_FCTL_PROTECTED >> 8);
+    return true;
 }
 
 static struct ieee80211_mgmt *mlme_mgmt_header(struct sk_buff *skb, u16 stype, size_t len)
@@ -493,6 +747,7 @@ static void mlme_teardown(u16 deauth_reason)
 
     wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
     wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.probe_timeout_work);
+    wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.bcn_mon_work);
     wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.csa_work);
     mlme.poll = false;
     mlme.csa_pending = false;
@@ -521,6 +776,18 @@ static void mlme_teardown(u16 deauth_reason)
     mlme.tptk_valid = false;
     mlme.snonce_valid = false;
     mlme.replay_valid = false;
+    rtw89_sae_end(mlme.sae);
+    mlme.sae = NULL;
+    mlme.sae_confirm_sent = false;
+    mlme.sae_token_len = 0;
+    mlme.sae_h2e = false;
+    mlme.own_rsnxe_len = 0;
+    memset(mlme.sae_password, 0, sizeof(mlme.sae_password));
+    mlme.sae_password_len = 0;
+    wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.sa_query_work);
+    mlme.sa_query_pending = false;
+    mlme.mgmt_rx_pn_valid = false;
+    mlme.mfp = false;
 
     if (mlme.sta) {
         /* sta_info_flush(): one state at a time, down to "does not exist" */
@@ -541,6 +808,7 @@ static void mlme_teardown(u16 deauth_reason)
     /* set while the association response was being taken in, which can fail
      * before the interface counts as associated */
     conf->he_support = false;
+    conf->eht_support = false;
     conf->twt_requester = false;
     conf->twt_broadcast = false;
     conf->uora_exists = false;
@@ -568,7 +836,8 @@ static void mlme_teardown(u16 deauth_reason)
     /* ieee80211_link_release_channel() */
     if (mlme.chanctx) {
         if (mlme.chanctx_assigned) {
-            ops->unassign_vif_chanctx(mlme.hw, mlme.vif, conf, mlme.chanctx);
+            if (ops->unassign_vif_chanctx)      /* as above */
+                ops->unassign_vif_chanctx(mlme.hw, mlme.vif, conf, mlme.chanctx);
             conf->chanctx_conf = NULL;
             mlme.chanctx_assigned = false;
         }
@@ -592,22 +861,113 @@ static void mlme_fail(int error, const char *what)
 /*  Authentication                                                      */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Authentication request: open system, or the SAE message due (our commit,
+ * then our confirm once the AP's commit is in). The SAE commit itself was
+ * computed when the join began; here it is only written out.
+ */
 static void mlme_send_auth(void)
 {
     const size_t len = offsetof(struct ieee80211_mgmt, u.auth.variable);
-    struct sk_buff *skb = mlme_alloc_frame(len);
+    struct sk_buff *skb = mlme_alloc_frame(len + 512);
     struct ieee80211_mgmt *mgmt;
+    int n = 0;
 
     if (!skb)
         return;
     mgmt = mlme_mgmt_header(skb, IEEE80211_STYPE_AUTH, len);
-    mgmt->u.auth.auth_alg = cpu_to_le16(WLAN_AUTH_OPEN);
-    mgmt->u.auth.auth_transaction = cpu_to_le16(1);
-    mgmt->u.auth.status_code = cpu_to_le16(0);
+    mgmt->u.auth.auth_alg = cpu_to_le16(mlme.sae ? WLAN_AUTH_SAE : WLAN_AUTH_OPEN);
+    mgmt->u.auth.auth_transaction = cpu_to_le16(mlme.sae && mlme.sae_confirm_sent ? 2 : 1);
+    /* an H2E commit says so in its status */
+    mgmt->u.auth.status_code = cpu_to_le16(mlme.sae && mlme.sae_h2e && !mlme.sae_confirm_sent ?
+                                           WLAN_STATUS_SAE_HASH_TO_ELEMENT : 0);
+    if (mlme.sae) {
+        u8 *body = skb_tail_pointer(skb);
+
+        n = mlme.sae_confirm_sent ?
+            rtw89_sae_write_confirm(mlme.sae, body, 512) :
+            rtw89_sae_write_commit(mlme.sae, mlme.sae_token_len ? mlme.sae_token : NULL,
+                                   mlme.sae_token_len, body, 512);
+        if (n < 0) {
+            kfree_skb(skb);
+            mlme_fail(-ENOMEM, "could not write the SAE message");
+            return;
+        }
+        skb_put(skb, n);
+    }
     mlme_tx_mgmt(skb);
 
     mlme.tries++;
-    wiphy_delayed_work_queue(mlme.hw->wiphy, &mlme.timeout_work, MLME_AUTH_TIMEOUT);
+    wiphy_delayed_work_queue(mlme.hw->wiphy, &mlme.timeout_work,
+                             mlme.sae ? MLME_SAE_TIMEOUT : MLME_AUTH_TIMEOUT);
+}
+
+/* The AP does hash-to-element: its RSN extension element says so (bit 5),
+ * or its rates carry the "H2E only" BSS membership selector (123). */
+static bool mlme_ap_h2e(void)
+{
+    const struct element *elem;
+    unsigned int i;
+
+    elem = mlme_find_elem(WLAN_EID_RSNX, mlme.bss.ies, mlme.bss.ies_len);
+    if (elem && elem->datalen >= 1 && (elem->data[0] & BIT(WLAN_RSNX_CAPAB_SAE_H2E)))
+        return true;
+    for_each_element_id(elem, WLAN_EID_SUPP_RATES, mlme.bss.ies, mlme.bss.ies_len)
+        for (i = 0; i < elem->datalen; i++)
+            if (elem->data[i] == (0x80 | BSS_MEMBERSHIP_SELECTOR_SAE_H2E))
+                return true;
+    for_each_element_id(elem, WLAN_EID_EXT_SUPP_RATES, mlme.bss.ies, mlme.bss.ies_len)
+        for (i = 0; i < elem->datalen; i++)
+            if (elem->data[i] == (0x80 | BSS_MEMBERSHIP_SELECTOR_SAE_H2E))
+                return true;
+    return false;
+}
+
+/* The password element and our commit (the expensive part, done once per
+ * method), and with hash-to-element the RSN extension element that says so
+ * in the association request. */
+static int mlme_sae_start(bool h2e)
+{
+    rtw89_sae_end(mlme.sae);
+    mlme.sae = rtw89_sae_begin(mlme.vif->addr, mlme.bss.bssid, mlme.bss.ssid,
+                               mlme.bss.ssid_len, mlme.sae_password,
+                               mlme.sae_password_len, h2e);
+    if (!mlme.sae)
+        return -EINVAL;
+    mlme.sae_h2e = h2e;
+    mlme.sae_confirm_sent = false;
+    mlme.sae_token_len = 0;
+    mlme.own_rsnxe_len = 0;
+    if (h2e) {
+        mlme.own_rsnxe[0] = WLAN_EID_RSNX;
+        mlme.own_rsnxe[1] = 1;
+        mlme.own_rsnxe[2] = BIT(WLAN_RSNX_CAPAB_SAE_H2E);
+        mlme.own_rsnxe_len = 3;
+    }
+    return 0;
+}
+
+/*
+ * SAE did not get through on a network that takes WPA2-PSK as well (the AP
+ * wants hash-to-element, another group, or never answers): join it with WPA2
+ * instead, from the authentication on, as macOS would have before WPA3.
+ * Returns false where there is nothing to fall back to.
+ */
+static bool mlme_sae_fall_back(const char *why)
+{
+    if (!mlme.sae || !mlme.sae_fallback || mlme_choose_akm(false, true))
+        return false;
+    mlme_info("%s: joining with WPA2 instead", why);
+    rtw89_sae_end(mlme.sae);
+    mlme.sae = NULL;
+    mlme.sae_confirm_sent = false;
+    mlme.sae_token_len = 0;
+    mlme.own_rsnxe_len = 0;
+    mlme.have_pmk = true;
+    mlme.tries = 0;
+    wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
+    mlme_send_auth();
+    return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -689,6 +1049,88 @@ static void mlme_chandef_downgrade(struct cfg80211_chan_def *def)
 }
 
 /*
+ * The 20 MHz channels an 802.11be AP has punctured (left out of its channel,
+ * EHT operation element), as they fall on @def; rtw89 takes them from the
+ * channel definition. Puncturing needs 80 MHz or more and never takes the
+ * control channel: otherwise narrower until none is left.
+ */
+static void mlme_eht_puncture(struct cfg80211_chan_def *def)
+{
+    const struct ieee80211_eht_operation *oper;
+    const struct ieee80211_eht_operation_info *info;
+    unsigned int ap_mhz, ap_low, mhz, low;
+    u16 bitmap;
+
+    def->punctured = 0;
+    oper = mlme.eht ? mlme_eht_oper_ie(mlme.bss.ies, mlme.bss.ies_len) : NULL;
+    bitmap = oper ? ieee80211_eht_oper_dis_subchan_bitmap(oper) : 0;
+    if (!bitmap)
+        return;
+    info = ieee80211_eht_oper_info(oper);
+    ap_mhz = 20u << min(info->control & IEEE80211_EHT_OPER_CHAN_WIDTH, 4);
+    ap_low = (u32)ieee80211_channel_to_frequency(ap_mhz >= 160 ? info->ccfs1 : info->ccfs0,
+                                                 mlme.chan->band) - ap_mhz / 2;
+    for (;;) {
+        mhz = mlme_chandef_mhz(def);
+        low = def->center_freq1 - mhz / 2;
+        if (low < ap_low || low + mhz > ap_low + ap_mhz) {
+            def->punctured = 0;             /* not the AP's channel: nothing known */
+            return;
+        }
+        def->punctured = (bitmap >> ((low - ap_low) / 20)) & (BIT(mhz / 20) - 1);
+        if (!def->punctured ||
+            (mhz >= 80 && !(def->punctured & BIT((def->chan->center_freq - 10 - low) / 20))))
+            return;
+        if (mhz == 20) {
+            def->punctured = 0;
+            return;
+        }
+        mlme_chandef_downgrade(def);
+        mlme.bw_limit = mlme_chandef_mhz(def);
+    }
+}
+
+/*
+ * A 6 GHz channel (ieee80211_chandef_he_6ghz_oper()): from the 6 GHz
+ * Operation Information of the HE operation element, there being no HT or VHT
+ * elements on 6 GHz. Returns the widest width the card may use there.
+ */
+static unsigned int mlme_chandef_6ghz(struct cfg80211_chan_def *def)
+{
+    const struct ieee80211_he_operation *he_oper =
+        mlme_he_oper_ie(mlme.bss.ies, mlme.bss.ies_len);
+    const struct ieee80211_he_6ghz_oper *op6 = ieee80211_he_6ghz_oper(he_oper);
+    u8 widths = mlme_own_he_cap()->he_cap_elem.phy_cap_info[0];
+    struct cfg80211_chan_def wide = *def;
+
+    cfg80211_chandef_create(def, mlme.chan, NL80211_CHAN_NO_HT);
+    def->width = NL80211_CHAN_WIDTH_20;
+    if (!op6)
+        return 20;
+    switch (op6->control & IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH) {
+    case IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH_40MHZ:
+        wide.width = NL80211_CHAN_WIDTH_40;
+        break;
+    case IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH_80MHZ:
+    case IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH_160MHZ:
+        /* for 160 MHz the first segment is the 80 MHz half with the
+         * primary channel, which is as wide as this goes */
+        wide.width = NL80211_CHAN_WIDTH_80;
+        break;
+    default:
+        return 20;
+    }
+    wide.center_freq1 = (u32)ieee80211_channel_to_frequency(op6->ccfs0, NL80211_BAND_6GHZ);
+    wide.center_freq2 = 0;
+    if (mlme_chandef_valid(&wide))
+        *def = wide;
+    else
+        mlme_info("the AP's 6 GHz channel information is invalid: 20 MHz");
+    /* the 802.11ax widths of the card: the 5 GHz bits stand for 6 GHz too */
+    return widths & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_80MHZ_IN_5G ? 80 : 20;
+}
+
+/*
  * The channel the AP operates on, from its HT, VHT and HE operation elements,
  * cut down to what this card and the regulatory domain allow. Also settles
  * which of 802.11n/ac/ax the join uses: mlme.ht, mlme.vht and mlme.he go in
@@ -708,6 +1150,11 @@ static void mlme_determine_chandef(struct cfg80211_chan_def *def)
 
     cfg80211_chandef_create(def, mlme.chan, mlme.ht ? NL80211_CHAN_HT20 : NL80211_CHAN_NO_HT);
     mlme.bw_limit = 20;
+
+    if (mlme.chan->band == NL80211_BAND_6GHZ) {
+        max = mlme_chandef_6ghz(def);
+        goto fit;
+    }
 
     elem = mlme_find_elem(WLAN_EID_HT_OPERATION, mlme.bss.ies, mlme.bss.ies_len);
     if (mlme.ht && elem && elem->datalen >= sizeof(*ht_oper))
@@ -818,6 +1265,7 @@ again:
                         IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_80MHZ_IN_5G)))
             max = 20;
     }
+fit:
     mlme.bw_limit = max;
 
     while (mlme_chandef_mhz(def) > max)
@@ -833,6 +1281,9 @@ again:
         mlme_info("802.11ax is not allowed on this channel");
         mlme.he = false;
     }
+    if (!mlme.he)
+        mlme.eht = false;
+    mlme_eht_puncture(def);
 }
 
 /*
@@ -903,7 +1354,7 @@ static void mlme_own_ht_cap(struct ieee80211_sta_ht_cap *own)
 
 /* ieee80211_put_he_cap(): our 802.11ax capabilities, without what goes beyond
  * the widest channel we may use (ieee80211_get_adjusted_he_cap()). */
-static void mlme_put_he_cap(struct sk_buff *skb)
+static void mlme_put_he_cap(struct sk_buff *skb, struct ieee80211_he_cap_elem *sent)
 {
     const struct ieee80211_sta_he_cap *own = mlme_own_he_cap();
     struct ieee80211_he_cap_elem elem = own->he_cap_elem;
@@ -940,6 +1391,63 @@ static void mlme_put_he_cap(struct sk_buff *skb)
         skb_put_data(skb, own->ppe_thres,
                      ieee80211_he_ppe_size(own->ppe_thres[0], own->he_cap_elem.phy_cap_info));
     *len = (u8)(skb_tail_pointer(skb) - len - 1);
+    *sent = elem;
+}
+
+/*
+ * ieee80211_put_eht_cap(): our 802.11be capabilities, the rate maps for the
+ * widths the 802.11ax element just sent claims (@he), 320 MHz left out, this
+ * driver going to 80 MHz at most.
+ */
+static void mlme_put_eht_cap(struct sk_buff *skb, const struct ieee80211_he_cap_elem *he)
+{
+    const struct ieee80211_sta_eht_cap *own = mlme_own_eht_cap();
+    struct ieee80211_eht_cap_elem_fixed elem = own->eht_cap_elem;
+    u8 mcs_size, *len;
+
+    elem.phy_cap_info[0] &= ~IEEE80211_EHT_PHY_CAP0_320MHZ_IN_6GHZ;
+    mcs_size = ieee80211_eht_mcs_nss_size(he, &elem, false);
+
+    *(u8 *)skb_put(skb, 1) = WLAN_EID_EXTENSION;
+    len = skb_put(skb, 1);
+    *(u8 *)skb_put(skb, 1) = WLAN_EID_EXT_EHT_CAPABILITY;
+    skb_put_data(skb, &elem, sizeof(elem));
+    skb_put_data(skb, &own->eht_mcs_nss_supp, mcs_size);
+    if (elem.phy_cap_info[5] & IEEE80211_EHT_PHY_CAP5_PPE_THRESHOLD_PRESENT)
+        skb_put_data(skb, own->eht_ppe_thres,
+                     ieee80211_eht_ppe_size(get_unaligned_le16(own->eht_ppe_thres),
+                                            elem.phy_cap_info));
+    *len = (u8)(skb_tail_pointer(skb) - len - 1);
+}
+
+/* ieee80211_eht_cap_ie_to_sta_eht_cap(): the AP's 802.11be capabilities, in
+ * the station entry rtw89's rate control reads. */
+static void mlme_set_sta_eht_cap(const u8 *ie, u8 ie_len)
+{
+    struct ieee80211_link_sta *link_sta = &mlme.sta->deflink;
+    struct ieee80211_sta_eht_cap *eht_cap = &link_sta->eht_cap;
+    const struct ieee80211_eht_cap_elem_fixed *elem = (const void *)ie;
+    u8 mcs_size, ppe_size = 0;
+
+    memset(eht_cap, 0, sizeof(*eht_cap));
+    if (!ie || !link_sta->he_cap.has_he)
+        return;
+    mcs_size = ieee80211_eht_mcs_nss_size(&link_sta->he_cap.he_cap_elem, elem, true);
+    if (ie_len < sizeof(*elem) + mcs_size || mcs_size > sizeof(eht_cap->eht_mcs_nss_supp))
+        return;
+    if (elem->phy_cap_info[5] & IEEE80211_EHT_PHY_CAP5_PPE_THRESHOLD_PRESENT) {
+        if (ie_len < sizeof(*elem) + mcs_size + 2)
+            return;
+        ppe_size = ieee80211_eht_ppe_size(get_unaligned_le16(ie + sizeof(*elem) + mcs_size),
+                                          elem->phy_cap_info);
+        if (ie_len < sizeof(*elem) + mcs_size + ppe_size ||
+            ppe_size > sizeof(eht_cap->eht_ppe_thres))
+            return;
+    }
+    memcpy(&eht_cap->eht_cap_elem, elem, sizeof(*elem));
+    memcpy(&eht_cap->eht_mcs_nss_supp.bw, ie + sizeof(*elem), mcs_size);
+    memcpy(eht_cap->eht_ppe_thres, ie + sizeof(*elem) + mcs_size, ppe_size);
+    eht_cap->has_eht = true;
 }
 
 static void mlme_send_assoc(void)
@@ -947,6 +1455,7 @@ static void mlme_send_assoc(void)
     static const u8 wmm_info[] = {
         WLAN_EID_VENDOR_SPECIFIC, 7, 0x00, 0x50, 0xf2, 2, 0, 1, 0,
     };
+    struct ieee80211_he_cap_elem he_sent = {};
     struct ieee80211_mgmt *mgmt;
     struct sk_buff *skb;
     u32 ap_rates, ap_basic, rates;
@@ -999,7 +1508,9 @@ static void mlme_send_assoc(void)
     if (mlme.rsn && mlme.external)
         skb_put_data(skb, mlme.ext_rsn_ie, mlme.ext_rsn_len);
     else if (mlme.rsn)
-        skb_put_data(skb, mlme_rsn_ie, sizeof(mlme_rsn_ie));
+        skb_put_data(skb, mlme.own_rsn_ie, mlme.own_rsn_len);
+    if (mlme.rsn && !mlme.external && mlme.own_rsnxe_len)
+        skb_put_data(skb, mlme.own_rsnxe, mlme.own_rsnxe_len);
 
     if (mlme.ht) {
         struct ieee80211_sta_ht_cap own;
@@ -1044,7 +1555,22 @@ static void mlme_send_assoc(void)
     }
 
     if (mlme.he)
-        mlme_put_he_cap(skb);
+        mlme_put_he_cap(skb, &he_sent);
+    if (mlme.he && mlme.sband->band == NL80211_BAND_6GHZ) {
+        /* ieee80211_put_he_6ghz_cap(): the card's, spatial multiplexing
+         * power save off */
+        u16 capa = le16_to_cpu(ieee80211_get_he_6ghz_capa(mlme.sband, NL80211_IFTYPE_STATION));
+
+        capa &= ~IEEE80211_HE_6GHZ_CAP_SM_PS;
+        capa |= u16_encode_bits(WLAN_HT_CAP_SM_PS_DISABLED, IEEE80211_HE_6GHZ_CAP_SM_PS);
+        pos = skb_put(skb, 5);
+        *pos++ = WLAN_EID_EXTENSION;
+        *pos++ = 3;
+        *pos++ = WLAN_EID_EXT_HE_6GHZ_CAPA;
+        put_unaligned_le16(capa, pos);
+    }
+    if (mlme.eht)
+        mlme_put_eht_cap(skb, &he_sent);
 
     if (mlme.wmm)
         skb_put_data(skb, wmm_info, sizeof(wmm_info));
@@ -1546,6 +2072,25 @@ static void mlme_rx_assoc_resp(const struct ieee80211_mgmt *mgmt, size_t len)
     ies = mgmt->u.assoc_resp.variable;
     ies_len = len - fixed;
 
+    if (status == WLAN_STATUS_ASSOC_REJECTED_TEMPORARILY && mlme.mfp &&
+        mlme.tries < MLME_MAX_TRIES) {
+        /*
+         * 802.11w: the AP still has a protected association with us (we left
+         * without it hearing) and first makes sure it is gone. The Timeout
+         * Interval element says when to ask again (TUs).
+         */
+        unsigned long wait = HZ;
+
+        elem = mlme_find_elem(WLAN_EID_TIMEOUT_INTERVAL, mgmt->u.assoc_resp.variable,
+                              len - fixed);
+        if (elem && elem->datalen >= 5 && elem->data[0] == WLAN_TIMEOUT_ASSOC_COMEBACK)
+            wait = msecs_to_jiffies(get_unaligned_le32(elem->data + 1) * 1024 / 1000) + 1;
+        if (wait > MLME_COMEBACK_MAX)
+            wait = MLME_COMEBACK_MAX;
+        mlme_info("the AP asks to come back in %u ms", jiffies_to_msecs(wait));
+        wiphy_delayed_work_queue(mlme.hw->wiphy, &mlme.timeout_work, wait);
+        return;
+    }
     if (status != WLAN_STATUS_SUCCESS) {
         mlme_fail(-1000 - status, "the AP refused the association");
         return;
@@ -1572,9 +2117,20 @@ static void mlme_rx_assoc_resp(const struct ieee80211_mgmt *mgmt, size_t len)
     he_oper = mlme.he ? mlme_he_oper_ie(ies, ies_len) : NULL;
     he_cap = he_oper ? mlme_he_cap_ie(ies, ies_len, &he_cap_len) : NULL;
     mlme_set_sta_he_cap(he_cap, he_cap_len);
+    /* 802.11be the same way: both elements in the response */
+    {
+        u8 eht_cap_len = 0;
+        const u8 *eht_cap = mlme.eht && he_cap && mlme_eht_oper_ie(ies, ies_len) ?
+                            mlme_eht_cap_ie(ies, ies_len, he_cap, &eht_cap_len) : NULL;
+
+        mlme_set_sta_eht_cap(eht_cap, eht_cap_len);
+        if (!mlme.sta->deflink.eht_cap.has_eht)
+            mlme.eht = false;
+    }
     mlme_set_sta_nss_bw();
 
     mlme.sta->aid = aid;
+    mlme.sta->mfp = mlme.mfp;
     mlme.sta->wme = wmm != NULL;
     mlme.sta->max_rx_aggregation_subframes = mlme.hw->max_rx_aggregation_subframes;
     mlme.aid = aid;
@@ -1592,6 +2148,7 @@ static void mlme_rx_assoc_resp(const struct ieee80211_mgmt *mgmt, size_t len)
               BSS_CHANGED_HT | BSS_CHANGED_BASIC_RATES | BSS_CHANGED_QOS |
               BSS_CHANGED_BEACON_INFO;
     changed |= mlme_set_bss_he(he_cap ? he_oper : NULL, ies, ies_len);
+    conf->eht_support = conf->he_support && mlme.eht;
 
     /* Linux takes the MU EDCA set from the response and then from every
      * beacon; beacons are not followed here, so the one from the scan stands in */
@@ -1635,6 +2192,7 @@ static void mlme_rx_assoc_resp(const struct ieee80211_mgmt *mgmt, size_t len)
      * frames can pass; data waits for the keys. How long the sign-in may take
      * (a certificate to accept, a password to type) is its business. */
     mlme_set_state(mlme.rsn && !mlme.external ? RTW89_MLME_ASSOCIATED : RTW89_MLME_CONNECTED);
+    mlme_bcn_mon_start();
     /* an AP that never starts or finishes the handshake must not leave us
      * associated without keys for ever */
     if (mlme.rsn && !mlme.external)
@@ -1643,6 +2201,7 @@ static void mlme_rx_assoc_resp(const struct ieee80211_mgmt *mgmt, size_t len)
               mlme.bss.bssid[0], mlme.bss.bssid[1], mlme.bss.bssid[2],
               mlme.bss.bssid[3], mlme.bss.bssid[4], mlme.bss.bssid[5],
               mlme.bss.freq, aid,
+              mlme.sta->deflink.eht_cap.has_eht ? "802.11be" :
               mlme.sta->deflink.he_cap.has_he ? "802.11ax" :
               mlme.sta->deflink.vht_cap.vht_supported ? "802.11ac" :
               mlme.sta->deflink.ht_cap.ht_supported ? "802.11n" : "802.11a/b/g",
@@ -1650,27 +2209,9 @@ static void mlme_rx_assoc_resp(const struct ieee80211_mgmt *mgmt, size_t len)
               ", sign-in and keys left to the system" : ", waiting for the key handshake");
 }
 
-static void mlme_rx_auth(const struct ieee80211_mgmt *mgmt, size_t len)
+/* Authenticated (open system, or SAE with both confirms good): associate. */
+static void mlme_authenticated(void)
 {
-    u16 alg, transaction, status;
-
-    if (mlme.state != RTW89_MLME_AUTHENTICATING ||
-        len < offsetof(struct ieee80211_mgmt, u.auth.variable))
-        return;
-
-    alg = le16_to_cpu(mgmt->u.auth.auth_alg);
-    transaction = le16_to_cpu(mgmt->u.auth.auth_transaction);
-    status = le16_to_cpu(mgmt->u.auth.status_code);
-    if (alg != WLAN_AUTH_OPEN || transaction != 2)
-        return;
-
-    wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
-
-    if (status != WLAN_STATUS_SUCCESS) {
-        mlme_fail(-1000 - status, "the AP refused authentication");
-        return;
-    }
-
     /* ieee80211_mark_sta_auth() */
     if (mlme_sta_move(IEEE80211_STA_AUTH)) {
         mlme_fail(-EIO, "authentication failed in the driver");
@@ -1680,6 +2221,129 @@ static void mlme_rx_auth(const struct ieee80211_mgmt *mgmt, size_t len)
     mlme.tries = 0;
     mlme_set_state(RTW89_MLME_ASSOCIATING);
     mlme_send_assoc();
+}
+
+/*
+ * The AP's SAE messages (12.4.8.6): its commit, answered with our confirm,
+ * and its confirm, which proves it has the same password. A request for an
+ * anti-clogging token is answered with the commit again, the token in it.
+ */
+static void mlme_rx_auth_sae(u16 transaction, u16 status, const u8 *body, size_t len)
+{
+    u8 pmkid[16];
+    int ret;
+
+    if (transaction == 1) {
+        if (status == WLAN_STATUS_ANTI_CLOG_REQUIRED && !mlme.sae_confirm_sent) {
+            /* the group, then the token; with H2E the token comes in a
+             * container element, which our commit puts back around it */
+            if (len < 2)
+                return;
+            body += 2;
+            len -= 2;
+            if (mlme.sae_h2e && len >= 3 && body[0] == WLAN_EID_EXTENSION &&
+                body[2] == WLAN_EID_EXT_ANTI_CLOGGING_TOKEN && body[1] >= 1 &&
+                (size_t)body[1] + 2 <= len) {
+                len = body[1] - 1;
+                body += 3;
+            }
+            if (len > sizeof(mlme.sae_token))
+                return;
+            wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
+            memcpy(mlme.sae_token, body, len);
+            mlme.sae_token_len = (u8)len;
+            mlme.tries = 0;
+            mlme_send_auth();
+            return;
+        }
+        if (status == WLAN_STATUS_SAE_HASH_TO_ELEMENT && !mlme.sae_h2e &&
+            !mlme.sae_confirm_sent) {
+            /* the AP takes hash-to-element only: once more that way */
+            wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
+            mlme_info("the AP wants SAE with hash-to-element");
+            if (mlme_sae_start(true)) {
+                mlme_fail(-EINVAL, "could not start SAE with this password");
+                return;
+            }
+            mlme.tries = 0;
+            mlme_send_auth();
+            return;
+        }
+        if (status != (mlme.sae_h2e ? WLAN_STATUS_SAE_HASH_TO_ELEMENT : WLAN_STATUS_SUCCESS)) {
+            char why[64];
+
+            snprintf(why, sizeof(why), "the AP refused the SAE commit, status %u%s", status,
+                     status == WLAN_STATUS_SAE_HASH_TO_ELEMENT ? " (hash-to-element only)" : "");
+            if (!mlme_sae_fall_back(why))
+                mlme_fail(-1000 - status, why);
+            return;
+        }
+        if (mlme.sae_confirm_sent) {
+            /* its commit again: our confirm was lost; the timer resends it */
+            return;
+        }
+        wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
+        ret = rtw89_sae_rx_commit(mlme.sae, body, len);
+        if (ret) {
+            if (!mlme_sae_fall_back("the AP's SAE commit does not check out"))
+                mlme_fail(-1000 - ret, "the AP's SAE commit does not check out");
+            return;
+        }
+        mlme.sae_confirm_sent = true;
+        mlme.tries = 0;
+        mlme_send_auth();
+        return;
+    }
+
+    if (transaction != 2 || !mlme.sae_confirm_sent)
+        return;
+    wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
+    if (status != WLAN_STATUS_SUCCESS) {
+        mlme_fail(-1000 - status, "the AP refused our SAE confirm");
+        return;
+    }
+    if (rtw89_sae_rx_confirm(mlme.sae, body, len)) {
+        /* the AP has a different password: it does not answer ours either */
+        mlme_fail(-2000 - WLAN_REASON_PREV_AUTH_NOT_VALID,
+                  "the AP's SAE confirm does not match: wrong password");
+        return;
+    }
+    rtw89_sae_keys(mlme.sae, mlme.pmk, pmkid);
+    memset(pmkid, 0, sizeof(pmkid));
+    mlme.have_pmk = true;
+    rtw89_sae_end(mlme.sae);
+    mlme.sae = NULL;
+    mlme.sae_confirm_sent = false;
+    mlme_info("SAE done: the AP has the same password");
+    mlme_authenticated();
+}
+
+static void mlme_rx_auth(const struct ieee80211_mgmt *mgmt, size_t len)
+{
+    const size_t fixed = offsetof(struct ieee80211_mgmt, u.auth.variable);
+    u16 alg, transaction, status;
+
+    if (mlme.state != RTW89_MLME_AUTHENTICATING || len < fixed)
+        return;
+
+    alg = le16_to_cpu(mgmt->u.auth.auth_alg);
+    transaction = le16_to_cpu(mgmt->u.auth.auth_transaction);
+    status = le16_to_cpu(mgmt->u.auth.status_code);
+    if (mlme.sae) {
+        if (alg == WLAN_AUTH_SAE)
+            mlme_rx_auth_sae(transaction, status, mgmt->u.auth.variable, len - fixed);
+        return;
+    }
+    if (alg != WLAN_AUTH_OPEN || transaction != 2)
+        return;
+
+    wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
+
+    if (status != WLAN_STATUS_SUCCESS) {
+        mlme_fail(-1000 - status, "the AP refused authentication");
+        return;
+    }
+    mlme_authenticated();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1705,7 +2369,9 @@ static void mlme_rx_auth(const struct ieee80211_mgmt *mgmt, size_t len)
 #define KEY_OFF_DATA_LEN        93
 
 #define KEY_INFO_VERSION        0x0007
-#define KEY_INFO_VER_SHA1_AES   2
+#define KEY_INFO_VER_SHA1_AES   2       /* HMAC-SHA1 MIC (PSK, 802.1X) */
+#define KEY_INFO_VER_CMAC_AES   3       /* AES-CMAC MIC (PSK-SHA256) */
+#define KEY_INFO_VER_AKM        0       /* as the AKM says: SAE, AES-CMAC */
 #define KEY_INFO_PAIRWISE       BIT(3)
 #define KEY_INFO_INSTALL        BIT(6)
 #define KEY_INFO_ACK            BIT(7)
@@ -1735,6 +2401,21 @@ static void mlme_tx_eapol(const u8 *eapol, size_t len)
     rtw89_data_tx(skb);
 }
 
+/* The MIC of an EAPOL-Key frame (with its MIC field zero) under @kck: HMAC-SHA1
+ * for descriptor version 2, AES-CMAC for PSK-SHA256 and SAE. */
+static void mlme_key_mic(const u8 kck[16], const u8 *frame, size_t len, u8 mic[16])
+{
+    u8 full[RTW89_SHA1_LEN];
+
+    if (mlme.key_ver == KEY_INFO_VER_SHA1_AES) {
+        rtw89_hmac_sha1(kck, 16, frame, len, full);
+        memcpy(mic, full, 16);
+        memset(full, 0, sizeof(full));
+    } else {
+        rtw89_aes_cmac(kck, frame, len, mic);
+    }
+}
+
 /* Build and send an EAPOL-Key reply with a valid MIC. */
 static void mlme_send_eapol_key(const struct mlme_ptk *ptk, u8 version, u16 key_info,
                                 const u8 *replay, const u8 *nonce,
@@ -1743,7 +2424,6 @@ static void mlme_send_eapol_key(const struct mlme_ptk *ptk, u8 version, u16 key_
     u8 frame[EAPOL_HDR_LEN + EAPOL_KEY_FIXED_LEN + sizeof(mlme.ext_rsn_ie)];
     u8 *k = frame + EAPOL_HDR_LEN;
     size_t len = EAPOL_HDR_LEN + EAPOL_KEY_FIXED_LEN + key_data_len;
-    u8 mic[RTW89_SHA1_LEN];
 
     if (key_data_len > sizeof(mlme.ext_rsn_ie))
         return;
@@ -1753,7 +2433,7 @@ static void mlme_send_eapol_key(const struct mlme_ptk *ptk, u8 version, u16 key_
     frame[1] = EAPOL_TYPE_KEY;
     put_unaligned_be16((u16)(EAPOL_KEY_FIXED_LEN + key_data_len), frame + 2);
     k[0] = EAPOL_KEY_DESC_RSN;
-    put_unaligned_be16(key_info | KEY_INFO_VER_SHA1_AES | KEY_INFO_MIC, k + KEY_OFF_INFO);
+    put_unaligned_be16(key_info | mlme.key_ver | KEY_INFO_MIC, k + KEY_OFF_INFO);
     memcpy(k + KEY_OFF_REPLAY, replay, 8);
     if (nonce)
         memcpy(k + KEY_OFF_NONCE, nonce, 32);
@@ -1762,14 +2442,14 @@ static void mlme_send_eapol_key(const struct mlme_ptk *ptk, u8 version, u16 key_
         memcpy(k + EAPOL_KEY_FIXED_LEN, key_data, key_data_len);
 
     /* the MIC covers the whole frame with the MIC field zero */
-    rtw89_hmac_sha1(ptk->kck, sizeof(ptk->kck), frame, len, mic);
-    memcpy(k + KEY_OFF_MIC, mic, 16);
+    mlme_key_mic(ptk->kck, frame, len, k + KEY_OFF_MIC);
 
     mlme_tx_eapol(frame, len);
 }
 
 /* PTK = PRF-384(PMK, "Pairwise key expansion",
- *               min(AA, SPA) || max(AA, SPA) || min(ANonce, SNonce) || max(...)) */
+ *               min(AA, SPA) || max(AA, SPA) || min(ANonce, SNonce) || max(...)),
+ * the PRF being KDF-SHA-256 for PSK-SHA256 and SAE (12.7.1.3) */
 static void mlme_derive_ptk(void)
 {
     const u8 *aa = mlme.bss.bssid, *spa = mlme.vif->addr;
@@ -1790,8 +2470,12 @@ static void mlme_derive_ptk(void)
         memcpy(data + 44, mlme.anonce, 32);
     }
 
-    rtw89_sha1_prf(mlme.pmk, sizeof(mlme.pmk), "Pairwise key expansion",
-                   data, sizeof(data), out, sizeof(out));
+    if (mlme.key_ver == KEY_INFO_VER_SHA1_AES)
+        rtw89_sha1_prf(mlme.pmk, sizeof(mlme.pmk), "Pairwise key expansion",
+                       data, sizeof(data), out, sizeof(out));
+    else
+        rtw89_kdf_sha256(mlme.pmk, sizeof(mlme.pmk), "Pairwise key expansion",
+                         data, sizeof(data), out, sizeof(out));
     memcpy(mlme.tptk.kck, out, 16);
     memcpy(mlme.tptk.kek, out + 16, 16);
     memcpy(mlme.tptk.tk, out + 32, 16);
@@ -1807,10 +2491,10 @@ static void mlme_derive_ptk(void)
  */
 static bool mlme_verify_mic(const u8 *copy, size_t len, const u8 *their_mic)
 {
-    u8 mic[RTW89_SHA1_LEN];
+    u8 mic[16];
 
     if (mlme.tptk_valid) {
-        rtw89_hmac_sha1(mlme.tptk.kck, sizeof(mlme.tptk.kck), copy, len, mic);
+        mlme_key_mic(mlme.tptk.kck, copy, len, mic);
         if (rtw89_crypto_equal(mic, their_mic, 16)) {
             mlme.ptk = mlme.tptk;
             mlme.ptk_valid = true;
@@ -1820,7 +2504,7 @@ static bool mlme_verify_mic(const u8 *copy, size_t len, const u8 *their_mic)
         }
     }
     if (mlme.ptk_valid) {
-        rtw89_hmac_sha1(mlme.ptk.kck, sizeof(mlme.ptk.kck), copy, len, mic);
+        mlme_key_mic(mlme.ptk.kck, copy, len, mic);
         if (rtw89_crypto_equal(mic, their_mic, 16))
             return true;
     }
@@ -1890,7 +2574,7 @@ static void mlme_rx_eapol(const u8 *e, size_t len)
         }
         return;
     }
-    if ((key_info & KEY_INFO_VERSION) != KEY_INFO_VER_SHA1_AES) {
+    if ((key_info & KEY_INFO_VERSION) != mlme.key_ver) {
         mlme_info("unsupported EAPOL-Key descriptor version %u", key_info & KEY_INFO_VERSION);
         return;
     }
@@ -1919,9 +2603,15 @@ static void mlme_rx_eapol(const u8 *e, size_t len)
         if (mlme.external)
             mlme_send_eapol_key(&mlme.tptk, e[0], KEY_INFO_PAIRWISE, k + KEY_OFF_REPLAY,
                                 mlme.snonce, mlme.ext_rsn_ie, mlme.ext_rsn_len);
-        else
+        else {
+            /* ... and the RSN extension element, when there was one */
+            u8 kd[sizeof(mlme.own_rsn_ie) + sizeof(mlme.own_rsnxe)];
+
+            memcpy(kd, mlme.own_rsn_ie, mlme.own_rsn_len);
+            memcpy(kd + mlme.own_rsn_len, mlme.own_rsnxe, mlme.own_rsnxe_len);
             mlme_send_eapol_key(&mlme.tptk, e[0], KEY_INFO_PAIRWISE, k + KEY_OFF_REPLAY,
-                                mlme.snonce, mlme_rsn_ie, sizeof(mlme_rsn_ie));
+                                mlme.snonce, kd, mlme.own_rsn_len + mlme.own_rsnxe_len);
+        }
         return;
     }
 
@@ -1992,7 +2682,9 @@ static void mlme_rx_eapol(const u8 *e, size_t len)
             wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
             rtw89_data_authorize();
             mlme_set_state(RTW89_MLME_CONNECTED);
-            mlme_info("WPA2 handshake complete: keys installed, connected");
+            mlme_info("%s handshake complete: keys installed, connected%s",
+                      mlme.akm == AKM_SAE ? "WPA3" : "WPA2",
+                      mlme.mfp ? ", management frames protected" : "");
         }
     } else {
         /* group key handshake, message 1: a new group key */
@@ -2369,12 +3061,79 @@ static void mlme_ba_teardown(void)
     mlme.rx_ba = 0;
 }
 
+/* ------------------------------------------------------------------ */
+/*  SA Query (802.11w, 11.13; net/mac80211/mlme.c and wpa_supplicant)  */
+/* ------------------------------------------------------------------ */
+
+static void mlme_send_sa_query(u8 action, const u8 *id)
+{
+    const size_t len = IEEE80211_MIN_ACTION_SIZE(sa_query);
+    struct sk_buff *skb = mlme_alloc_frame(len);
+    struct ieee80211_mgmt *mgmt;
+
+    if (!skb)
+        return;
+    mgmt = mlme_mgmt_header(skb, IEEE80211_STYPE_ACTION, len);
+    mgmt->u.action.category = WLAN_CATEGORY_SA_QUERY;
+    mgmt->u.action.action_code = action;
+    memcpy(mgmt->u.action.sa_query.trans_id, id, WLAN_SA_QUERY_TR_ID_LEN);
+    mlme_tx_mgmt(skb);
+}
+
+/* The AP asks whether we are still associated (it is about to drop us if no
+ * protected answer comes), or answers our question. */
+static void mlme_rx_sa_query(const struct ieee80211_mgmt *mgmt, size_t len)
+{
+    if (!mlme.mfp || len < IEEE80211_MIN_ACTION_SIZE(sa_query))
+        return;
+    if (mgmt->u.action.action_code == WLAN_ACTION_SA_QUERY_REQUEST) {
+        mlme_send_sa_query(WLAN_ACTION_SA_QUERY_RESPONSE, mgmt->u.action.sa_query.trans_id);
+    } else if (mgmt->u.action.action_code == WLAN_ACTION_SA_QUERY_RESPONSE &&
+               mlme.sa_query_pending &&
+               !memcmp(mgmt->u.action.sa_query.trans_id, mlme.sa_query_id,
+                       WLAN_SA_QUERY_TR_ID_LEN)) {
+        mlme.sa_query_pending = false;
+        wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.sa_query_work);
+        mlme_info("the AP still knows us: an unprotected leave message was ignored");
+    }
+}
+
+/*
+ * An unprotected deauthentication or disassociation while management frames
+ * are protected: anyone could have sent it. Ask the AP, protected, whether
+ * it still has us; if it does not answer, it really dropped us (it lost the
+ * keys, say after a restart).
+ */
+static void mlme_sa_query_start(u16 reason)
+{
+    if (mlme.sa_query_pending)
+        return;
+    get_random_bytes(mlme.sa_query_id, sizeof(mlme.sa_query_id));
+    mlme.sa_query_pending = true;
+    mlme.sa_query_reason = reason;
+    mlme_send_sa_query(WLAN_ACTION_SA_QUERY_REQUEST, mlme.sa_query_id);
+    wiphy_delayed_work_queue(mlme.hw->wiphy, &mlme.sa_query_work, MLME_SA_QUERY_WAIT);
+}
+
+static void mlme_sa_query_work(struct wiphy *wiphy, struct wiphy_work *work)
+{
+    if (!mlme.sa_query_pending || mlme.state == RTW89_MLME_IDLE)
+        return;
+    mlme.sa_query_pending = false;
+    mlme.last_error = -2000 - mlme.sa_query_reason;
+    mlme_info("no answer to the SA Query: the AP did drop us (reason %u)",
+              mlme.sa_query_reason);
+    mlme_teardown(0);
+}
+
 static void mlme_rx_action(const struct ieee80211_mgmt *mgmt, size_t len)
 {
     if (mlme.state < RTW89_MLME_ASSOCIATED || len < IEEE80211_MIN_ACTION_SIZE(action_code))
         return;
-    /* with a pairwise key these would have to be protected frames (802.11w),
-     * which this driver does not negotiate */
+    if (mgmt->u.action.category == WLAN_CATEGORY_SA_QUERY) {
+        mlme_rx_sa_query(mgmt, len);
+        return;
+    }
     if (mgmt->u.action.category != WLAN_CATEGORY_BACK)
         return;
 
@@ -2470,6 +3229,40 @@ static void mlme_beacon_loss_work(struct wiphy *wiphy, struct wiphy_work *work)
     mlme_probe_send();
 }
 
+/*
+ * ieee80211_sta_conn_mon_timer(): when the driver does not watch the beacons
+ * itself (no CONNECTION_MONITOR: rtw89 sets it only when the firmware filters
+ * beacons, which the RTL8851B's and RTL8852A's do not), mac80211 does. Seven
+ * beacon intervals without one, and never less than MLME_BEACON_LOSS_MIN (a
+ * connected scan takes the radio away for about a second): probe the AP as for
+ * a reported loss, which ends the connection if it does not answer.
+ */
+#define MLME_BEACON_LOSS_COUNT 7
+#define MLME_BEACON_LOSS_MIN (3 * HZ)
+
+static void mlme_bcn_mon_work(struct wiphy *wiphy, struct wiphy_work *work)
+{
+    unsigned int tu = mlme.bss.beacon_int ? mlme.bss.beacon_int : 100;
+    unsigned long limit = max_t(unsigned long, MLME_BEACON_LOSS_MIN,
+                                msecs_to_jiffies(MLME_BEACON_LOSS_COUNT * tu * 1024 / 1000));
+
+    if (!mlme.running || mlme.state < RTW89_MLME_ASSOCIATED)
+        return;
+    if (!mlme.poll && time_after(jiffies, mlme.last_beacon + limit)) {
+        mlme.last_beacon = jiffies;     /* one round of probing at a time */
+        mlme_beacon_loss_work(wiphy, NULL);
+    }
+    wiphy_delayed_work_queue(wiphy, &mlme.bcn_mon_work, HZ);
+}
+
+static void mlme_bcn_mon_start(void)
+{
+    if (ieee80211_hw_check(mlme.hw, CONNECTION_MONITOR))
+        return;
+    mlme.last_beacon = jiffies;
+    wiphy_delayed_work_queue(mlme.hw->wiphy, &mlme.bcn_mon_work, HZ);
+}
+
 /* Any context. */
 void rtw89_mlme_beacon_loss(void)
 {
@@ -2484,6 +3277,26 @@ void rtw89_mlme_tx_status(const struct sk_buff *skb)
     const struct ieee80211_hdr *hdr = (const void *)skb->data;
     const struct ieee80211_tx_info *info = IEEE80211_SKB_CB((struct sk_buff *)skb);
 
+    if (mlme.running && skb->len >= sizeof(struct ieee80211_hdr_3addr) &&
+        ieee80211_is_data(hdr->frame_control) &&
+        (info->flags & IEEE80211_TX_CTL_REQ_TX_STATUS)) {
+        size_t off = ieee80211_hdrlen(hdr->frame_control);
+
+        /* our reply in the key handshake: acknowledged by the AP and still
+         * no next message means it did not accept it (a wrong password); not
+         * acknowledged means it did not get there */
+        if (skb->len >= off + sizeof(mlme_eapol_llc) &&
+            !memcmp(skb->data + off, mlme_eapol_llc, sizeof(mlme_eapol_llc))) {
+            bool acked = info->flags & IEEE80211_TX_STAT_ACK;
+
+            if (mlme.eapol_reports < 8) {
+                mlme.eapol_reports++;
+                mlme_info("key handshake reply %s by the AP",
+                          acked ? "acknowledged" : "NOT acknowledged");
+            }
+            return;
+        }
+    }
     if (!mlme.running || !mlme.poll || skb->len < sizeof(struct ieee80211_hdr_3addr) ||
         !ieee80211_is_any_nullfunc(hdr->frame_control) ||
         !(info->flags & IEEE80211_TX_CTL_REQ_TX_STATUS))
@@ -2623,6 +3436,7 @@ static void mlme_rx_beacon(const struct ieee80211_mgmt *mgmt, size_t len, u16 fr
     ies_len = len - fixed;
 
     mlme.beacons++;
+    mlme.last_beacon = jiffies;
     if (mlme.poll) {
         mlme_info("a beacon arrived: still connected");
         mlme_reset_ap_probe();
@@ -2714,6 +3528,20 @@ static void mlme_rx_frame(struct sk_buff *skb)
     }
     if (!ether_addr_equal(mgmt->da, mlme.vif->addr))
         return;
+
+    /* 802.11w: robust frames to us come protected once the keys are in */
+    if (ieee80211_has_protected(fc)) {
+        if (ieee80211_is_auth(fc) || !mlme_unprotect(skb))
+            return;
+        mgmt = (const void *)skb->data;
+        fc = mgmt->frame_control;
+        len = skb->len;
+    } else if (mlme.mfp && mlme.ptk_conf && mlme_robust(skb->data, len)) {
+        if ((ieee80211_is_deauth(fc) || ieee80211_is_disassoc(fc)) &&
+            len >= offsetof(struct ieee80211_mgmt, u.deauth) + 2)
+            mlme_sa_query_start(le16_to_cpu(mgmt->u.deauth.reason_code));
+        return;
+    }
 
     if (ieee80211_is_auth(fc)) {
         mlme_rx_auth(mgmt, len);
@@ -2815,10 +3643,14 @@ static void mlme_timeout_work(struct wiphy *wiphy, struct wiphy_work *work)
 {
     switch (mlme.state) {
     case RTW89_MLME_AUTHENTICATING:
-        if (mlme.tries >= MLME_MAX_TRIES)
-            mlme_fail(-ETIMEDOUT, "no answer to the authentication request");
-        else
+        if (mlme.tries < MLME_MAX_TRIES)
             mlme_send_auth();
+        else if (mlme.sae && mlme.sae_confirm_sent)
+            /* an AP with another password drops our confirm without a word */
+            mlme_fail(-2000 - WLAN_REASON_PREV_AUTH_NOT_VALID,
+                      "no SAE confirm from the AP: wrong password?");
+        else if (!mlme_sae_fall_back("no answer to the SAE commit"))
+            mlme_fail(-ETIMEDOUT, "no answer to the authentication request");
         break;
     case RTW89_MLME_ASSOCIATING:
         if (mlme.tries >= MLME_MAX_TRIES)
@@ -2856,6 +3688,32 @@ void rtw89_mlme_set_tx_tap(void (*tap)(const u8 *frame, size_t len))
     mlme.tx_tap = tap;
 }
 
+/*
+ * Put a frame the AWDL side built on air as it is.
+ *
+ * It goes out unencrypted and unprotected whatever the link is doing: an AWDL
+ * action frame is addressed to Apple's AWDL address, not to the access point,
+ * and is not part of the association, so mlme_tx_mgmt()'s management
+ * protection must not touch it.  Everything else is the ordinary path, which
+ * means the radio has to be up and on the right channel already -- the caller
+ * owns the schedule, this only hands the frame to the chip.
+ */
+int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
+{
+    struct sk_buff *skb;
+
+    if (!frame || !len)
+        return -EINVAL;
+    if (!mlme.hw || !mlme.vif || !mlme.local || !mlme.chan)
+        return -ENETDOWN;       /* no radio to send it with yet */
+    skb = mlme_alloc_frame(len);
+    if (!skb)
+        return -ENOMEM;
+    memcpy(skb_put(skb, len), frame, len);
+    mlme_tx_frame(skb, IEEE80211_TX_INTFL_DONT_ENCRYPT);
+    return 0;
+}
+
 void rtw89_mlme_start(struct ieee80211_hw *hw, struct ieee80211_vif *vif, void (*notify)(void))
 {
     void (*tap)(const u8 *, size_t) = mlme.tx_tap;
@@ -2872,12 +3730,14 @@ void rtw89_mlme_start(struct ieee80211_hw *hw, struct ieee80211_vif *vif, void (
     wiphy_work_init(&mlme.beacon_loss_work, mlme_beacon_loss_work);
     wiphy_work_init(&mlme.probe_work, mlme_probe_work);
     wiphy_delayed_work_init(&mlme.probe_timeout_work, mlme_probe_work);
+    wiphy_delayed_work_init(&mlme.bcn_mon_work, mlme_bcn_mon_work);
     wiphy_delayed_work_init(&mlme.csa_work, mlme_csa_work);
     mlme.wmm_param_set = -1;
     mlme.mu_edca_param_set = -1;
     wiphy_work_init(&mlme.ba_work, mlme_ba_work);
     wiphy_delayed_work_init(&mlme.ba_timeout_work, mlme_ba_timeout_work);
     wiphy_delayed_work_init(&mlme.timeout_work, mlme_timeout_work);
+    wiphy_delayed_work_init(&mlme.sa_query_work, mlme_sa_query_work);
     mlme.running = true;
 }
 
@@ -2894,7 +3754,9 @@ void rtw89_mlme_stop(void)
     wiphy_work_cancel(mlme.hw->wiphy, &mlme.beacon_loss_work);
     wiphy_work_cancel(mlme.hw->wiphy, &mlme.probe_work);
     wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.probe_timeout_work);
+    wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.bcn_mon_work);
     wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.csa_work);
+    wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.sa_query_work);
     wiphy_work_cancel(mlme.hw->wiphy, &mlme.ba_work);
     wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.ba_timeout_work);
     skb_queue_purge(&mlme.rxq);
@@ -2922,11 +3784,12 @@ void rtw89_mlme_get_status(struct rtw89_mlme_status *status)
         status->center_freq = (u16)mlme.chandef.center_freq1;
         /* once associated, what the AP's answer really gave us */
         if (mlme.sta && status->state >= RTW89_MLME_ASSOCIATED)
-            status->mode = mlme.sta->deflink.he_cap.has_he ? 3 :
+            status->mode = mlme.sta->deflink.eht_cap.has_eht ? 4 :
+                           mlme.sta->deflink.he_cap.has_he ? 3 :
                            mlme.sta->deflink.vht_cap.vht_supported ? 2 :
                            mlme.sta->deflink.ht_cap.ht_supported ? 1 : 0;
         else
-            status->mode = mlme.he ? 3 : mlme.vht ? 2 : mlme.ht ? 1 : 0;
+            status->mode = mlme.eht ? 4 : mlme.he ? 3 : mlme.vht ? 2 : mlme.ht ? 1 : 0;
         status->nss = mlme.sta ? mlme.sta->deflink.rx_nss : 0;
     }
     status->beacons = mlme.beacons;
@@ -2964,19 +3827,23 @@ void rtw89_mlme_get_status(struct rtw89_mlme_status *status)
 }
 
 /* ieee80211_mgd_auth() + ieee80211_prep_connection() */
-static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool external,
+static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk,
+                        const u8 *password, size_t password_len, bool external,
                         const u8 *rsn_ie, size_t rsn_len);
 
-int rtw89_mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk)
+/* Join a network with a shared key: @pmk for WPA2-PSK, @password for SAE
+ * (WPA3-Personal). Either may be missing; open networks need neither. */
+int rtw89_mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk,
+                       const u8 *password, size_t password_len)
 {
-    return mlme_connect(bss, pmk, false, NULL, 0);
+    return mlme_connect(bss, pmk, password, password_len, false, NULL, 0);
 }
 
 /* Join a network whose sign-in and key handshake an outside supplicant does.
  * @rsn_ie: the RSN element it wants in the association request, if it has one. */
 int rtw89_mlme_connect_ext(const struct rtw89_mlme_bss *bss, const u8 *rsn_ie, size_t rsn_len)
 {
-    return mlme_connect(bss, NULL, true, rsn_ie, rsn_len);
+    return mlme_connect(bss, NULL, NULL, 0, true, rsn_ie, rsn_len);
 }
 
 /*
@@ -3050,8 +3917,8 @@ int rtw89_mlme_set_pmk(const u8 *pmk, size_t len)
  * Returns its length, 0 for an open network. */
 size_t rtw89_mlme_assoc_rsn_ie(u8 *buf, size_t max)
 {
-    const u8 *ie = mlme.external ? mlme.ext_rsn_ie : mlme_rsn_ie;
-    size_t len = mlme.external ? mlme.ext_rsn_len : sizeof(mlme_rsn_ie);
+    const u8 *ie = mlme.external ? mlme.ext_rsn_ie : mlme.own_rsn_ie;
+    size_t len = mlme.external ? mlme.ext_rsn_len : mlme.own_rsn_len;
 
     if (!mlme.running || mlme.state == RTW89_MLME_IDLE || !mlme.rsn || len > max)
         return 0;
@@ -3064,7 +3931,8 @@ bool rtw89_mlme_authorized(void)
     return mlme.running && mlme.sta && mlme.sta_state == IEEE80211_STA_AUTHORIZED;
 }
 
-static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool external,
+static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk,
+                        const u8 *password, size_t password_len, bool external,
                         const u8 *rsn_ie, size_t rsn_len)
 {
     const struct ieee80211_ops *ops = mlme.local->ops;
@@ -3074,7 +3942,7 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool ex
     const struct element *elem;
     const u8 *he_cap;
     u32 rates, basic;
-    u8 he_cap_len;
+    u8 he_cap_len, eht_cap_len;
     int ret;
 
     if (!mlme.running)
@@ -3091,6 +3959,8 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool ex
     mlme.eapol_rx = 0;
     mlme.tries = 0;
     mlme.aid = 0;
+    mlme.akm = 0;
+    mlme.mfp = false;
 
     mlme.chan = ieee80211_get_channel(mlme.hw->wiphy, bss->freq);
     if (!mlme.chan || (mlme.chan->flags & IEEE80211_CHAN_DISABLED))
@@ -3112,11 +3982,27 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool ex
     /* 802.11ax: on top of those */
     he_cap = mlme_he_cap_ie(mlme.ies, bss->ies_len, &he_cap_len);
     he_oper = mlme_he_oper_ie(mlme.ies, bss->ies_len);
-    mlme.he = mlme.ht && !mlme_he_off && mlme_own_he_cap() && he_cap && he_oper;
+    if (mlme.chan->band == NL80211_BAND_6GHZ) {
+        /* 6 GHz is 802.11ax (and newer) only: no 802.11n/ac, QoS required */
+        mlme.ht = false;
+        mlme.he = mlme.wmm && mlme_own_he_cap() && he_cap && he_oper &&
+                  ieee80211_he_6ghz_oper(he_oper) && mlme_he_mcs_ok(he_cap, he_oper);
+        if (!mlme.he) {
+            mlme_info("the AP's 802.11ax elements for 6 GHz are missing or unusable");
+            return -EOPNOTSUPP;
+        }
+    } else {
+        mlme.he = mlme.ht && !mlme_he_off && mlme_own_he_cap() && he_cap && he_oper;
+    }
+    /* 802.11be: on top of 802.11ax, one link (no multi-link element) */
+    mlme.eht = mlme.he && !mlme_he_off && mlme_own_eht_cap() &&
+               mlme_eht_cap_ie(mlme.ies, bss->ies_len, he_cap, &eht_cap_len) &&
+               mlme_eht_oper_ie(mlme.ies, bss->ies_len);
     mlme_determine_chandef(&mlme.chandef);
     if (mlme.he && !mlme_he_mcs_ok(he_cap, he_oper)) {
         mlme_info("the AP's 802.11ax rates are inconsistent or beyond this card: not using 802.11ax");
         mlme.he = false;
+        mlme.eht = false;
     }
 
     elem = mlme_find_elem(WLAN_EID_RSN, mlme.ies, bss->ies_len);
@@ -3124,8 +4010,9 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool ex
     mlme.have_pmk = false;
     mlme.held_m1_len = 0;
     mlme.external = external && elem;
+    mlme.sae_fallback = false;
     if (elem && external) {
-        ret = mlme_check_rsn(elem, true);
+        ret = mlme_check_rsn_8021x(elem);
         if (ret)
             return ret;
         /* its element as it is, if it is one: the handshake repeats it */
@@ -3138,15 +4025,24 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool ex
             mlme.ext_rsn_len = sizeof(mlme_rsn_ie_8021x);
         }
     } else if (elem) {
-        ret = mlme_check_rsn(elem, false);
+        ret = mlme_parse_rsn(elem);
         if (ret)
             return ret;
-        if (!pmk) {
+        if (!pmk && !password_len) {
             mlme_info("the network needs a password");
             return -EACCES;
         }
-        memcpy(mlme.pmk, pmk, sizeof(mlme.pmk));
-        mlme.have_pmk = true;
+        if (password_len > sizeof(mlme.sae_password))
+            password_len = 0;
+        ret = mlme_choose_akm(password_len > 0, pmk != NULL);
+        if (ret)
+            return ret;
+        if (pmk)
+            memcpy(mlme.pmk, pmk, sizeof(mlme.pmk));
+        if (mlme.akm == AKM_SAE)
+            mlme.sae_fallback = pmk && (mlme.ap_akms & (BIT(AKM_PSK) | BIT(AKM_PSK_SHA256)));
+        else
+            mlme.have_pmk = true;
     } else if (bss->capability & WLAN_CAPABILITY_PRIVACY) {
         mlme_info("the network uses WEP or WPA1, which is not supported");
         return -EOPNOTSUPP;
@@ -3160,12 +4056,16 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool ex
     if (!basic)
         basic = BIT(__ffs(rates));
 
-    mlme_info("joining \"%.*s\" (%02x:%02x:%02x:%02x:%02x:%02x) on %u MHz, %u MHz wide%s%s",
+    mlme_info("joining \"%.*s\" (%02x:%02x:%02x:%02x:%02x:%02x) on %u MHz, %u MHz wide%s%s%s",
               bss->ssid_len, bss->ssid, bss->bssid[0], bss->bssid[1], bss->bssid[2],
               bss->bssid[3], bss->bssid[4], bss->bssid[5], bss->freq,
               mlme_chandef_mhz(&mlme.chandef),
-              mlme.he ? ", 802.11ax" : mlme.vht ? ", 802.11ac" : mlme.ht ? ", 802.11n" : "",
-              !mlme.rsn ? ", open" : mlme.external ? ", WPA2 with 802.1X sign-in" : ", WPA2");
+              mlme.eht ? ", 802.11be" : mlme.he ? ", 802.11ax" : mlme.vht ? ", 802.11ac" :
+              mlme.ht ? ", 802.11n" : "",
+              !mlme.rsn ? ", open" : mlme.external ? ", WPA2 with 802.1X sign-in" :
+              mlme.akm == AKM_SAE ? ", WPA3 (SAE)" :
+              mlme.akm == AKM_PSK_SHA256 ? ", WPA2 (PSK-SHA256)" : ", WPA2",
+              mlme.mfp ? ", protected management frames" : "");
 
     /* the station entry for the AP, with what is known before association */
     mlme.sta = rtw89_m80211_sta_alloc(mlme.vif, bss->bssid);
@@ -3183,6 +4083,7 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool ex
     rtw89_data_attach(mlme.vif, mlme.sta, bss->bssid, mlme.chan->band, mlme.rsn);
     rtw89_data_set_external(mlme.external);
 
+    mlme.eapol_reports = 0;
     /* from here on mlme_teardown() cleans up */
     mlme_set_state(RTW89_MLME_AUTHENTICATING);
 
@@ -3204,7 +4105,11 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool ex
         goto err;
     }
     conf->chanreq.oper = chandef;
-    ret = ops->assign_vif_chanctx(mlme.hw, mlme.vif, conf, mlme.chanctx);
+    /* drv_assign_vif_chanctx(): absent when rtw89 emulates channel contexts
+     * (RTL8851B, RTL8852A: firmware without beacon filtering), where
+     * add_chanctx has already set the channel through ->config() */
+    ret = ops->assign_vif_chanctx ?
+          ops->assign_vif_chanctx(mlme.hw, mlme.vif, conf, mlme.chanctx) : 0;
     if (ret)
         goto err;
     conf->chanctx_conf = mlme.chanctx;
@@ -3226,6 +4131,17 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk, bool ex
         goto err;
     rtw89_m80211_sta_set_uploaded(mlme.sta, true);
 
+    if (mlme.rsn && !mlme.external && mlme.akm == AKM_SAE) {
+        memcpy(mlme.sae_password, password, password_len);
+        mlme.sae_password_len = (u8)password_len;
+        /* hash-to-element whenever the AP does it: it is the better method,
+         * and on 6 GHz the only one */
+        if (mlme_sae_start(mlme_ap_h2e() || mlme.chan->band == NL80211_BAND_6GHZ)) {
+            mlme_info("could not start SAE with this password");
+            ret = -EINVAL;
+            goto err;
+        }
+    }
     mlme_send_auth();
     return 0;
 

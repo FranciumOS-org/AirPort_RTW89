@@ -478,6 +478,7 @@ bool AirPort_RTW89::start(IOService *provider)
     platform.rx_frame = rxFrame;
     platform.tx_wake = txWake;
     platform.scan_done = scanDone;
+    platform.awdl_frame = awdlFrame;
 
     LOG("probing");
     ret = rtw89_glue_probe(&platform, &device);
@@ -623,7 +624,8 @@ void AirPort_RTW89::linkChanged(void *ctx)
 /* "1201.0 Mb/s (802.11ax MCS 11, 2 streams, 80 MHz)", or nothing when unknown. */
 static void describeRate(const struct rtw89_glue_rate &rate, char *buf, size_t len)
 {
-    static const char *const kModes[] = { "802.11a/b/g", "802.11n", "802.11ac", "802.11ax" };
+    static const char *const kModes[] = { "802.11a/b/g", "802.11n", "802.11ac", "802.11ax",
+                                          "802.11be" };
 
     buf[0] = 0;
     if (!rate.kbps)
@@ -632,7 +634,7 @@ static void describeRate(const struct rtw89_glue_rate &rate, char *buf, size_t l
         snprintf(buf, len, "%u.%u Mb/s (802.11a/b/g)", rate.kbps / 1000, rate.kbps % 1000 / 100);
     else
         snprintf(buf, len, "%u.%u Mb/s (%s MCS %u, %u stream%s, %u MHz)", rate.kbps / 1000,
-                 rate.kbps % 1000 / 100, kModes[rate.mode & 3], rate.mcs, rate.nss,
+                 rate.kbps % 1000 / 100, kModes[rate.mode <= 4 ? rate.mode : 0], rate.mcs, rate.nss,
                  rate.nss == 1 ? "" : "s", rate.width);
 }
 

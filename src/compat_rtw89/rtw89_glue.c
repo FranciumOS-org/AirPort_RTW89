@@ -6,6 +6,7 @@
  */
 #include "rtw89_net80211.h"
 #include "rtw89_glue.h"
+#include "rtw89_awdl.h"
 #include "rtw89_crypto.h"
 #include "core.h"
 #include "coex.h"
@@ -90,7 +91,10 @@ static struct {
         u8 ssid_len;
         bool have_pmk;
         u8 pmk[32];
+        u8 password[RTW89_GLUE_MAX_PASSWORD];  /* for SAE (WPA3-Personal) */
+        u8 password_len;
     } want;
+    u8 asked_bssid[ETH_ALEN];           /* macOS's choice, when a better one was joined */
     bool rejoin_off;                    /* rtw89_glue_set_rejoin(false) */
     bool rejoining;                     /* trying to get back */
     bool rejoin_scanned;                /* this attempt has had its scan */
@@ -588,6 +592,22 @@ void rtw89_glue_set_ax(bool on)
     rtw89_mlme_set_he(on);
 }
 
+void rtw89_glue_set_country(const char *alpha2)
+{
+    struct ieee80211_hw *hw;
+    char cc[2];
+    int i;
+
+    if (!glue.probed || !alpha2)
+        return;
+    for (i = 0; i < 2; i++)
+        cc[i] = alpha2[i] >= 'a' && alpha2[i] <= 'z' ? (char)(alpha2[i] - 'a' + 'A') : alpha2[i];
+    hw = glue_hw();
+    wiphy_lock(hw->wiphy);
+    rtw89_cfg80211_set_country(hw->wiphy, cc);
+    wiphy_unlock(hw->wiphy);
+}
+
 /*
  * Remember how a frame was sent to us: mode, rate index, streams, width and
  * guard interval in one word, so that readers on other threads never see half
@@ -650,7 +670,7 @@ static void glue_rate_describe(const struct rate_info *ri, struct rtw89_glue_rat
     out->kbps = cfg80211_calculate_bitrate((struct rate_info *)ri) * 100;
     if (!out->kbps)
         return;
-    out->mode = ri->flags & RATE_INFO_FLAGS_HE_MCS ? 3 : ri->flags & RATE_INFO_FLAGS_VHT_MCS ? 2 :
+    out->mode = ri->flags & RATE_INFO_FLAGS_EHT_MCS ? 4 : ri->flags & RATE_INFO_FLAGS_HE_MCS ? 3 : ri->flags & RATE_INFO_FLAGS_VHT_MCS ? 2 :
                 ri->flags & RATE_INFO_FLAGS_MCS ? 1 : 0;
     out->mcs = out->mode ? ri->mcs : 0;
     /* 802.11n numbers its rates through the streams: 8 to a stream */
@@ -823,6 +843,20 @@ void rtw89_glue_note_bss(const u8 *frame, size_t len, u16 freq, s8 signal)
     spin_unlock(&glue.bss_lock);
 }
 
+/*
+ * Whether a scan visits @chan: every channel that is allowed, but on 6 GHz the
+ * 15 preferred scanning channels only (every fourth 20 MHz channel: 5, 21,
+ * ..., 229). Access points there are expected on them, macOS shows networks
+ * found elsewhere only when a 2.4/5 GHz neighbour report points to them, and
+ * listening on all 59 would add seconds to each scan.
+ */
+static bool glue_scan_channel(const struct ieee80211_channel *chan)
+{
+    if (chan->flags & IEEE80211_CHAN_DISABLED)
+        return false;
+    return chan->band != NL80211_BAND_6GHZ || chan->hw_value % 16 == 5;
+}
+
 /* Mode, width and security of a network, from its elements. */
 static void glue_bss_describe(struct rtw89_glue_bss_entry *e)
 {
@@ -855,8 +889,23 @@ static void glue_bss_describe(struct rtw89_glue_bss_entry *e)
         else if (oper->chan_width == IEEE80211_VHT_CHANWIDTH_160MHZ)
             e->pub.width = 160;
     }
-    if (cfg80211_find_ext_elem(WLAN_EID_EXT_HE_CAPABILITY, e->ies, e->ies_len))
+    if (cfg80211_find_ext_elem(WLAN_EID_EXT_HE_CAPABILITY, e->ies, e->ies_len)) {
+        const struct ieee80211_he_6ghz_oper *op6 = NULL;
+
         e->pub.mode = 3;
+        /* 6 GHz has no HT or VHT: the width is in the HE operation element */
+        elem = cfg80211_find_ext_elem(WLAN_EID_EXT_HE_OPERATION, e->ies, e->ies_len);
+        if (elem && elem->datalen >= 1 + sizeof(struct ieee80211_he_operation) &&
+            elem->datalen >= ieee80211_he_oper_size(elem->data + 1))
+            op6 = ieee80211_he_6ghz_oper((const void *)(elem->data + 1));
+        if (op6) {
+            static const u8 widths[] = { 20, 40, 80, 160 };
+
+            e->pub.width = widths[op6->control & IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH];
+        }
+        if (cfg80211_find_ext_elem(WLAN_EID_EXT_EHT_CAPABILITY, e->ies, e->ies_len))
+            e->pub.mode = 4;
+    }
 
     /* RSN: version, group cipher, pairwise list, AKM list, capabilities */
     elem = cfg80211_find_elem(WLAN_EID_RSN, e->ies, e->ies_len);
@@ -937,6 +986,14 @@ static void glue_rx(void *ctx, struct ieee80211_sta *sta, struct sk_buff *skb)
         if (!is_multicast_ether_addr(hdr->addr1))
             glue_rx_rate(status);
         rtw89_data_rx(skb);
+        return;
+    }
+
+    /* AWDL sync frames are addressed to Apple's own BSSID, so the station
+     * MLME would drop them unseen. Watched for separately; the frame goes on
+     * to the MLME either way, which will ignore it. */
+    if (rtw89_awdl_rx(skb, len - FCS_LEN)) {
+        kfree_skb(skb);
         return;
     }
 
@@ -1087,6 +1144,52 @@ static void glue_scan_done(void *ctx, bool aborted)
         glue_rejoin_queue(0);
     if (glue.plat.scan_done)
         glue.plat.scan_done(glue.plat.ctx, aborted);
+}
+
+/* For the smoke test: what rtw89's core does for a chip without real channel
+ * contexts (RTL8851B, RTL8852A), so the join runs that way too. */
+void rtw89_glue_test_emulate_chanctx(void);
+void rtw89_glue_test_emulate_chanctx(void)
+{
+    struct ieee80211_ops *ops = (struct ieee80211_ops *)hw_to_local(glue_hw())->ops;
+
+    ops->add_chanctx = ieee80211_emulate_add_chanctx;
+    ops->remove_chanctx = ieee80211_emulate_remove_chanctx;
+    ops->change_chanctx = ieee80211_emulate_change_chanctx;
+    ops->switch_vif_chanctx = ieee80211_emulate_switch_vif_chanctx;
+    ops->assign_vif_chanctx = NULL;
+    ops->unassign_vif_chanctx = NULL;
+    /* nor beacon filtering in their firmware: no CONNECTION_MONITOR */
+    __clear_bit(IEEE80211_HW_CONNECTION_MONITOR, glue_hw()->flags);
+}
+
+/*
+ * For the smoke test: 802.11be capabilities on the 6 GHz band of a chip that
+ * has none (the pretend RTL8852CE), as an RTL8922A's would read: 2 streams up
+ * to MCS 13, no PPE thresholds. The RTL8922A itself cannot be pretended: its
+ * radio does not start without firmware answers. This exercises the MLME's
+ * 802.11be join, not rtw89's handling of a real 802.11be chip.
+ */
+void rtw89_glue_test_fake_eht(void);
+void rtw89_glue_test_fake_eht(void)
+{
+    struct ieee80211_supported_band *sband = glue_hw()->wiphy->bands[NL80211_BAND_6GHZ];
+    struct ieee80211_sband_iftype_data *data;
+    int i;
+
+    if (!sband)
+        return;
+    for (i = 0; i < sband->n_iftype_data; i++) {
+        data = (struct ieee80211_sband_iftype_data *)&sband->iftype_data[i];
+        if (!(data->types_mask & BIT(NL80211_IFTYPE_STATION)))
+            continue;
+        memset(&data->eht_cap, 0, sizeof(data->eht_cap));
+        data->eht_cap.has_eht = true;
+        data->eht_cap.eht_mcs_nss_supp.bw._80.rx_tx_mcs9_max_nss = 0x22;
+        data->eht_cap.eht_mcs_nss_supp.bw._80.rx_tx_mcs11_max_nss = 0x22;
+        data->eht_cap.eht_mcs_nss_supp.bw._80.rx_tx_mcs13_max_nss = 0x22;
+        data->eht_cap.eht_mcs_nss_supp.bw._160 = data->eht_cap.eht_mcs_nss_supp.bw._80;
+    }
 }
 
 /* For the userspace smoke test, whose pretend chip never finishes a scan. */
@@ -1253,6 +1356,8 @@ static void glue_forget_network(void)
     glue.want.valid = false;
     glue.rejoining = false;
     memset(glue.want.pmk, 0, sizeof(glue.want.pmk));
+    memset(glue.want.password, 0, sizeof(glue.want.password));
+    glue.want.password_len = 0;
 }
 
 static void glue_down_locked(void);
@@ -1347,7 +1452,8 @@ bool rtw89_glue_scanning(void)
     return glue.scanning;
 }
 
-static int glue_scan_locked(void);
+static int glue_scan_locked(const u8 *name, size_t name_len,
+                            const u16 *want_freqs, size_t n_want);
 
 int rtw89_glue_scan(void)
 {
@@ -1356,12 +1462,47 @@ int rtw89_glue_scan(void)
     if (!glue.active)
         return -ENETDOWN;
     mutex_lock(&glue.cmd_lock);
-    ret = glue_scan_locked();
+    ret = glue_scan_locked(NULL, 0, NULL, 0);
     mutex_unlock(&glue.cmd_lock);
     return ret;
 }
 
-static int glue_scan_locked(void)
+int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len)
+{
+    int ret;
+
+    if (!glue.active)
+        return -ENETDOWN;
+    if (!ssid_len || ssid_len > IEEE80211_MAX_SSID_LEN)
+        return -EINVAL;
+    mutex_lock(&glue.cmd_lock);
+    ret = glue_scan_locked(ssid, ssid_len, NULL, 0);
+    mutex_unlock(&glue.cmd_lock);
+    return ret;
+}
+
+/*
+ * A scan macOS asked for by name, by channel, or both.  Unlike the plain
+ * scan this is never answered from what was heard earlier and never sliced:
+ * it is asked for when something is expected to have just appeared.
+ */
+int rtw89_glue_scan_directed(const uint8_t *ssid, size_t ssid_len,
+                             const uint16_t *freqs, size_t n_freqs)
+{
+    int ret;
+
+    if (!glue.active)
+        return -ENETDOWN;
+    if (ssid_len > IEEE80211_MAX_SSID_LEN)
+        return -EINVAL;
+    mutex_lock(&glue.cmd_lock);
+    ret = glue_scan_locked(ssid_len ? ssid : NULL, ssid_len, freqs, n_freqs);
+    mutex_unlock(&glue.cmd_lock);
+    return ret;
+}
+
+static int glue_scan_locked(const u8 *name, size_t name_len,
+                            const u16 *want_freqs, size_t n_want)
 {
     struct rtw89_m80211_local *local;
     struct ieee80211_scan_request *sreq;
@@ -1386,32 +1527,47 @@ static int glue_scan_locked(void)
         if (hw->wiphy->bands[band])
             n_channels += hw->wiphy->bands[band]->n_channels;
 
-    /* One allocation: request, channel pointers, one wildcard SSID, the IEs. */
+    /* One allocation: request, channel pointers, the wildcard SSID and maybe
+     * a named one, the IEs. */
     sreq = kzalloc(sizeof(*sreq) + n_channels * sizeof(sreq->req.channels[0]) +
-                   sizeof(*ssid) + sizeof(glue_ies_2ghz) + sizeof(glue_ies_5ghz),
+                   2 * sizeof(*ssid) + sizeof(glue_ies_2ghz) + sizeof(glue_ies_5ghz),
                    GFP_KERNEL);
     if (!sreq)
         return -ENOMEM;
     req = &sreq->req;
     ssid = (void *)&req->channels[n_channels];
-    ies = (u8 *)(ssid + 1);
+    ies = (u8 *)(ssid + 2);
 
     /*
      * Connected, a scan covers the next GLUE_SCAN_SLICE channels only: all of
      * them took about 5.5 s off the network's channel, and macOS asks every
      * 30 s, which on a weak 5 GHz link was seconds of no traffic each time. A
      * slice is about a second; the whole list comes round every few minutes,
-     * as a Mac's own background scans do. Not connected, all of them.
+     * as a Mac's own background scans do. Not connected, or looking for one
+     * network by name, all of them.
      */
     {
-        bool slice = glue.vif->cfg.assoc;
+        bool slice = glue.vif->cfg.assoc && !name && !n_want;
         unsigned int k = 0, taken = 0, from = slice ? glue.scan_slice_pos : 0;
 
         for (band = 0; band < NUM_NL80211_BANDS; band++) {
             sband = hw->wiphy->bands[band];
             for (i = 0; sband && i < sband->n_channels; i++) {
-                if (sband->channels[i].flags & IEEE80211_CHAN_DISABLED)
+                if (!glue_scan_channel(&sband->channels[i]))
                     continue;
+                /* Asked for particular channels, only those: macOS knows
+                 * where the hotspot it just switched on is, and a scan of
+                 * one channel costs the link a fraction of a full sweep. */
+                if (n_want) {
+                    size_t w;
+                    bool wanted = false;
+
+                    for (w = 0; w < n_want; w++)
+                        if (want_freqs[w] == sband->channels[i].center_freq)
+                            wanted = true;
+                    if (!wanted)
+                        continue;
+                }
                 if (k++ < from)
                     continue;
                 if (slice && taken == GLUE_SCAN_SLICE)
@@ -1431,6 +1587,13 @@ static int glue_scan_locked(void)
 
     req->ssids = ssid;          /* zero length: the wildcard SSID */
     req->n_ssids = 1;
+    if (name) {
+        /* and the network asked for by name: a phone's hotspot that has
+         * only just come up answers that soonest */
+        memcpy(ssid[1].ssid, name, name_len);
+        ssid[1].ssid_len = (u8)name_len;
+        req->n_ssids = 2;
+    }
     req->wiphy = hw->wiphy;
     req->scan_start = jiffies;
     ether_addr_copy(req->mac_addr, glue.vif->addr);
@@ -1557,7 +1720,7 @@ unsigned int rtw89_glue_channels(struct rtw89_glue_channel *out, unsigned int ma
         for (i = 0; sband && i < sband->n_channels && n < max; i++) {
             const struct ieee80211_channel *chan = &sband->channels[i];
 
-            if (chan->flags & IEEE80211_CHAN_DISABLED)
+            if (!glue_scan_channel(chan))
                 continue;
             out[n].freq = (u16)chan->center_freq;
             out[n].channel = (u8)chan->hw_value;
@@ -1618,7 +1781,32 @@ static const u8 *glue_ext_rsn_ie;
 static size_t glue_ext_rsn_len;
 static bool glue_ext;
 
-static int glue_join_locked(const u8 *ssid, size_t ssid_len, const u8 *bssid, const u8 *pmk)
+/* See glue_join_locked(): a 5 or 6 GHz access point of the network is
+ * preferred to a 2.4 GHz one when its signal is at least this good, and no
+ * more than this much weaker. */
+#define GLUE_PREFER_5G_MIN      (-70)   /* dBm */
+#define GLUE_PREFER_5G_BONUS    15      /* dB */
+
+/* Whether the key for one access point of a network works with another:
+ * open with open, 802.1X with 802.1X, and a password with WPA2-PSK, or with
+ * WPA3 (SAE) when the password itself is there (@sae). */
+static bool glue_same_key(const struct rtw89_glue_bss_entry *a,
+                          const struct rtw89_glue_bss_entry *b, bool sae)
+{
+    const u8 personal = RTW89_GLUE_SEC_WPA2_PSK | (sae ? RTW89_GLUE_SEC_WPA3_SAE : 0);
+    u8 sa = a->pub.security, sb = b->pub.security;
+
+    if (!sa || !sb)
+        return !sa && !sb;
+    if (sa & personal)
+        return sb & personal;
+    if (sa & RTW89_GLUE_SEC_ENTERPRISE)
+        return sb & RTW89_GLUE_SEC_ENTERPRISE;
+    return false;
+}
+
+static int glue_join_locked(const u8 *ssid, size_t ssid_len, const u8 *bssid, const u8 *pmk,
+                            const u8 *password, size_t password_len)
 {
     static u8 ies[RTW89_GLUE_MAX_IES];  /* under cmd_lock */
     struct rtw89_glue_bss_entry *best = NULL;
@@ -1639,6 +1827,46 @@ static int glue_join_locked(const u8 *ssid, size_t ssid_len, const u8 *bssid, co
         if (!best || e->pub.signal > best->pub.signal)
             best = e;
     }
+    /*
+     * The same network on 5 or 6 GHz when its signal is good, as Windows and
+     * wpa_supplicant choose: on 2.4 GHz the link is 20 MHz wide, a quarter of
+     * an 80 MHz channel. An RTL8852AE tester got 287 Mb/s on 2.4 GHz at
+     * -30 dBm where Windows took the same router's 5 GHz side at -37 dBm and
+     * 1201 Mb/s. airportd asks for an access point by its signal alone, so
+     * its choice of a 2.4 GHz one is overridden too, but only for one of the
+     * same network the same key works with.
+     */
+    memset(glue.asked_bssid, 0, ETH_ALEN);
+    /*
+     * Only when the caller left the access point open.  Asked for one by
+     * address, it gets that one: swapping in a different radio of the same
+     * name is the right guess when macOS picked by signal alone, and simply
+     * the wrong network when macOS named a target -- a phone's hotspot, say,
+     * whose other band is a different device entirely.  Reported as joining
+     * 5745 MHz when macOS asked for channel 6 (issue #7).
+     */
+    if (best && !bssid && best->pub.freq < 5000) {
+        struct rtw89_glue_bss_entry *alt = NULL;
+
+        for (i = 0; i < glue.n_bss; i++) {
+            struct rtw89_glue_bss_entry *e = &glue.bss[i];
+
+            if (e->pub.ssid_len != ssid_len || memcmp(e->pub.ssid, ssid, ssid_len) ||
+                !e->ies_len || e->pub.freq < 5000 || e->pub.signal < GLUE_PREFER_5G_MIN ||
+                e->pub.signal + GLUE_PREFER_5G_BONUS <= best->pub.signal ||
+                !glue_same_key(best, e, password_len > 0))
+                continue;
+            if (!alt || e->pub.signal > alt->pub.signal)
+                alt = e;
+        }
+        if (alt) {
+            IOLog("[rtw89] the network on %u MHz (%d dBm) rather than %u MHz (%d dBm)\n",
+                  alt->pub.freq, alt->pub.signal, best->pub.freq, best->pub.signal);
+            if (bssid)
+                memcpy(glue.asked_bssid, bssid, ETH_ALEN);
+            best = alt;
+        }
+    }
     if (best) {
         memcpy(bss.bssid, best->pub.bssid, ETH_ALEN);
         memcpy(bss.ssid, ssid, ssid_len);
@@ -1655,16 +1883,37 @@ static int glue_join_locked(const u8 *ssid, size_t ssid_len, const u8 *bssid, co
         return -ENOENT;
 
     hw = glue_hw();
+    /*
+     * Not in the middle of a scan: the firmware is hopping over 39 channels
+     * and the AP's answer to the authentication request is missed. macOS
+     * often asks to join while its own scan runs; on chips whose channel is
+     * set through ->config() (emulated channel contexts: RTL8852A, RTL8851B)
+     * every such join failed. mac80211 never authenticates during a scan
+     * either. Cancel it and give it a moment to stop.
+     */
+    if (glue.scanning) {
+        struct rtw89_m80211_local *local = hw_to_local(hw);
+
+        wiphy_lock(hw->wiphy);
+        if (glue.scanning && local->ops->cancel_hw_scan)
+            local->ops->cancel_hw_scan(hw, glue.vif);
+        wiphy_unlock(hw->wiphy);
+        for (i = 0; i < 50 && glue.scanning; i++)
+            msleep(20);
+        if (glue.scanning)
+            IOLog("[rtw89] the scan did not stop for the join; joining anyway\n");
+    }
     wiphy_lock(hw->wiphy);
     if (glue_ext)
         ret = rtw89_mlme_connect_ext(&bss, glue_ext_rsn_ie, glue_ext_rsn_len);
     else
-        ret = rtw89_mlme_connect(&bss, pmk);
+        ret = rtw89_mlme_connect(&bss, pmk, password, password_len);
     wiphy_unlock(hw->wiphy);
     return ret;
 }
 
-static int glue_join_request(const u8 *ssid, size_t ssid_len, const u8 *bssid, const u8 *pmk)
+static int glue_join_request(const u8 *ssid, size_t ssid_len, const u8 *bssid, const u8 *pmk,
+                             const u8 *password, size_t password_len)
 {
     typeof(glue.want) old;
     int ret;
@@ -1694,9 +1943,12 @@ static int glue_join_request(const u8 *ssid, size_t ssid_len, const u8 *bssid, c
     glue.want.have_pmk = pmk != NULL;
     if (pmk)
         memcpy(glue.want.pmk, pmk, sizeof(glue.want.pmk));
+    if (password_len)
+        memcpy(glue.want.password, password, password_len);
+    glue.want.password_len = (u8)password_len;
     glue.want.valid = true;
 
-    ret = glue_join_locked(ssid, ssid_len, bssid, pmk);
+    ret = glue_join_locked(ssid, ssid_len, bssid, pmk, password, password_len);
     if (ret)
         glue.want = old;
     else
@@ -1724,7 +1976,9 @@ int rtw89_glue_join(const uint8_t *ssid, size_t ssid_len,
             return ret;
         have_pmk = true;
     }
-    ret = glue_join_request(ssid, ssid_len, NULL, have_pmk ? pmk : NULL);
+    ret = glue_join_request(ssid, ssid_len, NULL, have_pmk ? pmk : NULL,
+                            (const u8 *)passphrase,
+                            passphrase_len <= RTW89_GLUE_MAX_PASSWORD ? passphrase_len : 0);
     memset(pmk, 0, sizeof(pmk));
     return ret;
 }
@@ -1745,7 +1999,7 @@ int rtw89_glue_join_ext(const uint8_t *ssid, size_t ssid_len, const uint8_t *bss
     glue_ext = true;
     glue_ext_rsn_ie = rsn_ie;
     glue_ext_rsn_len = rsn_len;
-    ret = glue.up ? glue_join_locked(ssid, ssid_len, bssid, NULL) : -ENETDOWN;
+    ret = glue.up ? glue_join_locked(ssid, ssid_len, bssid, NULL, NULL, 0) : -ENETDOWN;
     glue_ext = false;
     glue_ext_rsn_ie = NULL;
     mutex_unlock(&glue.cmd_lock);
@@ -1792,7 +2046,27 @@ int rtw89_glue_join_pmk(const uint8_t *ssid, size_t ssid_len, const uint8_t *bss
         return -ENETDOWN;
     if (!ssid_len || ssid_len > IEEE80211_MAX_SSID_LEN)
         return -EINVAL;
-    return glue_join_request(ssid, ssid_len, bssid, pmk);
+    return glue_join_request(ssid, ssid_len, bssid, pmk, NULL, 0);
+}
+
+int rtw89_glue_join_password(const uint8_t *ssid, size_t ssid_len, const uint8_t *bssid,
+                             const char *password, size_t password_len)
+{
+    bool have_pmk;
+    u8 pmk[32];
+    int ret;
+
+    if (!glue.up)
+        return -ENETDOWN;
+    if (!ssid_len || ssid_len > IEEE80211_MAX_SSID_LEN || !password_len ||
+        password_len > RTW89_GLUE_MAX_PASSWORD)
+        return -EINVAL;
+    /* not every SAE password is a WPA2 passphrase: then WPA3 alone */
+    have_pmk = !glue_derive_pmk(ssid, ssid_len, password, password_len, pmk);
+    ret = glue_join_request(ssid, ssid_len, bssid, have_pmk ? pmk : NULL,
+                            (const u8 *)password, password_len);
+    memset(pmk, 0, sizeof(pmk));
+    return ret;
 }
 
 void rtw89_glue_leave(void)
@@ -1841,7 +2115,7 @@ static void glue_rejoin_work(struct work_struct *work)
         }
     } else if (!glue.rejoin_scanned) {
         glue.rejoin_scanned = true;
-        if (!glue_scan_locked())
+        if (!glue_scan_locked(NULL, 0, NULL, 0))
             goto out;
         /* no scan to be had: try with what was heard before */
     }
@@ -1849,7 +2123,8 @@ static void glue_rejoin_work(struct work_struct *work)
     glue.rejoin_scanned = false;
     glue.rejoin_tries++;
     ret = glue_join_locked(glue.want.ssid, glue.want.ssid_len, NULL,
-                           glue.want.have_pmk ? glue.want.pmk : NULL);
+                           glue.want.have_pmk ? glue.want.pmk : NULL,
+                           glue.want.password, glue.want.password_len);
     if (ret) {
         IOLog("[rtw89] attempt %u to join \"%.*s\" again failed: %d\n", glue.rejoin_tries,
               glue.want.ssid_len, glue.want.ssid, ret);
@@ -1869,6 +2144,43 @@ void rtw89_glue_drop(void)
 {
     if (glue.up)
         rtw89_mlme_connection_lost();
+}
+
+void rtw89_glue_awdl_watch(bool on)
+{
+    rtw89_awdl_watch(on);
+}
+
+void rtw89_glue_awdl_tx_start(uint8_t channel)
+{
+    rtw89_awdl_tx_start(channel);
+}
+
+void rtw89_glue_awdl_tx_stop(void)
+{
+    rtw89_awdl_tx_stop();
+}
+
+void rtw89_glue_awdl_tick(uint32_t now_us)
+{
+    rtw89_awdl_tick(now_us);
+}
+
+void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac[6])
+{
+    rtw89_awdl_set_template(tlvs, len, mac);
+}
+
+void rtw89_glue_awdl_deliver(bool on)
+{
+    rtw89_awdl_deliver(on);
+}
+
+/* From rtw89_awdl.c, on the receive thread. */
+void rtw89_glue_awdl_frame(const u8 *frame, size_t len, const u8 peer[6], u32 channel)
+{
+    if (glue.plat.awdl_frame)
+        glue.plat.awdl_frame(glue.plat.ctx, frame, len, peer, channel);
 }
 
 void rtw89_glue_set_rejoin(bool on)
@@ -1962,6 +2274,7 @@ void rtw89_glue_link(struct rtw89_glue_link *link)
         break;
     }
     memcpy(link->bssid, st.bssid, ETH_ALEN);
+    memcpy(link->asked_bssid, glue.asked_bssid, ETH_ALEN);
     memcpy(link->ssid, st.ssid, sizeof(link->ssid));
     link->freq = st.freq;
     link->aid = st.aid;

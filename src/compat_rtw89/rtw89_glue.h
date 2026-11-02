@@ -55,6 +55,13 @@ struct rtw89_glue_platform {
     /* Optional: a scan has ended (or was given up). Called from a driver
      * thread with driver locks held: only the scan result calls are safe. */
     void (*scan_done)(void *ctx, bool aborted);
+
+    /* Optional: a received AWDL action frame, for IO80211's AWDL engine.
+     * @frame is the 802.11 management frame without the FCS and is only valid
+     * during the call; @peer is its transmitter and @channel the channel it
+     * arrived on. Called from the driver's receive thread. */
+    void (*awdl_frame)(void *ctx, const uint8_t *frame, size_t len,
+                       const uint8_t peer[6], uint32_t channel);
 };
 
 struct rtw89_glue_device {
@@ -121,6 +128,18 @@ bool rtw89_glue_is_up(void);
  * already running, -ENETDOWN if the radio is down.
  */
 int rtw89_glue_scan(void);
+
+/*
+ * The same over every channel also while connected (no slice), probing for
+ * @ssid by name as well as with the wildcard: for a join whose network has
+ * not been heard yet.
+ */
+int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len);
+
+/* A scan macOS asked for by name and/or by channel (frequencies in MHz).
+ * Never sliced and never answered from an earlier scan. */
+int rtw89_glue_scan_directed(const uint8_t *ssid, size_t ssid_len,
+                             const uint16_t *freqs, size_t n_freqs);
 bool rtw89_glue_scanning(void);
 
 struct rtw89_glue_bss {
@@ -132,7 +151,7 @@ struct rtw89_glue_bss {
     int8_t   signal;            /* dBm */
     uint16_t capability;
     uint32_t seen;              /* beacons and probe responses heard */
-    uint8_t  mode;              /* 0: 802.11a/b/g, 1: n, 2: ac, 3: ax */
+    uint8_t  mode;              /* 0: 802.11a/b/g, 1: n, 2: ac, 3: ax, 4: be */
     uint8_t  width;             /* MHz the AP operates on */
     uint8_t  security;          /* RTW89_GLUE_SEC_* bits; 0: open */
 };
@@ -209,6 +228,11 @@ size_t rtw89_glue_assoc_rsn_ie(uint8_t *buf, size_t max);
  * open network), and optionally one access point picked by @bssid. */
 int rtw89_glue_join_pmk(const uint8_t *ssid, size_t ssid_len, const uint8_t *bssid,
                         const uint8_t *pmk);
+/* The same with the network's password itself: WPA3-Personal (SAE) where the
+ * network offers it, else WPA2-PSK with the key derived from it. */
+#define RTW89_GLUE_MAX_PASSWORD 64
+int rtw89_glue_join_password(const uint8_t *ssid, size_t ssid_len, const uint8_t *bssid,
+                             const char *password, size_t password_len);
 /* WPA2-PSK's pairwise master key from the network's name and its passphrase
  * (8-63 characters, or the key itself as 64 hex digits). -EACCES if the
  * passphrase is not one. */
@@ -235,6 +259,7 @@ struct rtw89_glue_rate {
 struct rtw89_glue_link {
     enum rtw89_glue_link_state state;
     uint8_t  bssid[6];
+    uint8_t  asked_bssid[6];        /* the one macOS asked for, if another was joined */
     char     ssid[33];
     uint16_t freq;
     uint16_t aid;
@@ -316,6 +341,25 @@ void rtw89_glue_set_ppdu_flush(bool on);
  */
 void rtw89_glue_set_rejoin(bool on);
 
+/* Log the AWDL sync frames the chip already hears (see rtw89_awdl.h). Nothing
+ * is transmitted; this only measures Apple's timeline before we try to join it. */
+void rtw89_glue_awdl_watch(bool on);
+
+/* Hand received AWDL action frames up through platform.awdl_frame as well. */
+void rtw89_glue_awdl_deliver(bool on);
+
+/* The transmit loop: the kext owns the clock, this owns the frames. */
+void rtw89_glue_awdl_tx_start(uint8_t channel);
+void rtw89_glue_awdl_tx_stop(void);
+void rtw89_glue_awdl_tick(uint32_t now_us);
+
+/* The sync frame template IO80211 built, and the AWDL address it is for. */
+void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac[6]);
+
+/* Called from inside the compat layer when one arrives. */
+void rtw89_glue_awdl_frame(const uint8_t *frame, size_t len, const uint8_t peer[6],
+                           uint32_t channel);
+
 /*
  * For testing on the real card. rtw89_glue_probe_ap() acts as if the driver
  * had reported missed beacons: the AP is probed, and the connection given up
@@ -331,6 +375,10 @@ void rtw89_glue_drop(void);
  * do not get on with this card's 802.11ax.
  */
 void rtw89_glue_set_ax(bool on);
+/* The country macOS says the machine is in (two letters): the regulatory
+ * domain when no access point's Country element is in force. 6 GHz, which
+ * rtw89 keeps off in the world domain, needs one. */
+void rtw89_glue_set_country(const char *alpha2);
 
 /*
  * Transmit one Ethernet frame (destination, source, type, payload; no FCS) of

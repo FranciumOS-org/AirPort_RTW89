@@ -1,8 +1,8 @@
 # Testing AirPort_RTW89
 
-Thank you for trying it. Only the RTL8852BE has run this driver on real
-hardware so far; your report decides whether your card works. Expect the
-first boot on a new card to go wrong in some way: that is useful too.
+Thank you for trying it. Your report decides whether your card works.
+Expect the first boot on a new card to go wrong in some way: that is useful
+too.
 
 ## Before you start
 
@@ -17,7 +17,7 @@ first boot on a new card to go wrong in some way: that is useful too.
    ```
    `logs/system.txt` now shows your card's PCI ID (`device-id=...` on the
    Wi-Fi line) and your macOS version. Check the card is in the table in the
-   [README](README.md#cards).
+   [README](README.md#supported-cards).
 3. Install as the [README](README.md#installing) says, preferably with the
    Kext Installer that comes with the kext (`Kext Installer.command` on
    macOS, `Kext Installer.cmd` on Windows), and restart.
@@ -30,8 +30,13 @@ Note what happens at each step; stop at the first one that fails and report.
    and run `sudo tools/collect_logs.sh` there: it picks up the panic report.
 2. **Wi-Fi appears.** Within about 30 seconds of the desktop, is there a Wi-Fi
    icon in the menu bar, and does it list networks?
-3. **Join** your WPA2 (or WPA2/WPA3) network. Does it connect, and do web pages
-   load?
+3. **Join** your network. Does it connect, and do web pages load? If you can,
+   also try a **WPA3** one (a phone hotspot set to WPA3, or a router's WPA3
+   setting): `sudo tools/rtw89ctl log | grep -iE "SAE|WPA3"` shows how it went.
+   With an RTL8852CE or RTL8922AE/DE and a 6E or Wi-Fi 7 router: does its
+   6 GHz network show up and connect? `sudo tools/rtw89ctl status` shows the
+   band (frequencies from 5955 MHz are 6 GHz) and the mode (802.11be is
+   Wi-Fi 7).
 4. **Speed**, with any speed test site: once next to the router, once a room
    or two away. Note the band (2.4 or 5 GHz) and, if you can, what the same
    spot gets in Windows or Linux.
@@ -58,7 +63,7 @@ macOS:           (e.g. 15.8.1)
 OpenCore:        (e.g. 1.0.8)
 1 Boot:          ok / panic / hang
 2 Wi-Fi appears: yes / no
-3 Join:          yes / no (network security: WPA2, WPA2/WPA3, ...)
+3 Join:          yes / no (network security: WPA2, WPA2/WPA3, WPA3, ...)
 4 Speed:         near: __ Mb/s on __ GHz; far: __ Mb/s on __ GHz (other OS: __)
 5 Restart/off:   ok / ...
 6 Sleep/wake:    ok / ...

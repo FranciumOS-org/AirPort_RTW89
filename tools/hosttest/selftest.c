@@ -6,6 +6,7 @@
  */
 #include "rtw89_net80211.h"
 #include "rtw89_crypto.h"
+#include "rtw89_awdl.h"
 
 static int failures;
 
@@ -281,6 +282,32 @@ static void test_crypto(void)
             rtw89_aes_cmac_vector(k, 3, pieces, lens, out);
             CHECK(hex_is(out, "51f0bebf7e3b9d92fc49741779363cfe", 16));
         }
+    }
+    {
+        /* CCMP, IEEE 802.11-2016 J.6.4 */
+        static const u8 tk[16] = {
+            0xc9, 0x7c, 0x1f, 0x67, 0xce, 0x37, 0x11, 0x85,
+            0x51, 0x4a, 0x8a, 0x19, 0xf2, 0xbd, 0xd5, 0x2f,
+        };
+        static const u8 hdr[24] = {
+            0x08, 0x48, 0xc3, 0x2c, 0x0f, 0xd2, 0xe1, 0x28, 0xa5, 0x7c, 0x50, 0x30,
+            0xf1, 0x84, 0x44, 0x08, 0xab, 0xae, 0xa5, 0xb8, 0xfc, 0xba, 0x80, 0x33,
+        };
+        static const u8 plain[20] = {
+            0xf8, 0xba, 0x1a, 0x55, 0xd0, 0x2f, 0x85, 0xae, 0x96, 0x7b,
+            0xb6, 0x2f, 0xb6, 0xcd, 0xa8, 0xeb, 0x7e, 0x78, 0xa0, 0x50,
+        };
+        u8 buf[20], mic[8];
+
+        memcpy(buf, plain, sizeof(buf));
+        rtw89_ccmp_encrypt(tk, hdr, sizeof(hdr), 0xb5039776e70cULL, buf, sizeof(buf), mic);
+        CHECK(hex_is(buf, "f3d0a2fe9a3dbf2342a643e43246e80c3c04d019", 20));
+        CHECK(hex_is(mic, "7845ce0b16f97623", 8));
+        CHECK(rtw89_ccmp_decrypt(tk, hdr, sizeof(hdr), 0xb5039776e70cULL, buf, sizeof(buf), mic));
+        CHECK(!memcmp(buf, plain, sizeof(buf)));
+        /* a changed address or packet number fails the MIC */
+        rtw89_ccmp_encrypt(tk, hdr, sizeof(hdr), 0xb5039776e70cULL, buf, sizeof(buf), mic);
+        CHECK(!rtw89_ccmp_decrypt(tk, hdr, sizeof(hdr), 0xb5039776e70dULL, buf, sizeof(buf), mic));
     }
 }
 
@@ -666,6 +693,201 @@ out_hw:
 }
 
 int rtw89_selftest(void);
+/* ---- the AWDL sync-frame reader in rtw89_awdl.c ---- */
+
+/* An AWDL action frame: management header, Apple's BSSID, then the
+ * vendor-specific body a PSF carries. */
+static struct sk_buff *awdl_frame(u8 subtype, size_t body_extra)
+{
+    static const u8 bssid[ETH_ALEN] = { 0x00, 0x25, 0x00, 0xff, 0x94, 0x73 };
+    struct ieee80211_mgmt *mgmt;
+    struct sk_buff *skb = dev_alloc_skb(256);
+    u8 *body;
+
+    mgmt = (void *)skb_put_zero(skb, sizeof(struct ieee80211_hdr_3addr));
+    mgmt->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_ACTION);
+    memcpy(mgmt->bssid, bssid, ETH_ALEN);
+    memcpy(mgmt->sa, "\x02\x11\x22\x33\x44\x55", ETH_ALEN);
+
+    body = skb_put_zero(skb, 16 + body_extra);
+    body[0] = WLAN_CATEGORY_VENDOR_SPECIFIC;
+    body[1] = 0x00; body[2] = 0x17; body[3] = 0xf2;     /* Apple */
+    body[4] = 0x08;                                     /* AWDL */
+    body[5] = 1;                                        /* version */
+    body[6] = subtype;
+    body[8] = 0x10;                                     /* phy_tx_time */
+    body[12] = 0x08;                                    /* target_tx_time */
+    return skb;
+}
+
+static void test_awdl_build(void);
+static void test_awdl_sync_params(void);
+
+static void test_awdl(void)
+{
+    struct sk_buff *skb;
+
+    rtw89_awdl_watch(true);
+    CHECK(rtw89_awdl_watching());
+
+    /* a whole PSF is recognised */
+    skb = awdl_frame(0, 0);
+    CHECK(rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+
+    /* a TLV whose length runs past the end must not be walked off the end */
+    skb = awdl_frame(3, 5);
+    {
+        u8 *tlv = skb->data + skb->len - 5;
+
+        tlv[0] = 4;                 /* sync parameters */
+        tlv[1] = 0xff; tlv[2] = 0xff;   /* a length far past the frame */
+    }
+    CHECK(rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+
+    /* truncated frames are refused rather than read */
+    skb = awdl_frame(0, 0);
+    CHECK(!rtw89_awdl_rx(skb, sizeof(struct ieee80211_hdr_3addr) + 4));
+    kfree_skb(skb);
+
+    /* an action frame that is not AWDL is left alone */
+    skb = awdl_frame(0, 0);
+    ((u8 *)skb->data)[sizeof(struct ieee80211_hdr_3addr) + 4] = 0x09;  /* not AWDL type */
+    CHECK(!rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+
+    /* Handing frames up as well: with no platform callback behind it the
+     * forwarder must be a no-op rather than a crash, and classification is
+     * unchanged either way. */
+    rtw89_awdl_deliver(true);
+    CHECK(rtw89_awdl_delivering());
+    skb = awdl_frame(0, 0);
+    CHECK(rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+    skb = awdl_frame(0, 0);
+    ((u8 *)skb->data)[sizeof(struct ieee80211_hdr_3addr) + 4] = 0x09;
+    CHECK(!rtw89_awdl_rx(skb, skb->len));       /* not AWDL: not handed up */
+    kfree_skb(skb);
+    rtw89_awdl_deliver(false);
+    CHECK(!rtw89_awdl_delivering());
+
+    rtw89_awdl_watch(false);
+    CHECK(!rtw89_awdl_watching());
+
+    /* and it still classifies with the watch off */
+    skb = awdl_frame(0, 0);
+    CHECK(rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+
+    test_awdl_build();
+}
+
+/*
+ * Building a sync frame to transmit: the frame we put on air has to be laid
+ * out byte for byte the way the frames we receive are, so the check is that
+ * our own decoder reads back what the builder wrote.
+ */
+static void test_awdl_build(void)
+{
+    /* the four static TLVs IO80211 hands over, in its own encoding:
+     * type, length little endian, value */
+    static const u8 tlvs[] = {
+        0x15, 0x02, 0x00, 0x71, 0x01,               /* version */
+        0x06, 0x04, 0x00, 0x01, 0x02, 0x03, 0x04,   /* service parameters */
+    };
+    static const u8 sync_params[27] = {
+        6,                      /* next AW on channel 6 */
+        0x09, 0x00,             /* tx down counter */
+        6,                      /* master channel */
+        0,                      /* guard time */
+        0x10, 0x00,             /* AW period, 16 TU */
+        0x6e, 0x00,             /* AF period, 110 TU */
+    };
+    const u8 src[ETH_ALEN] = { 0xaa, 0xa6, 0x2f, 0xd2, 0xe3, 0x10 };
+    struct rtw89_awdl_frame_params p = {
+        .src = src,
+        .version = 0x10,
+        .subtype = 0,                   /* PSF */
+        .seq = 0x123,
+        .phy_tx_time = 0x11223344,
+        .target_tx_time = 0x55667788,
+        .sync_params = sync_params,
+        .sync_params_len = sizeof(sync_params),
+        .tlvs = tlvs,
+        .tlv_len = sizeof(tlvs),
+    };
+    const size_t want = sizeof(struct ieee80211_hdr_3addr) + 16 + 3 +
+                        sizeof(sync_params) + sizeof(tlvs);
+    u8 buf[256];
+    size_t len, off, seen = 0;
+    struct sk_buff *skb;
+    const u8 *body;
+
+    CHECK(rtw89_awdl_sync_frame_len(sizeof(sync_params), sizeof(tlvs)) == want);
+
+    /* it refuses rather than overruns when the buffer is too small */
+    CHECK(rtw89_awdl_build_sync_frame(buf, want - 1, &p) == 0);
+    /* and refuses incomplete parameters */
+    {
+        struct rtw89_awdl_frame_params bad = p;
+
+        bad.sync_params = NULL;
+        CHECK(rtw89_awdl_build_sync_frame(buf, sizeof(buf), &bad) == 0);
+        bad = p;
+        bad.tlvs = NULL;
+        CHECK(rtw89_awdl_build_sync_frame(buf, sizeof(buf), &bad) == 0);
+    }
+
+    len = rtw89_awdl_build_sync_frame(buf, sizeof(buf), &p);
+    CHECK(len == want);
+
+    /* the header: addressed to AWDL's address, from us, that address again */
+    CHECK(buf[0] == 0xd0 && buf[1] == 0x00);        /* action frame */
+    CHECK(memcmp(buf + 4, "\x00\x25\x00\xff\x94\x73", ETH_ALEN) == 0);
+    CHECK(memcmp(buf + 10, src, ETH_ALEN) == 0);
+    CHECK(memcmp(buf + 16, "\x00\x25\x00\xff\x94\x73", ETH_ALEN) == 0);
+    CHECK(buf[22] == 0x30 && buf[23] == 0x12);      /* sequence 0x123 << 4 */
+
+    body = buf + sizeof(struct ieee80211_hdr_3addr);
+    CHECK(body[0] == 0x7f);                                     /* vendor specific */
+    CHECK(memcmp(body + 1, "\x00\x17\xf2", 3) == 0);           /* Apple */
+    CHECK(body[4] == 0x08 && body[5] == 0x10 && body[6] == 0);  /* AWDL, v1.0, PSF */
+    CHECK(body[8] == 0x44 && body[11] == 0x11);                 /* phy tx, le32 */
+    CHECK(body[12] == 0x88 && body[15] == 0x55);                /* target tx, le32 */
+
+    /* the TLVs: the schedule first, then the family's, unchanged */
+    for (off = 16; off + 3 <= len - sizeof(struct ieee80211_hdr_3addr); ) {
+        u8 type = body[off];
+        size_t tlen = (size_t)(body[off + 1] | (body[off + 2] << 8));
+
+        if (type == 4) {
+            CHECK(tlen == sizeof(sync_params));
+            CHECK(memcmp(body + off + 3, sync_params, tlen) == 0);
+            seen |= 1;
+        } else if (type == 0x15) {
+            CHECK(tlen == 2);
+            seen |= 2;
+        } else if (type == 6) {
+            CHECK(tlen == 4);
+            seen |= 4;
+        }
+        off += 3 + tlen;
+    }
+    CHECK(off == len - sizeof(struct ieee80211_hdr_3addr));     /* no slack */
+    CHECK(seen == 7);
+
+    test_awdl_sync_params();
+
+    /* and our own receiver accepts what we built */
+    skb = dev_alloc_skb(len);
+    CHECK(skb != NULL);
+    memcpy(skb_put(skb, len), buf, len);
+    CHECK(rtw89_awdl_rx(skb, skb->len));
+    kfree_skb(skb);
+}
+
+
 int rtw89_selftest(void)
 {
     int ret;
@@ -679,7 +901,75 @@ int rtw89_selftest(void)
     test_crypto();
     test_cfg80211_helpers();
     test_stack();
+    test_awdl();
 
     rtw88_compat_exit();
     return failures;
+}
+
+/*
+ * The schedule we transmit, checked against a frame a real iPhone sent on
+ * 2026-10-18.  Everything that is not our own schedule, our own address or
+ * our own channel sequence has to match that capture byte for byte: those
+ * fields are only known from it, so the capture is the specification.
+ */
+static void test_awdl_sync_params(void)
+{
+    /* straight off the air, the payload of its TLV 4 */
+    static const u8 real[73] = {
+        0x06,0x07,0x00,0x06,0x00,0x10,0x00,0x6e,0x00,0x00,0x10,0x10,
+        0x00,0x10,0x00,0x00,0x00,0x03,0x03,0x03,0x03,0xbe,0xd8,0xdc,
+        0x7c,0xa4,0x53,0x04,0x00,0x13,0x04,0x00,0x00,0x0f,0x01,0x00,
+        0x03,0xff,0xff,0x2b,0x06,0x00,0x00,0x1d,0x97,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x2b,0x06,0x00,0x00,0x1d,
+        0x97,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x20,
+        0xd4,
+    };
+    /* what is ours to choose, and so may differ from the capture */
+    static const u8 ours[] = {
+        1, 2,                       /* transmit down counter */
+        15, 16,                     /* TU left in the window */
+        21, 22, 23, 24, 25, 26,     /* master address */
+        29, 30,                     /* window number */
+        71, 72,                     /* unidentified, we send zero */
+    };
+    const u8 master[ETH_ALEN] = { 0xaa, 0xa6, 0x2f, 0xd2, 0xe3, 0x10 };
+    struct rtw89_awdl_schedule s = {
+        .channel = 6,
+        .tx_down_counter = 9,
+        .remaining_aw = 11,
+        .aw_seq = 0x0344,
+        .master = master,
+    };
+    u8 buf[RTW89_AWDL_SYNC_PARAMS_LEN];
+    size_t i, j;
+
+    CHECK(rtw89_awdl_build_sync_params(buf, sizeof(buf) - 1, &s) == 0);  /* too small */
+    CHECK(rtw89_awdl_build_sync_params(buf, sizeof(buf), &s) == sizeof(buf));
+
+    /* our own fields went in where we meant them to */
+    CHECK(buf[0] == 6 && buf[3] == 6);
+    CHECK(buf[1] == 9 && buf[2] == 0);
+    CHECK(buf[15] == 11 && buf[16] == 0);
+    CHECK(buf[29] == 0x44 && buf[30] == 0x03);
+    CHECK(memcmp(buf + 21, master, ETH_ALEN) == 0);
+
+    /* the schedule says we are on our channel in every slot */
+    for (i = 0; i < 16; i++) {
+        CHECK(buf[39 + 2 * i] == 0x2b);
+        CHECK(buf[39 + 2 * i + 1] == 6);
+    }
+
+    /* and everything else is what the real frame carried */
+    for (i = 0; i < sizeof(buf); i++) {
+        bool mine = false;
+
+        for (j = 0; j < sizeof(ours); j++)
+            if (ours[j] == i)
+                mine = true;
+        if (i >= 39 && i <= 70)         /* the channel sequence is ours too */
+            mine = true;
+        if (!mine)
+            CHECK(buf[i] == real[i]);
+    }
 }

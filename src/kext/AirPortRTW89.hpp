@@ -31,7 +31,14 @@
 #include "rtw89_glue.h"
 #include "../front/rtw89_front_api.h"
 
-struct apple80211req;
+/* src/kext/rtw89_awdl_timing.cpp: can this host wake on an AWDL schedule? */
+void rtw89_awdl_timing_start(void);
+void rtw89_awdl_timing_stop(void);
+
+/* The AWDL availability window clock: calls into the compat side once per
+ * window so it can keep the schedule and transmit on it. */
+void rtw89_awdl_clock_start(uint8_t channel);
+void rtw89_awdl_clock_stop(void);
 
 class AirPort_RTW89 : public IOEthernetController {
     OSDeclareDefaultStructors(AirPort_RTW89)
@@ -83,6 +90,8 @@ private:
     static void irqEnable(void *ctx, bool enable);
     static void linkChanged(void *ctx);
     static void rxFrame(void *ctx, const uint8_t *frame, size_t len);
+    static void awdlFrame(void *ctx, const uint8_t *frame, size_t len,
+                          const uint8_t peer[6], uint32_t channel);
     static void txWake(void *ctx);
     bool transmit(mbuf_t m);
 
@@ -102,8 +111,11 @@ private:
     void nativePowerChanged();
     static bool frontExpected();
     int nativeRequest(bool isSet, int number, void *data);
+    int nativeVirtualRequest(bool isSet, int number, void *data);
+    int nativeVirtualIfCreate(void *data);
+    int nativeVirtualIfDelete(void *data);
     int nativeAssociate(void *data);
-    bool nativeJoinEnvelope(struct apple80211req *req, int *result);
+    bool joinAfterScan(const uint8_t *ssid, uint32_t ssidLen);
     static void scanDone(void *ctx, bool aborted);
     static void backGetMac(void *ctx, uint8_t mac[6]);
     static int backSetMac(void *ctx, const uint8_t mac[6]);
@@ -115,6 +127,8 @@ private:
     static int backEnable(void *ctx, bool on);
     static uint32_t backOutput(void *ctx, mbuf_t m);
     static void backPower(void *ctx, bool on);
+    static int backVirtualRequest(void *ctx, unsigned int type, int number,
+                                  void *virtual_interface, void *data);
     /* The radio on, unless the machine is going down or asleep. */
     int radioUp() { return _halting ? -100 : _asleep ? -101 : rtw89_glue_up(); }
     static IOReturn powerEvent(void *target, void *refCon, UInt32 messageType,

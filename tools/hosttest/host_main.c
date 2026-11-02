@@ -20,6 +20,7 @@
 
 #include "rtw89_crypto.h"
 #include "rtw89_glue.h"
+#include "rtw89_sae.h"
 
 #define MMIO_LEN (1u << 20)
 
@@ -36,6 +37,8 @@ void rtw89_glue_test_rx(const uint8_t *frame, size_t len, uint16_t freq, int8_t 
                         bool decrypted);
 /* ... left waiting for the chip's status report, as the driver leaves data frames */
 void rtw89_glue_test_scan_done(void);
+void rtw89_glue_test_emulate_chanctx(void);
+void rtw89_glue_test_fake_eht(void);
 void rtw89_glue_test_beacon_loss(void);
 void rtw89_glue_test_rx_parked(const uint8_t *frame, size_t len, uint16_t freq, int8_t signal,
                                bool decrypted);
@@ -74,6 +77,8 @@ static uint8_t ap_ies[] = {
 #define AP_DS_CHANNEL   21      /* offsets into ap_ies: the channel in the DS element, */
 #define AP_HT_CHANNEL   (sizeof(ap_ies) - 26 - 22)      /* in the HT operation element, */
 #define AP_WMM_COUNT    (sizeof(ap_ies) - 26 + 8)       /* and the WMM parameter set count */
+
+#define AP5_RSN_AKM     45      /* the key management type in ap5_ies' RSN element */
 
 /* A second network: 5 GHz channel 36, 80 MHz wide (centre channel 42), 802.11ac. */
 static uint8_t ap5_ies[] = {
@@ -121,6 +126,9 @@ static const uint8_t *ap_cur_ies = ap_ies;
 static size_t ap_cur_ies_len = sizeof(ap_ies);
 static uint16_t ap_freq = 2437;
 static const char *ap_ssid = "testnet";
+/* round 2: no CONNECTION_MONITOR, so the MLME watches the beacons itself; the
+ * pretend AP sends one only when a test does */
+static int no_conn_monitor;
 
 static void ap_select(bool five_ghz)
 {
@@ -225,6 +233,16 @@ static struct {
     uint8_t assoc_req[400];
     size_t assoc_req_len;
     volatile int auth_count;    /* authentication requests */
+    uint16_t auth_alg, auth_seq, auth_status;   /* ... and the last one's */
+    uint8_t auth_body[600];
+    size_t auth_body_len;
+    /* the last protected SA Query frame from the station, decrypted here */
+    uint8_t paction[64];
+    size_t paction_len;
+    bool paction_ok;            /* its MIC verified with the pairwise key */
+    volatile int paction_count;
+    volatile int pback_count;   /* protected BlockAck frames that verified */
+    uint64_t mgmt_pn;           /* packet numbers of our protected management frames */
     volatile int null_count;    /* null data frames */
     /* BlockAck action frames from the station, by TID */
     struct {
@@ -282,8 +300,39 @@ static void ap_tx_tap(const uint8_t *frame, size_t len)
         memcpy(ap.assoc_req, frame, len);
         ap.assoc_req_len = len;
     }
-    if (frame[0] == 0xb0)
+    if (frame[0] == 0xb0) {
+        if (len >= 30 && len - 30 <= sizeof(ap.auth_body)) {
+            ap.auth_alg = (uint16_t)(frame[24] | frame[25] << 8);
+            ap.auth_seq = (uint16_t)(frame[26] | frame[27] << 8);
+            ap.auth_status = (uint16_t)(frame[28] | frame[29] << 8);
+            memcpy(ap.auth_body, frame + 30, len - 30);
+            ap.auth_body_len = len - 30;
+        }
         ap.auth_count++;
+    }
+    if (frame[0] == 0xd0 && prot) {                 /* protected action frame (802.11w) */
+        const uint8_t *c = frame + 24;
+        uint64_t pn = c[0] | c[1] << 8 | (uint64_t)c[4] << 16 | (uint64_t)c[5] << 24 |
+                      (uint64_t)c[6] << 32 | (uint64_t)c[7] << 40;
+
+        uint8_t body[64];
+        size_t blen = len - 40;
+        bool ok;
+
+        if (len < 24 + 8 + 2 + 8 || blen > sizeof(body))
+            return;
+        memcpy(body, frame + 32, blen);
+        ok = rtw89_ccmp_decrypt(ap.tk, frame, 24, pn, body, blen, frame + 32 + blen);
+        if (ok && body[0] == 3) {
+            ap.pback_count++;
+        } else if (!ok || body[0] == 8) {
+            memcpy(ap.paction, body, blen);
+            ap.paction_len = blen;
+            ap.paction_ok = ok;
+            ap.paction_count++;
+        }
+        return;
+    }
     if ((frame[0] & 0x4c) == 0x48) {                /* data without a body */
         ap.null_count++;
         return;
@@ -401,7 +450,10 @@ static void ap_send_key(uint16_t key_info, const uint8_t *kd, size_t kd_len, boo
     else if (kd_len)
         memcpy(k + 95, kd, kd_len);
     if (key_info & 0x0100) {
-        rtw89_hmac_sha1(ap.kck, 16, e, 4 + 95 + wrapped, mic);
+        if ((key_info & 7) == 2)
+            rtw89_hmac_sha1(ap.kck, 16, e, 4 + 95 + wrapped, mic);
+        else                            /* PSK-SHA256, SAE */
+            rtw89_aes_cmac(ap.kck, e, 4 + 95 + wrapped, mic);
         memcpy(k + 77, mic, 16);
     }
 
@@ -418,27 +470,45 @@ static int ap_check_sta_key(void)
         return -1;
     memcpy(copy, ap.eapol, ap.eapol_len);
     memset(copy + 4 + 77, 0, 16);
-    rtw89_hmac_sha1(ap.kck, 16, copy, ap.eapol_len, mic);
+    if ((ap.eapol[6] & 7) == 2)
+        rtw89_hmac_sha1(ap.kck, 16, copy, ap.eapol_len, mic);
+    else
+        rtw89_aes_cmac(ap.kck, copy, ap.eapol_len, mic);
     if (memcmp(mic, ap.eapol + 4 + 77, 16))
         return -1;
     return ap.eapol[5] << 8 | ap.eapol[6];
 }
 
+/* The EAPOL-Key descriptor version of the handshakes: 2 for WPA2-PSK, 0 for
+ * SAE (AES-CMAC MICs, keys by KDF-SHA-256); and whether message 3 carries an
+ * integrity group key (management frame protection). */
+static uint16_t ap_key_ver = 2;
+static bool ap_igtk;
+static bool ap_rsnxe;           /* the station's message 2 must carry its RSNXE */
+
 /* Message 3: our RSN element and the group key, encrypted with the KEK. */
 static void ap_send_msg3(const uint8_t gtk[16], int gtk_idx)
 {
-    uint8_t kd[64];
-    size_t kd_len;
+    const uint8_t *rsn = ap_find_ie(0x30);          /* the RSN element of the beacon */
+    uint8_t kd[128];
+    size_t kd_len = 2 + rsn[1];
 
-    memcpy(kd, ap_find_ie(0x30), 22);               /* the RSN element of the beacon */
-    kd[22] = 0xdd; kd[23] = 22; kd[24] = 0x00; kd[25] = 0x0f; kd[26] = 0xac; kd[27] = 1;
-    kd[28] = (uint8_t)gtk_idx; kd[29] = 0;
-    memcpy(kd + 30, gtk, 16);
-    kd_len = 46;
+    memcpy(kd, rsn, kd_len);
+    memcpy(kd + kd_len, "\xdd\x16\x00\x0f\xac\x01", 6);
+    kd[kd_len + 6] = (uint8_t)gtk_idx;
+    kd[kd_len + 7] = 0;
+    memcpy(kd + kd_len + 8, gtk, 16);
+    kd_len += 24;
+    if (ap_igtk) {
+        /* IGTK KDE: key id 4, IPN 0 */
+        memcpy(kd + kd_len, "\xdd\x1c\x00\x0f\xac\x09\x04\x00\x00\x00\x00\x00\x00\x00", 14);
+        memset(kd + kd_len + 14, 0x77, 16);
+        kd_len += 30;
+    }
     kd[kd_len++] = 0xdd;                            /* pad to a multiple of 8 */
     while (kd_len % 8)
         kd[kd_len++] = 0;
-    ap_send_key(0x13ca, kd, kd_len, false);
+    ap_send_key(0x13c8 | ap_key_ver, kd, kd_len, false);
 }
 
 /* Part of an 802.1X sign-in: an EAP request for the station's identity. */
@@ -468,13 +538,13 @@ static int ap_handshake_pmk(const uint8_t gtk[16], int gtk_idx)
     memset(ap.anonce, 0x5a, sizeof(ap.anonce));
     ap.anonce[0] = (uint8_t)ap.replay;              /* fresh per handshake */
 
-    ap_send_key(0x008a, NULL, 0, false);            /* message 1: pairwise, ack */
+    ap_send_key(0x0088 | ap_key_ver, NULL, 0, false);   /* message 1: pairwise, ack */
     if (!ap_wait_eapol(base + 1) || ap.eapol_len < 4 + 95 + 22)
         return -1;
     memcpy(ap.snonce, ap.eapol + 4 + 13, 32);
     /* our retry of message 1 crosses the answer: the station must stay with
      * the SNonce it already sent, or message 3 would not verify */
-    ap_send_key(0x008a, NULL, 0, false);
+    ap_send_key(0x0088 | ap_key_ver, NULL, 0, false);
     if (!ap_wait_eapol(base + 2) || memcmp(ap.snonce, ap.eapol + 4 + 13, 32))
         return -1;
 
@@ -483,7 +553,10 @@ static int ap_handshake_pmk(const uint8_t gtk[16], int gtk_idx)
     memcpy(data + 6, memcmp(ap_mac, sta_mac, 6) < 0 ? sta_mac : ap_mac, 6);
     memcpy(data + 12, memcmp(ap.anonce, ap.snonce, 32) < 0 ? ap.anonce : ap.snonce, 32);
     memcpy(data + 44, memcmp(ap.anonce, ap.snonce, 32) < 0 ? ap.snonce : ap.anonce, 32);
-    rtw89_sha1_prf(ap.pmk, 32, "Pairwise key expansion", data, sizeof(data), ptk, 48);
+    if (ap_key_ver == 2)
+        rtw89_sha1_prf(ap.pmk, 32, "Pairwise key expansion", data, sizeof(data), ptk, 48);
+    else
+        rtw89_kdf_sha256(ap.pmk, 32, "Pairwise key expansion", data, sizeof(data), ptk, 48);
     memcpy(ap.kck, ptk, 16);
     memcpy(ap.kek, ptk + 16, 16);
     memcpy(ap.tk, ptk + 32, 16);
@@ -491,17 +564,20 @@ static int ap_handshake_pmk(const uint8_t gtk[16], int gtk_idx)
     info = ap_check_sta_key();
     if (info < 0)
         return 1;                                   /* MIC does not verify */
-    if (info != 0x010a || ap.eapol_protected)
+    if (info != (0x0108 | ap_key_ver) || ap.eapol_protected)
         return -1;
-    /* message 2 carries the RSN element from the association request */
-    if (ap.eapol[4 + 93] != 0 || ap.eapol[4 + 94] != 22 || ap.eapol[4 + 95] != 0x30)
+    /* message 2 carries the RSN element from the association request (and
+     * its RSN extension element, with SAE hash-to-element) */
+    if (ap.eapol[4 + 93] != 0 || ap.eapol[4 + 94] != (ap_rsnxe ? 25 : 22) ||
+        ap.eapol[4 + 95] != 0x30 ||
+        (ap_rsnxe && memcmp(ap.eapol + 4 + 95 + 22, "\xf4\x01\x20", 3)))
         return -1;
 
     ap_send_msg3(gtk, gtk_idx);
     if (!ap_wait_eapol(base + 3))
         return -1;
     info = ap_check_sta_key();
-    if (info != 0x030a || ap.eapol_protected)       /* message 4: pairwise, mic, secure */
+    if (info != (0x0308 | ap_key_ver) || ap.eapol_protected)   /* message 4: pairwise, mic, secure */
         return -1;
     return 0;
 }
@@ -523,13 +599,13 @@ static int ap_group_rekey(const uint8_t gtk[16], int gtk_idx)
     kd[0] = 0xdd; kd[1] = 22; kd[2] = 0x00; kd[3] = 0x0f; kd[4] = 0xac; kd[5] = 1;
     kd[6] = (uint8_t)gtk_idx; kd[7] = 0;
     memcpy(kd + 8, gtk, 16);
-    ap_send_key(0x1382, kd, 24, true);              /* ack, mic, secure, encrypted */
+    ap_send_key(0x1380 | ap_key_ver, kd, 24, true);     /* ack, mic, secure, encrypted */
 
     if (!ap_wait_eapol(base + 1))
         return -1;
     info = ap_check_sta_key();
     /* the answer is group message 2, and now it must be encrypted */
-    return info == 0x0302 && ap.eapol_protected ? 0 : -1;
+    return info == (0x0300 | ap_key_ver) && ap.eapol_protected ? 0 : -1;
 }
 
 /* ---- data frames, once connected ---- */
@@ -978,6 +1054,50 @@ static int join_testnet(const char *password, uint16_t assoc_status)
     return 1;
 }
 
+/* A beacon of the 8-character network @ssid from access point @last (the last
+ * byte of its address), with the rest of @ies (which start with their own SSID
+ * element). */
+static void dual_beacon(const char *ssid, uint8_t last, const uint8_t *ies, size_t ies_len, uint16_t freq,
+                        int8_t signal)
+{
+    uint8_t frame[24 + 12 + 400] = { 0x80 };
+    size_t skip = 2 + ies[1], len = 24;
+
+    memset(frame + 4, 0xff, 6);
+    memcpy(frame + 10, ap_mac, 5);
+    frame[15] = last;
+    memcpy(frame + 16, frame + 10, 6);
+    frame[len + 8] = 0x64;
+    frame[len + 10] = 0x11;
+    frame[len + 11] = 0x04;
+    len += 12;
+    frame[len++] = 0;
+    frame[len++] = 8;
+    memcpy(frame + len, ssid, 8);
+    len += 8;
+    memcpy(frame + len, ies + skip, ies_len - skip);
+    len += ies_len - skip;
+    rtw89_glue_test_rx(frame, len, freq, signal, false);
+}
+
+/* Which frequency a join of @ssid goes to; @last asks for that access point. */
+static uint16_t dual_join(const char *ssid, int last)
+{
+    static const uint8_t pmk[32] = { 1 };
+    struct rtw89_glue_link link;
+    uint8_t bssid[6];
+
+    memcpy(bssid, ap_mac, 5);
+    bssid[5] = (uint8_t)last;
+    if (rtw89_glue_join_pmk((const uint8_t *)ssid, 8, last >= 0 ? bssid : NULL, pmk))
+        return 0;
+    rtw89_glue_link(&link);
+    rtw89_glue_leave();
+    if (last >= 0 && link.bssid[5] != last && memcmp(link.asked_bssid, bssid, 6))
+        return 1;   /* another one joined, and not noted as macOS's choice */
+    return link.freq;
+}
+
 /* The station is trying to get back: let its scan end if it started one, then
  * play the AP's side of the join. Returns 1 once it is connected again. */
 static int ap_answer_rejoin(const uint8_t *gtk, int gtk_id)
@@ -1092,6 +1212,24 @@ static int test_keep(void)
     rtw89_glue_link(&link);
     EXPECT(link.rx_rate.kbps == 1000 && link.rx_rate.mode == 0);
 
+    /* ---- no beacons for 3 s and nobody reporting it: the MLME probes ---- */
+    if (no_conn_monitor) {
+        uint32_t losses;
+
+        ap_send_beacon();
+        rtw89_glue_link(&link);
+        losses = link.beacon_losses;
+        n = ap.null_count;
+        /* 3 s without beacons, checked every second */
+        EXPECT(wait_count(&ap.null_count, n) || wait_count(&ap.null_count, n) ||
+               wait_count(&ap.null_count, n));
+        ap_send_beacon();                           /* ... and it answers */
+        usleep(900 * 1000);
+        rtw89_glue_link(&link);
+        EXPECT(link.state == RTW89_GLUE_LINK_CONNECTED && link.beacon_losses == losses + 1);
+        printf("== beacon monitor: probed the silent AP, still connected\n");
+    }
+
     /* ---- the driver misses beacons: the AP is probed with a null frame ---- */
     n = ap.null_count;
     rtw89_glue_test_beacon_loss();
@@ -1100,7 +1238,9 @@ static int test_keep(void)
     ap_send_beacon();
     usleep(900 * 1000);
     rtw89_glue_link(&link);
-    EXPECT(link.state == RTW89_GLUE_LINK_CONNECTED && link.beacon_losses == 1);
+    EXPECT(link.state == RTW89_GLUE_LINK_CONNECTED);
+    /* with the MLME watching too, the silent pretend AP may have been missed more */
+    EXPECT(no_conn_monitor ? link.beacon_losses >= 1 : link.beacon_losses == 1);
     /* no beacon and no acknowledgement (the pretend chip reports none): the
      * connection is given up after half a second; with rejoin off that is all */
     n = ap.auth_count;
@@ -1297,6 +1437,354 @@ static int test_keep(void)
 }
 
 /* Join the pretend network, playing the AP's side of each exchange. */
+/* ---- WPA3-Personal: SAE, the handshake after it, protected management frames ---- */
+
+/* Wait for an authentication frame from the station after the @count-th. */
+static int ap_wait_auth(int count)
+{
+    int i;
+
+    for (i = 0; i < 200 && ap.auth_count <= count; i++)
+        usleep(25 * 1000);
+    return ap.auth_count > count;
+}
+
+static void ap_send_sae(uint16_t seq, uint16_t status, const uint8_t *body, size_t len)
+{
+    uint8_t b[6 + 256] = { 3, 0, (uint8_t)seq, (uint8_t)(seq >> 8),
+                           (uint8_t)status, (uint8_t)(status >> 8) };
+
+    memcpy(b + 6, body, len);
+    ap_send(0xb0, b, 6 + len);
+}
+
+/*
+ * The AP's side of SAE, the station's commit being the authentication frame
+ * after the @base-th: optionally first ask for an anti-clogging token, then
+ * our commit, check its confirm, our confirm. The PMK ends up in ap.pmk.
+ * Returns 0, 1 if the station's confirm does not verify (another password:
+ * the AP then says nothing), -1 if anything else is wrong.
+ */
+static int ap_sae(int base, const char *password, bool want_token, bool h2e)
+{
+    static const uint8_t token[8] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88 };
+    const uint16_t commit_status = h2e ? 126 : 0;
+    struct rtw89_sae *sae;
+    uint8_t body[256], pmkid[16];
+    int n, ret = -1;
+
+    /* group 19, a 32-byte scalar and a 64-byte element; H2E says so in the status */
+    if (!ap_wait_auth(base) || ap.auth_alg != 3 || ap.auth_seq != 1 ||
+        ap.auth_status != commit_status || ap.auth_body_len != 2 + 96)
+        return -1;
+    if (want_token) {
+        uint8_t req[2 + 3 + 8] = { 19, 0, 0xff, 9, 93 };
+        size_t off = h2e ? 5 : 2;
+
+        /* without H2E the token follows the group; with it, in a container */
+        memcpy(req + off, token, 8);
+        base = ap.auth_count;
+        ap_send_sae(1, 76, req, off + 8);
+        if (!ap_wait_auth(base) || ap.auth_seq != 1)
+            return -1;
+        if (h2e) {
+            /* the container after the element */
+            if (ap.auth_body_len != 2 + 96 + 3 + 8 || memcmp(ap.auth_body + 98, req + 2, 11))
+                return -1;
+        } else {
+            if (ap.auth_body_len != 2 + 8 + 96 || memcmp(ap.auth_body + 2, token, 8))
+                return -1;
+            memmove(ap.auth_body + 2, ap.auth_body + 10, 96);
+        }
+        ap.auth_body_len = 2 + 96;
+    }
+    sae = rtw89_sae_begin(ap_mac, sta_mac, (const uint8_t *)"testnet", 7,
+                          (const uint8_t *)password, strlen(password), h2e);
+    if (!sae)
+        return -1;
+    if (rtw89_sae_rx_commit(sae, ap.auth_body, ap.auth_body_len))
+        goto out;
+    n = rtw89_sae_write_commit(sae, NULL, 0, body, sizeof(body));
+    if (n < 0)
+        goto out;
+    base = ap.auth_count;
+    ap_send_sae(1, commit_status, body, (size_t)n);
+    if (!ap_wait_auth(base) || ap.auth_alg != 3 || ap.auth_seq != 2)
+        goto out;
+    if (rtw89_sae_rx_confirm(sae, ap.auth_body, ap.auth_body_len)) {
+        ret = 1;
+        goto out;
+    }
+    n = rtw89_sae_write_confirm(sae, body, sizeof(body));
+    if (n < 0)
+        goto out;
+    rtw89_sae_keys(sae, ap.pmk, pmkid);
+    ap_send_sae(2, 0, body, (size_t)n);
+    ret = 0;
+out:
+    rtw89_sae_end(sae);
+    return ret;
+}
+
+/* A management frame from the AP, protected with the pairwise key; @hw: as if
+ * the hardware had decrypted it (plaintext body, CCMP header and MIC left). */
+static void ap_send_protected(uint8_t subtype, const uint8_t *body, size_t body_len, bool hw)
+{
+    uint8_t frame[24 + 8 + 64 + 8];
+
+    memset(frame, 0, sizeof(frame));
+    frame[0] = subtype;
+    frame[1] = 0x40;
+    memcpy(frame + 4, sta_mac, 6);
+    memcpy(frame + 10, ap_mac, 6);
+    memcpy(frame + 16, ap_mac, 6);
+    ap.mgmt_pn++;
+    frame[24] = (uint8_t)ap.mgmt_pn;
+    frame[25] = (uint8_t)(ap.mgmt_pn >> 8);
+    frame[27] = 0x20;
+    frame[28] = (uint8_t)(ap.mgmt_pn >> 16);
+    memcpy(frame + 32, body, body_len);
+    if (hw)
+        memset(frame + 32 + body_len, 0xee, 8);
+    else
+        rtw89_ccmp_encrypt(ap.tk, frame, 24, ap.mgmt_pn, frame + 32, body_len,
+                           frame + 32 + body_len);
+    rtw89_glue_test_rx(frame, 32 + body_len + 8, ap_freq, -40, hw);
+}
+
+static int wait_paction(int count)
+{
+    int i;
+
+    for (i = 0; i < 100 && ap.paction_count <= count; i++)
+        usleep(20 * 1000);
+    return ap.paction_count > count;
+}
+
+/* Join "testnet" with its password, play SAE and the association. */
+static int join_sae(const char *password, bool want_token, bool h2e)
+{
+    int base = ap.auth_count, ret;
+
+    if (rtw89_glue_join_password((const uint8_t *)"testnet", 7, NULL, AP_PASSWORD,
+                                 strlen(AP_PASSWORD)))
+        return -1;
+    ret = ap_sae(base, password, want_token, h2e);
+    if (ret)
+        return ret;
+    usleep(300 * 1000);
+    ap_send_assoc_resp(0);
+    return 0;
+}
+
+/* The RSN element of a WPA2/WPA3 network: PSK and SAE, frame protection optional. */
+static uint8_t ap_ies_mixed[sizeof(ap_ies) + 4];
+
+static int test_wpa3(const uint8_t *gtk)
+{
+    const size_t rsn = AP_RSN_AKM - 19;     /* where the RSN element starts */
+    static const uint8_t mixed_rsn[26] = {
+        0x30, 24, 1, 0, 0x00, 0x0f, 0xac, 4, 1, 0, 0x00, 0x0f, 0xac, 4,
+        2, 0, 0x00, 0x0f, 0xac, 2, 0x00, 0x0f, 0xac, 8, 0x80, 0x00,
+    };
+    struct rtw89_glue_link link;
+    const uint8_t *ie;
+    int failures = 0, n;
+
+#define EXPECT(cond) do { if (!(cond)) { failures++; printf("== FAIL %s\n", #cond); } } while (0)
+    /* ---- WPA3-only: SAE, frame protection required ---- */
+    ap_select(false);
+    ap_ies[AP_RSN_AKM] = 8;
+    ap_ies[AP_RSN_AKM + 1] = 0xc0;          /* MFPR, MFPC */
+    ap_send_beacon();
+    /* the PMK from a passphrase is no good for it */
+    EXPECT(rtw89_glue_join((const uint8_t *)"testnet", 7, NULL, 0) == -13);
+
+    EXPECT(join_sae(AP_PASSWORD, false, false) == 0);
+    EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
+    ie = sta_assoc_ie(48);
+    EXPECT(ie && ie[1] == 20 && ie[19] == 8 && ie[20] == 0xc0);     /* SAE, MFPC and MFPR */
+    ap_key_ver = 0;
+    ap_igtk = true;
+    EXPECT(ap_handshake_pmk(gtk, 1) == 0);
+    EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
+    EXPECT(sta_tx_test() == 0);
+    rtw89_glue_link(&link);
+    EXPECT(!link.last_error);
+    printf("== connected with SAE: confirm, PMK and handshake verified by the test AP\n");
+    /* the station's BlockAck requests are robust frames: protected now */
+    {
+        int i;
+
+        for (i = 0; i < 50 && !ap.pback_count; i++)
+            usleep(20 * 1000);
+        EXPECT(ap.pback_count > 0);
+    }
+
+    /* the AP asks whether we are still there: a protected answer, same id */
+    n = ap.paction_count;
+    ap_send_protected(0xd0, (const uint8_t *)"\x08\x00\xab\xcd", 4, false);
+    EXPECT(wait_paction(n) && ap.paction_ok && ap.paction_len == 4 &&
+           !memcmp(ap.paction, "\x08\x01\xab\xcd", 4));
+    /* the same, decrypted by the hardware */
+    n = ap.paction_count;
+    ap_send_protected(0xd0, (const uint8_t *)"\x08\x00\x12\x34", 4, true);
+    EXPECT(wait_paction(n) && ap.paction_ok && !memcmp(ap.paction, "\x08\x01\x12\x34", 4));
+    /* a replayed packet number is dropped */
+    n = ap.paction_count;
+    ap.mgmt_pn--;
+    ap_send_protected(0xd0, (const uint8_t *)"\x08\x00\x56\x78", 4, false);
+    usleep(200 * 1000);
+    EXPECT(ap.paction_count == n);
+    /* as is one that does not decrypt */
+    {
+        uint8_t tk[16];
+
+        memcpy(tk, ap.tk, 16);
+        memset(ap.tk, 0, 4);
+        ap_send_protected(0xd0, (const uint8_t *)"\x08\x00\x56\x78", 4, false);
+        usleep(200 * 1000);
+        EXPECT(ap.paction_count == n);
+        memcpy(ap.tk, tk, 16);
+    }
+
+    /* an unprotected deauthentication is checked with the AP, which answers */
+    ap_send_beacon();
+    n = ap.paction_count;
+    ap_send_deauth(7);
+    EXPECT(wait_paction(n) && ap.paction_ok && ap.paction_len == 4 &&
+           ap.paction[0] == 8 && ap.paction[1] == 0);
+    {
+        uint8_t resp[4] = { 8, 1, ap.paction[2], ap.paction[3] };
+
+        ap_send_protected(0xd0, resp, sizeof(resp), false);
+    }
+    usleep(700 * 1000);
+    EXPECT(link_state() == RTW89_GLUE_LINK_CONNECTED);
+    ap_send_beacon();
+    /* ... and when it does not answer, it did drop us */
+    ap_send_deauth(7);
+    EXPECT(wait_link(RTW89_GLUE_LINK_DOWN));
+    rtw89_glue_link(&link);
+    EXPECT(link.last_error == -2007);
+
+    /* again, the AP asking for an anti-clogging token first; then a protected
+     * deauthentication, which counts at once */
+    EXPECT(join_sae(AP_PASSWORD, true, false) == 0);
+    EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
+    EXPECT(ap_handshake_pmk(gtk, 1) == 0);
+    EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
+    ap_send_protected(0xc0, (const uint8_t *)"\x03\x00", 2, false);
+    EXPECT(wait_link(RTW89_GLUE_LINK_DOWN));
+    rtw89_glue_link(&link);
+    EXPECT(link.last_error == -2003);
+
+    /* another password: the AP does not answer our confirm */
+    {
+        int base = ap.auth_count;
+
+        EXPECT(rtw89_glue_join_password((const uint8_t *)"testnet", 7, NULL, "not the password",
+                                        16) == 0);
+        EXPECT(ap_sae(base, AP_PASSWORD, false, false) == 1);
+        EXPECT(wait_link(RTW89_GLUE_LINK_DOWN));
+        rtw89_glue_link(&link);
+        EXPECT(link.last_error == -2002);
+    }
+
+    /* ---- hash-to-element: the AP advertises it in an RSN extension element ---- */
+    {
+        static const uint8_t rsnxe[3] = { 0xf4, 1, 0x20 };
+
+        ap_beacon_extra = rsnxe;
+        ap_beacon_extra_len = sizeof(rsnxe);
+        ap_send_beacon();
+        EXPECT(join_sae(AP_PASSWORD, true, true) == 0);
+        EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
+        ie = sta_assoc_ie(0xf4);
+        EXPECT(ie && ie[1] == 1 && ie[2] == 0x20);
+        ap_rsnxe = true;
+        EXPECT(ap_handshake_pmk(gtk, 1) == 0);
+        EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
+        EXPECT(sta_tx_test() == 0);
+        rtw89_glue_leave();
+        ap_rsnxe = false;
+        ap_beacon_extra = NULL;
+        ap_beacon_extra_len = 0;
+        /* the beacon without it: the entry forgets it */
+        ap_send_beacon();
+    }
+    /* an AP that says nothing of it but turns hunting and pecking down */
+    {
+        int base = ap.auth_count;
+
+        EXPECT(rtw89_glue_join_password((const uint8_t *)"testnet", 7, NULL, AP_PASSWORD,
+                                        strlen(AP_PASSWORD)) == 0);
+        EXPECT(ap_wait_auth(base) && ap.auth_alg == 3 && ap.auth_status == 0);
+        base = ap.auth_count;
+        ap_send_sae(1, 126, (const uint8_t *)"\x13\x00", 2);
+        EXPECT(ap_sae(base, AP_PASSWORD, false, true) == 0);
+        usleep(300 * 1000);
+        ap_send_assoc_resp(0);
+        EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
+        ap_rsnxe = true;
+        EXPECT(ap_handshake_pmk(gtk, 1) == 0);
+        EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
+        rtw89_glue_leave();
+        ap_rsnxe = false;
+    }
+
+    /* ---- WPA2/WPA3: SAE where it works, WPA2 where it does not ---- */
+    memcpy(ap_ies_mixed, ap_ies, rsn);
+    memcpy(ap_ies_mixed + rsn, mixed_rsn, sizeof(mixed_rsn));
+    memcpy(ap_ies_mixed + rsn + sizeof(mixed_rsn), ap_ies + rsn + 22, sizeof(ap_ies) - rsn - 22);
+    ap_cur_ies = ap_ies_mixed;
+    ap_cur_ies_len = sizeof(ap_ies_mixed);
+    ap_send_beacon();
+    EXPECT(join_sae(AP_PASSWORD, false, false) == 0);
+    EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
+    ie = sta_assoc_ie(48);
+    EXPECT(ie && ie[19] == 8 && ie[20] == 0xc0);
+    EXPECT(ap_handshake_pmk(gtk, 1) == 0);
+    EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
+    rtw89_glue_leave();
+
+    /* the AP turns SAE down (a group it does not have): WPA2 instead */
+    {
+        int base = ap.auth_count;
+
+        EXPECT(rtw89_glue_join_password((const uint8_t *)"testnet", 7, NULL, AP_PASSWORD,
+                                        strlen(AP_PASSWORD)) == 0);
+        EXPECT(ap_wait_auth(base) && ap.auth_alg == 3);
+        base = ap.auth_count;
+        ap_send_sae(1, 77, (const uint8_t *)"\x13\x00", 2);
+        EXPECT(ap_wait_auth(base) && ap.auth_alg == 0 && ap.auth_seq == 1);
+        ap_send_auth(0);
+        usleep(300 * 1000);
+        ap_send_assoc_resp(0);
+        EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
+        ie = sta_assoc_ie(48);
+        EXPECT(ie && ie[19] == 2 && ie[20] == 0);   /* PSK; protection optional, not used */
+        ap_key_ver = 2;
+        ap_igtk = false;
+        rtw89_pbkdf2_sha1((const uint8_t *)AP_PASSWORD, strlen(AP_PASSWORD),
+                          (const uint8_t *)"testnet", 7, 4096, ap.pmk, 32);
+        EXPECT(ap_handshake_pmk(gtk, 1) == 0);
+        EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
+        EXPECT(sta_tx_test() == 0);
+        rtw89_glue_leave();
+    }
+
+    ap_key_ver = 2;
+    ap_igtk = false;
+    ap_ies[AP_RSN_AKM] = 2;
+    ap_ies[AP_RSN_AKM + 1] = 0;
+    ap_select(false);
+    ap_send_beacon();
+#undef EXPECT
+    printf("== WPA3 test: %d failure(s)\n", failures);
+    return failures;
+}
+
 static int test_join(void)
 {
     static const uint8_t gtk1[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
@@ -1404,12 +1892,13 @@ static int test_join(void)
     rtw89_glue_link(&link);
     EXPECT(link.last_error == -110);
 
-    /* an AP that associates us and then never starts the handshake */
+    /* an AP that associates us and then never starts the handshake (nor
+     * beacons: watching them, the MLME may give up on that first, -ENOLINK) */
     EXPECT(join_testnet(AP_PASSWORD, 0));
     EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
     EXPECT(wait_link(RTW89_GLUE_LINK_DOWN));
     rtw89_glue_link(&link);
-    EXPECT(link.last_error == -110);
+    EXPECT(link.last_error == -110 || (no_conn_monitor && link.last_error == -67));
 
     /* leave while connected; then the radio goes down while connected */
     EXPECT(join_testnet(AP_PASSWORD, 0));
@@ -1458,6 +1947,29 @@ static int test_join(void)
     EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
     EXPECT(sta_tx_test() == 0);
     rtw89_glue_leave();
+    EXPECT(link_state() == RTW89_GLUE_LINK_DOWN);
+
+    /* One network on both bands, as most home routers have it: the 5 GHz side
+     * when its signal is good, even if the 2.4 GHz one is stronger, and even
+     * when macOS asks for the 2.4 GHz one; not when the 5 GHz one is weak, nor
+     * when its key would not work there (WPA3 only). */
+    dual_beacon("dualban1", 0xa1, ap_ies, sizeof(ap_ies), 2437, -30);
+    dual_beacon("dualban1", 0xa5, ap5_ies, sizeof(ap5_ies), 5180, -37);
+    EXPECT(dual_join("dualban1", -1) == 5180);
+    EXPECT(dual_join("dualban1", 0xa1) == 5180);
+    EXPECT(dual_join("dualban1", 0xa5) == 5180);
+    dual_beacon("dualban2", 0xb1, ap_ies, sizeof(ap_ies), 2437, -30);
+    dual_beacon("dualban2", 0xb5, ap5_ies, sizeof(ap5_ies), 5180, -75);
+    EXPECT(dual_join("dualban2", -1) == 2437);
+    EXPECT(dual_join("dualban2", 0xb1) == 2437);
+    dual_beacon("dualban3", 0xc1, ap_ies, sizeof(ap_ies), 2437, -30);
+    dual_beacon("dualban3", 0xc5, ap5_ies, sizeof(ap5_ies), 5180, -50);
+    EXPECT(dual_join("dualban3", -1) == 2437);  /* 20 dB weaker: more than the 15 allowed */
+    ap5_ies[AP5_RSN_AKM] = 8;
+    dual_beacon("dualban4", 0xd1, ap_ies, sizeof(ap_ies), 2437, -30);
+    dual_beacon("dualban4", 0xd5, ap5_ies, sizeof(ap5_ies), 5180, -37);
+    ap5_ies[AP5_RSN_AKM] = 2;
+    EXPECT(dual_join("dualban4", -1) == 2437);
     EXPECT(link_state() == RTW89_GLUE_LINK_DOWN);
 
     /* the same AP on 160 MHz (channels 36-64, centre 50): this card stays in
@@ -1590,9 +2102,138 @@ static int test_join(void)
     ap_send_beacon();
 
     ap_select(false);
+    failures += test_wpa3(gtk1);
     failures += test_keep();
 #undef EXPECT
     printf("== join test: %d failure(s)\n", failures);
+    return failures;
+}
+
+/* ---- 6 GHz and 802.11be, on a chip that has them: hosttest_fakechip 00 wide <id> ---- */
+
+static int wide_mode;           /* only test_wide() runs after the radio is up */
+static int wide_eht;            /* the chip does 802.11be (RTL8922AE/DE) */
+
+/*
+ * A WPA3 network on 6 GHz channel 37 (6135 MHz), 80 MHz wide (channels 33-45,
+ * centre 39): SAE with hash-to-element and frame protection required, as
+ * 6 GHz demands; 802.11ax, and with @eht 802.11be with channel 45 punctured.
+ */
+static size_t ap6_build(uint8_t *ies, bool eht)
+{
+    static const uint8_t head[] = {
+        0x00, 0x07, 't', 'e', 's', 't', 'n', 'e', 't',                   /* SSID */
+        0x01, 0x08, 0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c,      /* rates (OFDM) */
+        0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00,      /* RSN: SAE, */
+        0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x08,      /* MFPR, MFPC */
+        0xc0, 0x00,
+        0xf4, 0x01, 0x20,                                                /* RSNXE: H2E */
+    };
+    static const uint8_t he_oper[] = {
+        0xff, 0x0c, 0x24, 0xf4, 0x3f, 0x02, 0x05, 0xfc, 0xff,           /* + 6 GHz info: */
+        37, 0x02, 39, 0, 6,                                              /* 37, 80 MHz, 39 */
+    };
+    static const uint8_t eht_ies[] = {
+        0xff, 0x0f, 108,                                                 /* EHT capabilities */
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x22, 0x22, 0x22,                                                /* 2 streams, MCS 0-13 */
+        0xff, 0x0b, 106,                                                 /* EHT operation: */
+        0x03, 0x11, 0x11, 0x11, 0x11,                                    /* info and bitmap, */
+        0x02, 39, 0, 0x08, 0x00,                                         /* 80 MHz, 45 punctured */
+    };
+    size_t len = 0;
+
+    memcpy(ies + len, head, sizeof(head));
+    len += sizeof(head);
+    memcpy(ies + len, ap_he_ies, AP_HE_OPER);                           /* HE capabilities */
+    len += AP_HE_OPER;
+    memcpy(ies + len, he_oper, sizeof(he_oper));
+    len += sizeof(he_oper);
+    if (eht) {
+        memcpy(ies + len, eht_ies, sizeof(eht_ies));
+        len += sizeof(eht_ies);
+    }
+    memcpy(ies + len, ap_ies + sizeof(ap_ies) - 26, 26);                 /* WMM parameters */
+    len += 26;
+    return len;
+}
+
+static int test_wide(void)
+{
+    static const uint8_t gtk[16] = { 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9 };
+    static uint8_t ies[300];
+    struct rtw89_glue_channel channels[128];
+    struct rtw89_glue_bss list[8];
+    struct rtw89_glue_link link;
+    unsigned int i, n, six = 0, found = 0;
+    int failures = 0;
+
+#define EXPECT(cond) do { if (!(cond)) { failures++; printf("== FAIL %s\n", #cond); } } while (0)
+    rtw89_mlme_set_tx_tap(ap_tx_tap);
+    rtw89_data_set_tx_tap(ap_tx_tap);
+    rtw89_glue_set_rejoin(false);
+
+    /* rtw89 keeps 6 GHz off in the world domain; the country macOS sets
+     * brings it on, the 15 preferred scanning channels only */
+    n = rtw89_glue_channels(channels, 128);
+    for (i = 0; i < n; i++)
+        six += channels[i].freq >= 5925;
+    EXPECT(six == 0);
+    six = 0;
+    rtw89_glue_set_country("us");
+    usleep(300 * 1000);                     /* the regulatory work */
+    n = rtw89_glue_channels(channels, 128);
+    for (i = 0; i < n; i++) {
+        if (channels[i].freq < 5925)
+            continue;
+        six++;
+        EXPECT(channels[i].channel % 16 == 5 && channels[i].passive);
+    }
+    EXPECT(six == 15);
+
+    ap_freq = 6135;
+    ap_mac[5] = 0x06;
+    ap_he = false;
+    ap_cur_ies = ies;
+    ap_cur_ies_len = ap6_build(ies, wide_eht);
+    ap_send_beacon();
+    n = rtw89_glue_scan_results(list, 8);
+    for (i = 0; i < n; i++)
+        if (list[i].freq == 6135) {
+            found++;
+            EXPECT(list[i].channel == 37 && list[i].width == 80 &&
+                   list[i].mode == (wide_eht ? 4 : 3) &&
+                   (list[i].security & RTW89_GLUE_SEC_WPA3_SAE));
+        }
+    EXPECT(found == 1);
+
+    /* SAE with hash-to-element; 802.11ax (and be) without 802.11n/ac */
+    EXPECT(join_sae(AP_PASSWORD, false, true) == 0);
+    EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
+    rtw89_glue_link(&link);
+    EXPECT(link.freq == 6135 && link.width == 80 && link.center_freq == 6145);
+    EXPECT(link.mode == (wide_eht ? 4 : 3));
+    EXPECT(!sta_assoc_ie(45) && !sta_assoc_ie(191));                /* no HT, no VHT */
+    EXPECT(sta_assoc_ext_ie(35) != NULL);                           /* HE capabilities */
+    EXPECT(sta_assoc_ext_ie(59) && sta_assoc_ext_ie(59)[1] == 3);   /* HE 6 GHz band */
+    EXPECT(sta_assoc_ie(0xf4) != NULL);                             /* RSNXE */
+    EXPECT(!sta_assoc_ext_ie(108) == !wide_eht);                    /* EHT capabilities */
+    ap_key_ver = 0;
+    ap_igtk = true;
+    ap_rsnxe = true;
+    EXPECT(ap_handshake_pmk(gtk, 1) == 0);
+    EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
+    EXPECT(sta_tx_test() == 0);
+    rtw89_glue_link(&link);
+    printf("== connected on 6 GHz: %u MHz wide, mode %u\n", link.width, link.mode);
+    rtw89_glue_leave();
+    EXPECT(link_state() == RTW89_GLUE_LINK_DOWN);
+
+    ap_key_ver = 2;
+    ap_igtk = false;
+    ap_rsnxe = false;
+#undef EXPECT
+    printf("== wide test (6 GHz%s): %d failure(s)\n", wide_eht ? ", 802.11be" : "", failures);
     return failures;
 }
 
@@ -1634,13 +2275,31 @@ static int test_probed_device(void)
     EXPECT(bss[0].mode == 0 && bss[0].width == 20 && bss[0].security == RTW89_GLUE_SEC_WEP_WPA1);
 
     EXPECT(rtw89_glue_scan() != 0);                         /* radio is down */
+    /* and the directed one refuses the same way, and refuses nonsense */
+    {
+        static const uint8_t name[] = "PHONE-HOTSPOT";
+        static const uint16_t ch6[] = { 2437 };
+        uint8_t toolong[64];
+
+        EXPECT(rtw89_glue_scan_directed(name, sizeof(name) - 1, ch6, 1) != 0);
+        EXPECT(rtw89_glue_scan_directed(NULL, 0, ch6, 1) != 0);
+        memset(toolong, 'x', sizeof(toolong));
+        EXPECT(rtw89_glue_scan_directed(toolong, sizeof(toolong), NULL, 0) != 0);     /* an SSID longer than 802.11 allows */
+    }
 
     /* fakechip_core.c stubs the hardware start, so up() gets as far as adding
      * the interface; whether that and the scan succeed depends on commands
      * no firmware answers. What matters is that nothing crashes or leaks. */
     ret = rtw89_glue_up();
     printf("== radio up returned %d\n", ret);
-    if (!ret) {
+    if (wide_mode) {
+        /* the whole point of this run: a radio that does not start fails it */
+        EXPECT(ret == 0);
+        if (!ret) {
+            failures += test_wide();
+            rtw89_glue_down();
+        }
+    } else if (!ret) {
         ret = rtw89_glue_scan();
         printf("== scan returned %d\n", ret);
         failures += test_join();
@@ -1752,7 +2411,7 @@ int main(int argc, char **argv)
     struct rtw89_glue_info info;
     void *mmio;
     int ret, round, rounds = 2;
-    int expect_ok = argc > 2 && !strcmp(argv[2], "ok");
+    int expect_ok = argc > 2 && (!strcmp(argv[2], "ok") || !strcmp(argv[2], "wide"));
     pthread_t fake_device;
     int failed = 0;
 
@@ -1764,6 +2423,14 @@ int main(int argc, char **argv)
     /* another chip's PCI ID (hex), for the dead-device rounds */
     if (argc > 3)
         dev.device = (uint16_t)strtoul(argv[3], NULL, 16);
+    /* the 6 GHz and 802.11be test alone, once, as a chip that has them */
+    if (argc > 2 && !strcmp(argv[2], "wide")) {
+        wide_mode = 1;
+        rounds = 1;
+        /* "eht": 802.11be capabilities added to the 6 GHz band (see
+         * rtw89_glue_test_fake_eht(); an RTL8922A's radio cannot start here) */
+        wide_eht = argc > 4 && !strcmp(argv[4], "eht");
+    }
 
     /* Config space: IDs, capability list -> PCI Express capability at 0x70. */
     cfg[0x00] = 0xec; cfg[0x01] = 0x10; cfg[0x02] = dev.device & 0xff; cfg[0x03] = dev.device >> 8;
@@ -1816,6 +2483,15 @@ int main(int argc, char **argv)
                    info.tx_streams, info.rx_streams);
         if (expect_ok && ret)
             failed = 1;
+        /* the second round as a chip without real channel contexts: the
+         * RTL8852AE panicked joining, calling the missing assign_vif_chanctx */
+        if (!ret && wide_eht)
+            rtw89_glue_test_fake_eht();
+        if (!ret && round == 2 && expect_ok) {
+            rtw89_glue_test_emulate_chanctx();
+            no_conn_monitor = 1;
+            printf("== round 2: emulated channel contexts, beacons watched by the MLME (as RTL8851B, RTL8852A)\n");
+        }
         if (!ret && test_probed_device())
             failed = 1;
 

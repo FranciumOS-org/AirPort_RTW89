@@ -33,6 +33,9 @@ struct rtw89_cfg80211_rdev {
 
     struct regulatory_request reg_request;
     struct work_struct reg_work;        /* delivers reg_request to wiphy->reg_notifier */
+    char base_alpha2[2];                /* macOS's country, "00" until it says;
+                                         * an AP's Country element goes over it */
+    bool ie_country;                    /* an AP's country is in force */
 
     /* Must be last: wiphy->priv[] (the mac80211 state) follows it. */
     struct wiphy wiphy __aligned(NETDEV_ALIGN);
@@ -46,6 +49,7 @@ static inline struct rtw89_cfg80211_rdev *wiphy_to_rdev(struct wiphy *wiphy)
 /* The access point's country (its Country element) while connected, or
  * NULL once not: rtw89's TX power tables follow it. */
 void rtw89_cfg80211_country_ie(struct wiphy *wiphy, const u8 *alpha2);
+void rtw89_cfg80211_set_country(struct wiphy *wiphy, const char *alpha2);
 
 /* ------------------------------------------------------------------ */
 /*  mac80211 side: what Linux keeps in ieee80211_local / sdata / sta    */
@@ -242,7 +246,8 @@ struct rtw89_mlme_status {
 void rtw89_mlme_start(struct ieee80211_hw *hw, struct ieee80211_vif *vif, void (*notify)(void));
 void rtw89_mlme_stop(void);
 /* @pmk: the 32-byte pairwise master key for a WPA2-PSK network, else NULL. */
-int rtw89_mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk);
+int rtw89_mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk,
+                       const u8 *password, size_t password_len);
 int rtw89_mlme_connect_ext(const struct rtw89_mlme_bss *bss, const u8 *rsn_ie, size_t rsn_len);
 int rtw89_mlme_set_key(bool pairwise, int idx, const u8 *key, size_t len, u64 rsc);
 int rtw89_mlme_set_pmk(const u8 *pmk, size_t len);
@@ -250,6 +255,10 @@ bool rtw89_mlme_authorized(void);
 size_t rtw89_mlme_assoc_rsn_ie(u8 *buf, size_t max);
 /* For tests: see every management frame the MLME transmits. */
 void rtw89_mlme_set_tx_tap(void (*tap)(const u8 *frame, size_t len));
+
+/* Put an AWDL frame on air as it is: no encryption, no management
+ * protection, and on whatever channel the radio is already on. */
+int rtw89_mlme_tx_awdl(const u8 *frame, size_t len);
 /* The AP's beacons while associated, FCS on; takes the skb. Any context. */
 void rtw89_mlme_rx_beacon(struct sk_buff *skb);
 /* The driver reports missed beacons / is done with a frame. Any context. */

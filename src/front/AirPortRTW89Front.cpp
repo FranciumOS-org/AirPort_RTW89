@@ -2,6 +2,8 @@
 #include "AirPortRTW89Front.hpp"
 #include "../kext/rtw89_chips.h"
 
+#include <IOKit/80211/apple80211_var.h>
+
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/network/IOBasicOutputQueue.h>
@@ -92,6 +94,7 @@ bool AirPortRTW89Front::start(IOService *provider)
 void AirPortRTW89Front::stop(IOService *provider)
 {
     disconnectBack();
+    opDestroyVif(this);
     if (_netif) {
         detachInterface(_netif, true);
         _netif->release();
@@ -220,6 +223,9 @@ IOReturn AirPortRTW89Front::connectBack(const struct rtw89_back_ops *back,
     front->super_ioctl = opSuperIoctl;
     front->super_ioctl_set = opSuperIoctlSet;
     front->set_apple_rsn = opSetAppleRsn;
+    front->create_vif = opCreateVif;
+    front->destroy_vif = opDestroyVif;
+    front->awdl_rx = opAwdlRx;
 
     setProperty("RTW89 Back Connected", kOSBooleanTrue);
     LOG("driver connected, address %02x:%02x:%02x:%02x:%02x:%02x", _mac.bytes[0], _mac.bytes[1],
@@ -294,6 +300,191 @@ void AirPortRTW89Front::opSetLink(void *ctx, bool up, uint64_t bps, unsigned int
 void AirPortRTW89Front::opSetAppleRsn(void *ctx, bool on)
 {
     gAppleRsn = on;
+}
+
+/*
+ * The old family's own IO80211Controller::createVirtualInterface() builds only
+ * the P2P roles (3, 4, 5, as "p2p") and the soft-AP role (7, as "ap"); role 6,
+ * AWDL, falls off the end of its range check and it returns nothing, which is
+ * why awdl0 never appeared. AirPort_BrcmNIC overrides the method for exactly
+ * this reason: it takes one role more and names that one "awdl". We do the
+ * same, with the family's plain IO80211P2PInterface, since what Broadcom adds
+ * on top of it is Broadcom's own firmware state.
+ *
+ * attachVirtualInterface() calls this through the vtable and then attaches and
+ * publishes what comes back, so the rest of the path is the family's and is
+ * the same one p2p already uses.
+ */
+IO80211VirtualInterface *AirPortRTW89Front::createVirtualInterface(ether_addr *addr, UInt role)
+{
+    IO80211P2PInterface *vif;
+
+    if (role != APPLE80211_VIF_AWDL)
+        return super::createVirtualInterface(addr, role);
+
+    vif = OSTypeAlloc(IO80211P2PInterface);
+    if (!vif) {
+        LOG("out of memory for the AWDL interface");
+        return nullptr;
+    }
+    /* A literal, not a buffer on the stack: Broadcom passes a stack buffer, so
+     * init() copies the name, but a literal is right either way. */
+    if (!vif->init(this, addr, role, "awdl")) {
+        LOG("IO80211P2PInterface::init() refused role %u", (unsigned int)role);
+        vif->release();
+        return nullptr;
+    }
+    /* So that a later failure cannot be blamed on this method again */
+    LOG("built the AWDL interface %s for role %u", vif->getBSDName() ? vif->getBSDName() : "(unnamed)",
+        (unsigned int)role);
+    return vif;
+}
+
+/*
+ * The family builds the virtual interface, through the override above:
+ * attachVirtualInterface() calls createVirtualInterface(), attaches what it
+ * gets and gives it a BSD name (awdl0). We keep the one we were given; macOS
+ * asks for a second one only for P2P.
+ */
+int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t role, char *bsd_name)
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+    IO80211VirtualInterface *vif = nullptr;
+    ether_addr addr = {};
+    const char *name;
+
+    if (self->_vif)
+        return EBUSY;
+    memcpy(addr.octet, mac, sizeof(addr.octet));
+    /* The three outcomes are told apart by the errno, because the driver's log
+     * ring is the only one we can read back: EIO the family refusing the role
+     * outright, ENODEV it claiming success without an interface, and success
+     * with an empty name an interface that never reached BSD. */
+    if (!self->attachVirtualInterface(&vif, &addr, role, true)) {
+        /* Which of its two steps failed is in the log above: it calls
+         * createVirtualInterface() first, which says when it has built one, and
+         * then IO80211VirtualInterface::attach(), which is IOService::attach(). */
+        LOG("attachVirtualInterface() failed for role %u", (unsigned int)role);
+        return EIO;
+    }
+    if (!vif) {
+        LOG("attachVirtualInterface() said yes to role %u but built nothing", (unsigned int)role);
+        return ENODEV;
+    }
+    self->_vif = vif;
+    name = vif->getBSDName();
+    if (bsd_name) {
+        bzero(bsd_name, IFNAMSIZ);
+        if (name)
+            strlcpy(bsd_name, name, IFNAMSIZ);
+    }
+    /*
+     * Tell the family the interface can carry packets.  Nothing else does it
+     * for a virtual interface: IO80211VirtualInterface::setLinkState() posts
+     * the kernel event that ifconfig reports as "status: active" and that
+     * userspace watches, and it takes a branch of its own once the state is
+     * up.  Until it is called awdl0 stays inactive, sharingd sees no usable
+     * AWDL interface and never asks for AWDL at all, so the engine sits idle
+     * however many frames it is handed.
+     *
+     * Broadcom does the same for its AWDL interface, from setPOWER: it logs
+     * "Indicate AWDL interface LINK UP" and calls setLinkState(2, 1).
+     */
+    if (role == APPLE80211_VIF_AWDL) {
+        vif->setLinkState(kIO80211NetworkLinkUp, 1);
+        LOG("told the family the AWDL interface's link is up");
+    }
+    LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
+        (unsigned int)role);
+    return 0;
+}
+
+/*
+ * IO80211VirtualInterface::bpfTapInput() is not in MacKernelSDK's header, so
+ * it is declared here by its own symbol rather than by editing the vendored
+ * SDK. It is not a virtual method -- it appears in neither
+ * IO80211VirtualInterface's vtable nor IO80211P2PInterface's -- so a direct
+ * call to the exported symbol is what the compiler would have emitted anyway,
+ * and is what AirPort_BrcmNIC does: it imports this exact symbol.
+ */
+extern "C" UInt32
+rtw89_vif_bpf_tap_input(IO80211VirtualInterface *vif, mbuf_t m, UInt dlt, void *header,
+                        size_t header_len)
+    __asm__("__ZN23IO80211VirtualInterface11bpfTapInputEP6__mbufjPvm");
+
+/*
+ * A received AWDL action frame, handed to the family's AWDL engine.
+ *
+ * IO80211VirtualInterface::bpfTapInput() is the way in: with DLT 12 it gives
+ * the frame to the peer manager's actionFrameInput() and only falls through to
+ * the ordinary bpf tap if that does not take it. The header it wants is an
+ * apple80211_act_frm_hdr of 72 bytes, mapped out of
+ * AirPort_BrcmNIC::wlEvent(), which builds one the same way: the transmitter's
+ * address first, then an apple80211_channel at offset 12. Broadcom fills three
+ * more words at 0x1c, 0x20 and 0x24 out of its own event, byte-swapped; what
+ * they are is not known, so they are left zero.
+ *
+ * The mbuf stays ours: after its own bpfTapInput() Broadcom hands the packet
+ * straight to its free routine, so the family does not take it.
+ */
+void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
+                                 const uint8_t peer[6], uint32_t channel)
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+    IO80211VirtualInterface *vif = self->_vif;
+    uint8_t hdr[72] = {};
+    uint32_t *chan = reinterpret_cast<uint32_t *>(hdr + 12);
+    mbuf_t m;
+
+    /* Say what became of the frames, thinly: the first one, then every
+     * hundredth.  "recognised N frames" in the driver's log only means the
+     * driver saw them, and every way this can fail from here is silent. */
+    self->_awdlRxSeen++;
+    if (!vif) {
+        if (!self->_awdlRxNoVif++)
+            LOG("an AWDL frame arrived with no interface to hand it to");
+        return;
+    }
+    if (!frame || !len)
+        return;
+    m = self->allocatePacket((unsigned int)len);
+    if (!m) {
+        if (!self->_awdlRxNoBuf++)
+            LOG("out of packets for an AWDL frame");
+        return;
+    }
+    memcpy(mbuf_data(m), frame, len);
+
+    memcpy(hdr, peer, 6);
+    chan[0] = APPLE80211_VERSION;   /* apple80211_channel.version */
+    chan[1] = channel;              /* .channel, the one updateAFStats reads */
+    chan[2] = channel <= 14 ? APPLE80211_C_FLAG_2GHZ : APPLE80211_C_FLAG_5GHZ;
+
+    /* The packet stays ours, and goes back to the pool it came from rather than
+     * to mbuf_freem(): Broadcom pairs its own bpfTapInput() with freePacket()
+     * the same way.  Nothing the family does with it conflicts.  Its action
+     * frame ring, the one path that would keep the packet, is dead code -- the
+     * flag that selects it is set to false at peer manager init and written
+     * nowhere else -- so actionFrameInput() always takes the
+     * actionFrameProcessInput() branch, which frees only a copy it made
+     * itself, never the packet it was handed. */
+    rtw89_vif_bpf_tap_input(vif, m, 12, hdr, sizeof(hdr));
+    self->freePacket(m);
+    if (self->_awdlRxFed++ % 100 == 0)
+        LOG("handed AWDL frame %u to IO80211 (channel %u, from %02x:%02x:%02x:%02x:%02x:%02x)",
+            self->_awdlRxFed, channel, peer[0], peer[1], peer[2], peer[3], peer[4], peer[5]);
+}
+
+void AirPortRTW89Front::opDestroyVif(void *ctx)
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+    IO80211VirtualInterface *vif = self->_vif;
+
+    if (!vif)
+        return;
+    self->_vif = nullptr;
+    self->detachVirtualInterface(vif, true);
+    LOG("virtual interface down");
 }
 
 bool AirPortRTW89Front::useAppleRSNSupplicant(IO80211Interface *interface)
@@ -385,6 +576,28 @@ SInt32 AirPortRTW89Front::apple80211Request(unsigned int type, int number,
     if (there)
         ret = _back.request(_back.ctx, type, number, interface, data);
     backLeave();
+    return ret;
+}
+
+/*
+ * Requests on a virtual interface (awdl0). The family routes its own
+ * apple80211_ioctl() here when the ioctl names a virtual interface; the
+ * driver proper logs what AWDL asks for and answers what it can.
+ */
+SInt32 AirPortRTW89Front::apple80211VirtualRequest(UInt type, int number,
+                                                   IO80211VirtualInterface *vif, void *data)
+{
+    SInt32 ret = ENXIO;
+    bool there;
+
+    there = backEnter();
+    if (there && _back.virtual_request)
+        ret = _back.virtual_request(_back.ctx, type, number, vif, data);
+    else
+        ret = EOPNOTSUPP;
+    backLeave();
+    if (ret == EOPNOTSUPP)
+        return super::apple80211VirtualRequest(type, number, vif, data);
     return ret;
 }
 
