@@ -38,6 +38,21 @@ OSDefineMetaClassAndStructors(AirPortRTW89FrontInterface, IO80211Interface)
 /* One card, one front: set through rtw89_front_ops.set_apple_rsn(). */
 static volatile bool gAppleRsn;
 
+/*
+ * IO80211PeerManager::enable(), by its symbol for the same reason as
+ * bpfTapInput() above: it is not in MacKernelSDK's headers and it is not a
+ * virtual method, so a direct call is what the compiler would emit anyway.
+ *
+ * The family calls this itself from the link-up branch of setLinkState(), and
+ * on this machine the result is that nothing is enabled: the peer manager's
+ * _enabling byte stays 0, which means enableGated() -- four instructions,
+ * the first of which sets that byte -- never ran. Calling it here says which
+ * half is at fault, because the pointer chain it walks has been checked and
+ * is whole.
+ */
+extern "C" IOReturn rtw89_peer_manager_enable(void *peerManager, const char *why)
+    __asm__("__ZN18IO80211PeerManager6enableEPKc");
+
 /* The front whose back takes the log lines; see LOG above. */
 static AirPortRTW89Front *gLogFront;
 
@@ -509,9 +524,23 @@ int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t rol
         int before = *reinterpret_cast<const int *>(raw + 0xfc);
 
         vif->setLinkState(kIO80211NetworkLinkDown, 0);
+        const int afterDown = *reinterpret_cast<const int *>(raw + 0xfc);
+
         vif->setLinkState(kIO80211NetworkLinkUp, 1);
-        LOG("AWDL link state %d -> %d, peer manager %s", before,
-            *reinterpret_cast<const int *>(raw + 0xfc), pm ? "there" : "MISSING");
+        const int afterUp = *reinterpret_cast<const int *>(raw + 0xfc);
+
+        LOG("AWDL link state %d -> %d -> %d, peer manager %s", before, afterDown, afterUp,
+            pm ? "there" : "MISSING");
+        if (pm) {
+            const uint8_t *pmb = reinterpret_cast<const uint8_t *>(pm);
+            IOReturn ret;
+
+            LOG("    after the family's own run: _enabling %u", pmb[0x2f5]);
+            /* and now the same call it makes, to see whether it was made */
+            ret = rtw89_peer_manager_enable(pm, "rtw89 front");
+            LOG("    enable() called directly: 0x%x, _enabling now %u, link state %d",
+                ret, pmb[0x2f5], *reinterpret_cast<const int *>(raw + 0xfc));
+        }
     }
     LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
         (unsigned int)role);
@@ -530,6 +559,7 @@ extern "C" UInt32
 rtw89_vif_bpf_tap_input(IO80211VirtualInterface *vif, mbuf_t m, UInt dlt, void *header,
                         size_t header_len)
     __asm__("__ZN23IO80211VirtualInterface11bpfTapInputEP6__mbufjPvm");
+
 
 /*
  * A received AWDL action frame, handed to the family's AWDL engine.
