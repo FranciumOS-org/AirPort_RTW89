@@ -201,6 +201,61 @@ UInt32 AirPortRTW89AwdlInterface::outputPacket(mbuf_t m, void *param)
     return kIOReturnOutputDropped;
 }
 
+/*
+ * The user client wifip2pd needs, and the reason AirDrop got no further than a
+ * peer in the list.
+ *
+ * Apple80211BindToInterfaceWithService() opens a user client on the interface
+ * and keeps the connection at +0x17c of its handle. Every later event call
+ * reads it, and Apple80211EventMonitoringInitIOUC() returns -3900 (Invalid
+ * Parameters) the moment it finds it zero -- which is what
+ * Apple80211RawP2PEventMonitoringInit() hands back to wifip2pd, so wifip2pd
+ * throws, tears awdl0 down again and turns sharingd away.
+ *
+ * It was zero because the two halves of the stack disagree about one number.
+ * The IO80211 framework on the system passes a hardcoded type 0 to
+ * IOServiceOpen (`xorl %edx, %edx` right before the call), while
+ * IO80211VirtualInterface::newUserClient() in the Ventura family we inject
+ * takes type 4 for an AWDL role and 5 for NAN, and answers anything else with
+ * kIOReturnBadArgument after logging "Invalid userClient type request". A real
+ * Mac never meets this because its Wi-Fi comes with the matching family.
+ *
+ * So type 0 is translated to the 4 the family wants. Nothing else is touched:
+ * the family still decides the interface type from the role (2, "awdl", for
+ * role 6), still asks IOUserClient for com.apple.wifi_awdl.event_monitor, and
+ * still refuses a second client per interface.
+ *
+ * The family's own implementation is reached by its symbol rather than by
+ * writing IO80211VirtualInterface::newUserClient(), which clang compiles into
+ * a jump through a slot of the imported IO80211VirtualInterface vtable. That
+ * vtable is the one MacKernelSDK's header describes, and this header is known
+ * to disagree with the family about three slots already (see the note above
+ * outputPacket), so a slot that is off by one would land in some other method
+ * of the family. The symbol is exported, `make kext` checks it against the
+ * family, and a direct call is what a qualified call is meant to be anyway.
+ */
+extern "C" IOReturn
+rtw89_vif_new_user_client(IO80211VirtualInterface *vif, task_t owningTask, void *securityID,
+                          UInt type, OSDictionary *properties, IOUserClient **handler)
+    __asm__("__ZN23IO80211VirtualInterface13newUserClientEP4taskPvjP12OSDictionaryPP12IOUserClient");
+
+IOReturn AirPortRTW89AwdlInterface::newUserClient(task_t owningTask, void *securityID, UInt type,
+                                                  OSDictionary *properties,
+                                                  IOUserClient **handler)
+{
+    static bool told;
+
+    if (type == 0) {
+        if (!told) {
+            told = true;
+            LOG("awdl: the user client is asked for as type 0 and the family takes only "
+                "type 4 for an AWDL role, so it is opened as 4");
+        }
+        type = 4;
+    }
+    return rtw89_vif_new_user_client(this, owningTask, securityID, type, properties, handler);
+}
+
 UInt32 AirPortRTW89FrontInterface::inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options,
                                                void *param)
 {

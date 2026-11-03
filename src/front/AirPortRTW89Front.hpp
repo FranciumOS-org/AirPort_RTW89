@@ -40,6 +40,8 @@ class AirPortRTW89AwdlInterface : public IO80211P2PInterface {
 
 public:
     UInt32 outputPacket(mbuf_t m, void *param) override;
+    IOReturn newUserClient(task_t owningTask, void *securityID, UInt type,
+                           OSDictionary *properties, IOUserClient **handler) override;
 };
 
 class AirPortRTW89Front : public IO80211Controller {
