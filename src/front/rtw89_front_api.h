@@ -27,7 +27,7 @@
 #include <stdint.h>
 #include <sys/kernel_types.h>   /* mbuf_t */
 
-#define RTW89_FRONT_API_VERSION 8
+#define RTW89_FRONT_API_VERSION 9
 #define RTW89_FRONT_CLASS       "AirPortRTW89Front"
 /* callPlatformFunction(name, true, back ops, front ops out, 0, 0) */
 #define RTW89_FRONT_CONNECT     "RTW89FrontConnect"
@@ -71,10 +71,14 @@ struct rtw89_front_ops {
     void (*destroy_vif)(void *ctx);
     /* A received AWDL action frame for IO80211's AWDL engine: handed to the
      * virtual interface, which gives it to IO80211AWDLPeerManager. @frame is
-     * the 802.11 management frame without its FCS, @peer its transmitter and
-     * @channel the channel it arrived on. Only valid during the call. */
+     * the action frame body with the 802.11 header stripped -- the category
+     * byte first, then the vendor OUI -- which is where isValidAF() looks for
+     * the OUI and getTlvPtrForType() counts the TLVs from. @peer is its
+     * transmitter, @channel the channel it arrived on and @rssi its strength
+     * in dBm, without which the family calls the peer unreachable and refuses
+     * to create it. Only valid during the call. */
     void (*awdl_rx)(void *ctx, const uint8_t *frame, size_t len,
-                    const uint8_t peer[6], uint32_t channel);
+                    const uint8_t peer[6], uint32_t channel, int8_t rssi);
     /*
      * A received AWDL data frame, already turned into the 802.3 frame awdl0
      * works in: destination, source, length, and then the payload exactly as

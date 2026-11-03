@@ -752,11 +752,24 @@ rtw89_vif_bpf_tap_input(IO80211VirtualInterface *vif, mbuf_t m, UInt dlt, void *
  * more words at 0x1c, 0x20 and 0x24 out of its own event, byte-swapped; what
  * they are is not known, so they are left zero.
  *
+ * Two fields in it are not decoration, and between them they are why the
+ * family has never built a peer for anything we handed it:
+ *
+ *   - the frame itself must start at the action body, since isValidAF()
+ *     checks mbuf_data()[1..5] for 00 17 f2 08 00 and getTlvPtrForType()
+ *     counts TLVs from mbuf_data() + 16. The driver strips the 802.11 header
+ *     now; before, the frame control sat where the OUI should be and every
+ *     frame was rejected as "BAD OUI in AF".
+ *   - the RSSI at 0x2c, as a signed int. determinePeerReachability() returns
+ *     "unreachable" for zero whatever else is true, and addAWDLPeer() then
+ *     logs "Unable to create peer" and returns nothing. Past that, the
+ *     threshold at the peer manager's 0x6e84 is -70 dBm by default.
+ *
  * The mbuf stays ours: after its own bpfTapInput() Broadcom hands the packet
  * straight to its free routine, so the family does not take it.
  */
 void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
-                                 const uint8_t peer[6], uint32_t channel)
+                                 const uint8_t peer[6], uint32_t channel, int8_t rssi)
 {
     AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
     IO80211VirtualInterface *vif = self->_vif;
@@ -787,6 +800,20 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
     chan[0] = APPLE80211_VERSION;   /* apple80211_channel.version */
     chan[1] = channel;              /* .channel, the one updateAFStats reads */
     chan[2] = channel <= 14 ? APPLE80211_C_FLAG_2GHZ : APPLE80211_C_FLAG_5GHZ;
+    /* The strength, which decides whether the peer is created at all. A chip
+     * that gave us nothing would read as "unreachable", so an absent figure
+     * is reported as a weak but usable one rather than as none. */
+    *reinterpret_cast<int32_t *>(hdr + 0x2c) = rssi ? rssi : -60;
+
+    /* The first frame's own first bytes, once: this is exactly what
+     * isValidAF() reads, and it is the difference between the family looking
+     * at our frames and discarding all of them. */
+    if (!self->_awdlRxFed)
+        LOG("the first AWDL frame handed over starts %02x %02x %02x %02x %02x %02x "
+            "(IO80211 wants .. 00 17 f2 08 00), %u bytes, %d dBm",
+            frame[0], len > 1 ? frame[1] : 0, len > 2 ? frame[2] : 0,
+            len > 3 ? frame[3] : 0, len > 4 ? frame[4] : 0, len > 5 ? frame[5] : 0,
+            (unsigned int)len, (int)rssi);
 
     /* The packet stays ours, and goes back to the pool it came from rather than
      * to mbuf_freem(): Broadcom pairs its own bpfTapInput() with freePacket()
@@ -849,6 +876,23 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
             LOG("    peer manager _enabling %u, _enabled %u",
                 *reinterpret_cast<const uint8_t *>(pm + 0x2f5),
                 *reinterpret_cast<const uint8_t *>(pm + 0x2f4));
+            /*
+             * Whether any of this has produced a peer, which is the thing
+             * everything else waits on: sharingd has nothing to talk to and
+             * the service parameters TLV nothing to describe until the family
+             * holds an IO80211AWDLPeer for the phone. The peer queue is at
+             * the peer manager's 0x58 and its count at 0x34 of that --
+             * addAWDLPeer() asserts on the first and enqueuePeerInOrder()
+             * reads the second -- and 0x8ede is the running count of peers
+             * added, bumped at the end of addAWDLPeer().
+             */
+            {
+                const uint8_t *q = *reinterpret_cast<const uint8_t *const *>(pm + 0x58);
+
+                LOG("    peers known %u, peers ever added %u",
+                    q ? *reinterpret_cast<const unsigned int *>(q + 0x34) : 0,
+                    *reinterpret_cast<const uint8_t *>(pm + 0x8ede));
+            }
         }
     }
 }

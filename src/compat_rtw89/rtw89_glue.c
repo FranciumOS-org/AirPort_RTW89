@@ -2280,10 +2280,11 @@ void rtw89_glue_awdl_deliver(bool on)
 }
 
 /* From rtw89_awdl.c, on the receive thread. */
-void rtw89_glue_awdl_frame(const u8 *frame, size_t len, const u8 peer[6], u32 channel)
+void rtw89_glue_awdl_frame(const u8 *frame, size_t len, const u8 peer[6], u32 channel,
+                           s8 rssi)
 {
     if (glue.plat.awdl_frame)
-        glue.plat.awdl_frame(glue.plat.ctx, frame, len, peer, channel);
+        glue.plat.awdl_frame(glue.plat.ctx, frame, len, peer, channel, rssi);
 }
 
 /* From rtw89_awdl.c, once per action frame window. */

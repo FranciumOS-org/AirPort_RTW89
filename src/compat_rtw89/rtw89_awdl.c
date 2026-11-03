@@ -428,9 +428,27 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
     }
 
     /* It is AWDL from here on, whether or not we are watching. */
+    /*
+     * The action frame body, not the 802.11 frame, and with the RSSI.
+     *
+     * IO80211AWDLPeerManager::isValidAF() reads mbuf_data()[1..5] and wants
+     * 00 17 f2 08 00 there -- the vendor OUI, type and version of the action
+     * frame itself -- and getTlvPtrForType() walks the TLVs from
+     * mbuf_data() + 16, the fixed AWDL action header. Handing over the whole
+     * 802.11 frame put the frame control where the OUI belongs, so every
+     * frame handed over since this path was written failed that check and was
+     * thrown away ("BAD OUI in AF"). Nothing past it ever ran, which is why
+     * the family has never built an IO80211AWDLPeer for the phone.
+     *
+     * The RSSI is the other half. determinePeerReachability() reads it from
+     * apple80211_act_frm_hdr at 0x2c and treats zero as unreachable, which
+     * makes addAWDLPeer() give up ("Unable to create peer"); the threshold
+     * at 0x6e84 is -70 dBm by default, so the figure has to be a real one.
+     */
     if (gDelivering)
-        rtw89_glue_awdl_frame(skb->data, len, mgmt->sa,
-                              ieee80211_frequency_to_channel(status->freq));
+        rtw89_glue_awdl_frame(body, (size_t)(end - body), mgmt->sa,
+                              ieee80211_frequency_to_channel(status->freq),
+                              status->signal);
     if (!gWatching)
         return true;
 

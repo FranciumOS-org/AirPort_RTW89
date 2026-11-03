@@ -118,7 +118,7 @@ private:
     static int opCreateVif(void *ctx, const uint8_t mac[6], uint32_t role, char *bsd_name);
     static void opDestroyVif(void *ctx);
     static void opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
-                         const uint8_t peer[6], uint32_t channel);
+                         const uint8_t peer[6], uint32_t channel, int8_t rssi);
     static void opAwdlDataRx(void *ctx, const uint8_t *eth, size_t len);
     static void opAwdlWindow(void *ctx, uint32_t aw_seq, const uint8_t master[6]);
 

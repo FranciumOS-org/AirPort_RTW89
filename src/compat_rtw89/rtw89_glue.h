@@ -57,11 +57,15 @@ struct rtw89_glue_platform {
     void (*scan_done)(void *ctx, bool aborted);
 
     /* Optional: a received AWDL action frame, for IO80211's AWDL engine.
-     * @frame is the 802.11 management frame without the FCS and is only valid
-     * during the call; @peer is its transmitter and @channel the channel it
-     * arrived on. Called from the driver's receive thread. */
+     * @frame is the action frame body -- the category byte, the vendor OUI
+     * and what follows, with the 802.11 header already stripped, which is
+     * where IO80211 expects to find the OUI and the TLVs -- and is only valid
+     * during the call. @peer is its transmitter, @channel the channel it
+     * arrived on and @rssi its strength in dBm, which the family needs in
+     * order to decide a peer is reachable at all. Called from the driver's
+     * receive thread. */
     void (*awdl_frame)(void *ctx, const uint8_t *frame, size_t len,
-                       const uint8_t peer[6], uint32_t channel);
+                       const uint8_t peer[6], uint32_t channel, int8_t rssi);
     /* Optional: a received AWDL data frame, already in the 802.3 form awdl0
      * works in -- destination, source, length, then the payload as it
      * arrived. Only valid during the call; the receive thread again. */
@@ -394,7 +398,7 @@ void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac
 
 /* Called from inside the compat layer when one arrives. */
 void rtw89_glue_awdl_frame(const uint8_t *frame, size_t len, const uint8_t peer[6],
-                           uint32_t channel);
+                           uint32_t channel, int8_t rssi);
 void rtw89_glue_awdl_data(const uint8_t *eth, size_t len);
 void rtw89_glue_awdl_window(uint32_t aw_seq, const uint8_t *master);
 

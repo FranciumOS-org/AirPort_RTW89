@@ -91,7 +91,7 @@ private:
     static void linkChanged(void *ctx);
     static void rxFrame(void *ctx, const uint8_t *frame, size_t len);
     static void awdlFrame(void *ctx, const uint8_t *frame, size_t len,
-                          const uint8_t peer[6], uint32_t channel);
+                          const uint8_t peer[6], uint32_t channel, int8_t rssi);
     static void awdlData(void *ctx, const uint8_t *eth, size_t len);
     static void awdlWindow(void *ctx, uint32_t aw_seq, const uint8_t master[6]);
     static void txWake(void *ctx);

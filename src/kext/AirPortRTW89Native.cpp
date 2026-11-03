@@ -926,12 +926,12 @@ int AirPort_RTW89::backRequest(void *ctx, unsigned int type, int number, void *i
  * only declared in AirPortRTW89.cpp, not defined.
  */
 void AirPort_RTW89::awdlFrame(void *ctx, const uint8_t *frame, size_t len,
-                              const uint8_t peer[6], uint32_t channel)
+                              const uint8_t peer[6], uint32_t channel, int8_t rssi)
 {
     AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
 
     if (me->_ns && me->_ns->front.awdl_rx)
-        me->_ns->front.awdl_rx(me->_ns->front.ctx, frame, len, peer, channel);
+        me->_ns->front.awdl_rx(me->_ns->front.ctx, frame, len, peer, channel, rssi);
 }
 
 /* And a received AWDL data frame, which goes to awdl0 itself rather than to
