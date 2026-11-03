@@ -137,6 +137,7 @@ private:
     unsigned int _awdlDataInSeen = 0;
     unsigned int _awdlDataInUp = 0;
     unsigned int _awdlWindows = 0;   /* windows reported to the family */
+    unsigned int _awdlResyncs = 0;   /* times the sync state had to be set again */
     /* Switching the family's AWDL engine on, once, off the workloop. */
     thread_call_t _awdlEnableCall = nullptr;
     bool _awdlEnableAsked = false;
