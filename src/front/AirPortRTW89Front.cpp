@@ -242,8 +242,10 @@ bool AirPortRTW89AwdlUserClient::initWithTask(task_t owningTask, void *securityI
     OSObject *ent;
     OSBoolean *flag;
 
-    if (!IOUserClient::initWithTask(owningTask, securityID, type, properties))
+    if (!IOUserClient::initWithTask(owningTask, securityID, type, properties)) {
+        LOG("awdl: IOUserClient::initWithTask() refused the event client");
         return false;
+    }
 
     /* A cast and isTrue(), not a pointer comparison against kOSBooleanTrue:
      * copyClientEntitlement hands back a copy, and nothing promises it is the
@@ -257,25 +259,29 @@ bool AirPortRTW89AwdlUserClient::initWithTask(task_t owningTask, void *securityI
         LOG("awdl: the event client's task does not hold "
             RTW89_AWDL_EVENT_ENTITLEMENT "; carrying on, as the family does");
 
-    /*
-     * One page each. The framework only reports the sizes it was given and
-     * reads the ring through them; nothing requires a particular size, and
-     * until an event is posted nothing reads the contents at all. They are
-     * allocated here rather than in clientMemoryForType() so that a second
-     * mapping of the same type hands back the same memory, which is what the
-     * framework expects of ringBuffer and ringState.
-     */
-    _ringBuffer = IOBufferMemoryDescriptor::inTaskWithOptions(
-        kernel_task, kIOMemoryKernelUserShared | kIODirectionInOut, page_size, page_size);
-    _ringState = IOBufferMemoryDescriptor::inTaskWithOptions(
-        kernel_task, kIOMemoryKernelUserShared | kIODirectionInOut, page_size, page_size);
-    if (!_ringBuffer || !_ringState) {
-        LOG("awdl: out of memory for the event ring");
-        return false;
-    }
-    bzero(_ringBuffer->getBytesNoCopy(), _ringBuffer->getCapacity());
-    bzero(_ringState->getBytesNoCopy(), _ringState->getCapacity());
     return true;
+}
+
+/*
+ * The regions are allocated on the first request for each and then kept, so
+ * that mapping the same type twice hands back the same memory -- which is what
+ * ringBuffer and ringState have to be. Doing it here rather than in
+ * initWithTask() keeps an allocation failure from failing the whole open,
+ * which would come back to the framework as a refusal to create the client at
+ * all and tell us nothing about why.
+ */
+IOBufferMemoryDescriptor *AirPortRTW89AwdlUserClient::region(IOBufferMemoryDescriptor **slot)
+{
+    if (!*slot) {
+        *slot = IOBufferMemoryDescriptor::inTaskWithOptions(
+            kernel_task, kIOMemoryKernelUserShared | kIODirectionInOut, page_size, page_size);
+        if (!*slot) {
+            LOG("awdl: out of memory for an event ring region");
+            return nullptr;
+        }
+        bzero((*slot)->getBytesNoCopy(), (*slot)->getCapacity());
+    }
+    return *slot;
 }
 
 /*
@@ -341,16 +347,18 @@ IOReturn AirPortRTW89AwdlUserClient::clientMemoryForType(UInt32 type, IOOptionBi
     IOBufferMemoryDescriptor *md;
 
     switch (type) {
-    case kAwdlUCRingBuffer: md = _ringBuffer; break;
-    case kAwdlUCRingState:  md = _ringState;  break;
+    case kAwdlUCRingBuffer: md = region(&_ringBuffer); break;
+    case kAwdlUCRingState:  md = region(&_ringState);  break;
     default:
         LOG("awdl: the event client was asked for memory type %u, which it has no region for",
             (unsigned int)type);
         return kIOReturnBadArgument;
     }
     if (!md)
-        return kIOReturnNotReady;
+        return kIOReturnNoMemory;
 
+    LOG("awdl: the framework mapped the %s",
+        type == kAwdlUCRingBuffer ? "ring buffer" : "ring state");
     md->retain();   /* the caller releases what it is handed */
     *memory = md;
     *options = 0;
@@ -484,18 +492,24 @@ IOReturn AirPortRTW89AwdlInterface::newUserClient(task_t owningTask, void *secur
     if (!handler)
         return kIOReturnBadArgument;
 
+    LOG("awdl: the framework is asking for an event user client");
     uc = OSTypeAlloc(AirPortRTW89AwdlUserClient);
-    if (!uc)
+    if (!uc) {
+        LOG("awdl: out of memory for the event user client");
         return kIOReturnNoMemory;
+    }
     if (!uc->initWithTask(owningTask, securityID, type, properties)) {
+        LOG("awdl: the event user client would not initialise");
         uc->release();
         return kIOReturnNotPermitted;
     }
     if (!uc->attach(this)) {
+        LOG("awdl: the event user client would not attach");
         uc->release();
         return kIOReturnInternalError;
     }
     if (!uc->start(this)) {
+        LOG("awdl: the event user client would not start");
         uc->detach(this);
         uc->release();
         return kIOReturnInternalError;

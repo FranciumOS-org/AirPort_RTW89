@@ -55,6 +55,9 @@ public:
     void free() override;
 
 private:
+    /* Allocates a region on first use and keeps it, so the same type always
+     * maps the same memory. */
+    IOBufferMemoryDescriptor *region(IOBufferMemoryDescriptor **slot);
     /* The two regions the framework maps, by the memory types it asks for. */
     IOBufferMemoryDescriptor *_ringBuffer = nullptr;   /* type 1 */
     IOBufferMemoryDescriptor *_ringState = nullptr;    /* type 2 */
