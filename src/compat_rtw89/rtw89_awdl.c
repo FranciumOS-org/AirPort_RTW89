@@ -357,17 +357,28 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
      */
     {
         const u8 *t = body + AWDL_FIXED_LEN;
+        u64 arrived;
 
-        while (t + 3 <= end) {
-            size_t tl = (size_t)(t[1] | (t[2] << 8));
+        /*
+         * The chip's own arrival time, not ours. Timing the window from the
+         * moment the driver got round to the frame gave corrections scattered
+         * across the whole 16 ms window, which was the receive processing
+         * delay and nothing about AWDL. Without a hardware stamp there is
+         * nothing worth recording, so the frame is left alone.
+         */
+        if ((status->flag & RX_FLAG_MACTIME_START) &&
+            rtw89_glue_rx_local_us(status->mactime, &arrived)) {
+            while (t + 3 <= end) {
+                size_t tl = (size_t)(t[1] | (t[2] << 8));
 
-            if (t + 3 + tl > end)
-                break;
-            if (t[0] == AWDL_TLV_SYNC_PARAMS) {
-                awdl_note_master(mgmt->sa, t + 3, tl, awdl_now_us());
-                break;
+                if (t + 3 + tl > end)
+                    break;
+                if (t[0] == AWDL_TLV_SYNC_PARAMS) {
+                    awdl_note_master(mgmt->sa, t + 3, tl, arrived);
+                    break;
+                }
+                t += 3 + tl;
             }
-            t += 3 + tl;
         }
     }
 

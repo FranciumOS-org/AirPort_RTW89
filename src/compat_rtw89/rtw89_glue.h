@@ -368,6 +368,13 @@ void rtw89_glue_awdl_tx_counts(uint32_t *sent, uint32_t *failed);
  */
 bool rtw89_glue_awdl_master_phase(uint64_t *next_aw_us, uint16_t *aw_period_tu);
 
+/*
+ * A received frame's hardware arrival time, moved into the clock the driver
+ * keeps time with. False until an offset between the two has been measured.
+ * Only meaningful for a frame whose status carried RX_FLAG_MACTIME_START.
+ */
+bool rtw89_glue_rx_local_us(uint64_t mactime, uint64_t *local_us);
+
 /* An Ethernet frame the family sent to awdl0, to go out as an AWDL data
  * frame. Returns 0, or a negative errno when there is nothing to send it on. */
 int rtw89_glue_awdl_data_tx(const uint8_t *eth, size_t len);

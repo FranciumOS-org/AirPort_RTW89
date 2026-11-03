@@ -721,6 +721,35 @@ static void glue_rx_timing(const struct ieee80211_rx_status *status)
     }
 }
 
+/*
+ * A frame's hardware arrival time, in the clock the rest of the driver keeps.
+ *
+ * The chip stamps a frame when it arrives; the driver sees it some
+ * milliseconds later, and how many varies. Timing the master's availability
+ * window from the software arrival produced corrections scattered right
+ * across a 16 ms window -- 12961 us, then 340, then 14794 -- which is the
+ * processing delay and nothing else.
+ *
+ * glue_rx_timing() already keeps what is needed: the smallest offset between
+ * local time and the chip's clock seen in the last few seconds, which is the
+ * one with the least software delay in it and so the best estimate of the
+ * difference between the two clocks.
+ */
+bool rtw89_glue_rx_local_us(u64 mactime, u64 *local_us)
+{
+    u32 base;
+
+    if (!glue.rx_base_valid && !glue.rx_base_prev_valid)
+        return false;
+    base = glue.rx_base_valid ? glue.rx_base : glue.rx_base_prev;
+    if (glue.rx_base_valid && glue.rx_base_prev_valid &&
+        (s32)(glue.rx_base_prev - base) < 0)
+        base = glue.rx_base_prev;
+    if (local_us)
+        *local_us = mactime + base;
+    return true;
+}
+
 bool rtw89_glue_get_info(struct rtw89_glue_info *info)
 {
     struct ieee80211_hw *hw;
