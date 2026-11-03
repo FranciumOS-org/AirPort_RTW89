@@ -146,7 +146,7 @@ static void awdl_log_hex(const char *what, const u8 *v, size_t len)
 }
 
 /* What has come back the other way; see rtw89_awdl_rx(). */
-static struct { u32 data_seen; u32 offered; u32 matched; } gRx;
+static struct { u32 data_seen; u32 offered; u32 matched; u32 apple; } gRx;
 
 bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
 {
@@ -168,6 +168,37 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
     if (++gRx.offered % 512 == 0)
         awdl_log("%u frame(s) offered to the AWDL path, %u on the AWDL BSSID",
                  (unsigned int)gRx.offered, (unsigned int)gRx.matched);
+    /*
+     * What the frames actually are, because two guesses at why so few match
+     * -- the channel, then the receive filter bits -- were both wrong, and
+     * 91648 frames reaching here with 2 on the AWDL BSSID says either no
+     * peer is transmitting AWDL near us or this comparison is looking in the
+     * wrong place. A sample of the addresses settles it either way.
+     */
+    if (gRx.offered % 4096 == 0) {
+        const u8 *a3 = mgmt->bssid;
+        const u8 *a2 = mgmt->sa;
+        u16 fc = le16_to_cpu(mgmt->frame_control);
+
+        awdl_log("    a sample frame: fc 0x%04x (%s), %u MHz, "
+                 "bssid %02x:%02x:%02x:%02x:%02x:%02x, "
+                 "from %02x:%02x:%02x:%02x:%02x:%02x",
+                 (unsigned int)fc,
+                 ieee80211_is_mgmt(mgmt->frame_control) ? "management" :
+                 ieee80211_is_data(mgmt->frame_control) ? "data" : "other",
+                 (unsigned int)status->freq,
+                 a3[0], a3[1], a3[2], a3[3], a3[4], a3[5],
+                 a2[0], a2[1], a2[2], a2[3], a2[4], a2[5]);
+    }
+    /* Anything from an Apple radio, whatever its BSSID: the AWDL OUI as a
+     * sender is the other way to recognise one of these. */
+    if (memcmp(mgmt->sa, kAppleOui, 3) == 0 && gRx.apple++ < 8)
+        awdl_log("    an Apple sender on %u MHz, bssid "
+                 "%02x:%02x:%02x:%02x:%02x:%02x, fc 0x%04x",
+                 (unsigned int)status->freq,
+                 mgmt->bssid[0], mgmt->bssid[1], mgmt->bssid[2],
+                 mgmt->bssid[3], mgmt->bssid[4], mgmt->bssid[5],
+                 (unsigned int)le16_to_cpu(mgmt->frame_control));
     if (!ether_addr_equal(mgmt->bssid, kAwdlBssid))
         return false;
     gRx.matched++;
