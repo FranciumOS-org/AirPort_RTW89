@@ -2,69 +2,63 @@
 # trace_wifip2pd.sh - find the Apple80211 call that makes wifip2pd's
 # AWDLInterface init fail with <Apple80211Error Invalid Parameters> (-3900).
 #
-# WHY LLDB AND NOT DTRACE: csr-active-config is 0xA43, so
-# CSR_ALLOW_UNRESTRICTED_DTRACE (0x20) is clear and the pid provider is
-# unavailable. CSR_ALLOW_TASK_FOR_PID (0x4) is clear too, but
-# amfi_get_out_of_my_way=0x1 is in boot-args and lldb attaches anyway -
-# RembrandtGPU's tools/wsread.sh does the same to WindowServer.
+# WHY LLDB AND NOT DTRACE: the DTrace pid provider needs
+# CSR_ALLOW_UNRESTRICTED_DTRACE and attaching to wifip2pd - which is sandboxed,
+# unlike WindowServer - needs CSR_ALLOW_TASK_FOR_PID. Both are in
+# csr-active-config 0xA67; set it with RembrandtGPU's
+# `sudo tools/efi.sh csr add task_for_pid dtrace` and reboot. `csrutil status`
+# shows Debugging and DTrace Restrictions disabled once it is in.
 #
-# WHAT IT DOES: breaks on every Apple80211* entry point in the IO80211
-# framework, prints the first four argument registers, steps out, prints the
-# returned status, and continues. The call we are after is the one whose
-# return is -3900 (0xfffff0c4).
+# WHY IT ATTACHES AT LAUNCH: wifip2pd creates the AWDL interface when it
+# starts, and once that has failed it does not try again on its own - a window
+# of attached time on the running daemon catches nothing. So lldb waits for a
+# new wifip2pd, this script restarts the daemon to produce one, and the
+# breakpoints are armed while it is still stopped at exec.
 #
-# THE RISK: lldb stops wifip2pd while attached. That is a daemon launchd
-# restarts, not the compositor, so the worst case is that AirDrop discovery
-# stalls for the duration. The script evaluates nothing in the target, runs
-# lldb in --batch with an explicit detach, and arms a watchdog that SIGKILLs
-# lldb if it outlives the timeout (the kernel resumes a task whose debugger
-# dies).
+# WHAT IT PRINTS: every Apple80211* entry point the framework exports, with its
+# first four argument registers and the status it returns. The call we are after
+# is the one returning -3900.
+#
+# THE RISK: lldb stops wifip2pd, and this script kills it to force a relaunch.
+# It is a launchd daemon, so launchd brings it straight back; the cost is that
+# AirDrop discovery restarts. Nothing is evaluated or called in the target, and
+# a watchdog detaches if lldb outlives the timeout (the kernel resumes a task
+# whose debugger dies).
 #
 #   sudo tools/trace_wifip2pd.sh [seconds]
-#
-# While it runs, make something ask for AWDL so wifip2pd retries the init:
-# open a Finder window and click AirDrop in the sidebar, or open the Share
-# sheet. The failure appeared in the log every time sharingd connected.
 set -u
 
 [ "$(id -u)" = 0 ] || { echo "run with sudo: sudo tools/trace_wifip2pd.sh" >&2; exit 1; }
 
-timeout="${1:-90}"
-pid="$(pgrep -x wifip2pd || true)"
-[ -n "$pid" ] || { echo "wifip2pd is not running" >&2; exit 1; }
-
+timeout="${1:-60}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/build/log/wifip2pd-trace.txt"
 mkdir -p "$(dirname "$out")"
 
+case "$(csrutil status)" in
+*"Debugging Restrictions: enabled"*)
+    echo "SIP still forbids attaching: csr-active-config needs CSR_ALLOW_TASK_FOR_PID." >&2
+    echo "In RembrandtGPU: sudo tools/efi.sh csr add task_for_pid dtrace, then reboot." >&2
+    exit 1 ;;
+esac
+
 cmds="$(mktemp)"
 trap 'rm -f "$cmds"' EXIT
 
-cat > "$cmds" <<'LLDB'
+# The breakpoint is created before IO80211 is in the process, which is the
+# point: lldb resolves it when the framework loads, so the very first
+# Apple80211 call of the interface setup is caught too.
+cat > "$cmds" <<LLDB
 settings set target.process.stop-on-sharedlibrary-events false
 settings set auto-confirm true
-# Every Apple80211 entry point the framework exports. -s keeps the regex off
-# the rest of the address space, where it would match thousands of symbols.
-breakpoint set -r '^Apple80211' -s IO80211
-# The id, not the -N name: `breakpoint command add` takes a breakpt-id, and -N
-# is not one of its options. The regex breakpoint above is the first one set,
-# so it is always 1.
-breakpoint command add 1
-bt 1
-register read rdi rsi rdx rcx
-thread step-out
-register read rax
-continue
-DONE
+command script import $root/tools/trace_wifip2pd.py
+process attach -w -n wifip2pd
+rtw89_arm_awdl_trace
 continue
 LLDB
 
-echo "attaching to wifip2pd (pid $pid) for ${timeout}s; output -> ${out#$root/}"
-echo "now trigger it: Finder -> AirDrop in the sidebar, or a Share sheet"
+echo "waiting for a new wifip2pd; output -> ${out#$root/}"
 
-# The last `continue` in the command file blocks for as long as the process
-# runs, so the watchdog is what ends the session: TERM first, so lldb detaches
-# cleanly and flushes the trace, then -9 as the backstop.
 ( sleep "$timeout"
   pkill -INT lldb 2>/dev/null
   sleep 3
@@ -73,11 +67,15 @@ echo "now trigger it: Finder -> AirDrop in the sidebar, or a Share sheet"
   pkill -9 lldb 2>/dev/null ) &
 watchdog=$!
 
-lldb -p "$pid" --batch \
-     -s "$cmds" \
-     -o "process detach" \
-     > "$out" 2>&1 &
+lldb --batch -s "$cmds" > "$out" 2>&1 &
 lldbpid=$!
+
+# Give lldb time to reach `process attach -w` before there is anything to
+# attach to, then make launchd produce the new wifip2pd.
+sleep 4
+old="$(pgrep -x wifip2pd || true)"
+echo "restarting wifip2pd${old:+ (was pid $old)}"
+pkill -x wifip2pd 2>/dev/null || true
 
 wait "$lldbpid" 2>/dev/null || true
 kill "$watchdog" 2>/dev/null || true
@@ -85,6 +83,9 @@ kill "$watchdog" 2>/dev/null || true
 chown "${SUDO_USER:-root}" "$out" 2>/dev/null || true
 echo
 echo "--- calls that returned -3900 ---"
-grep -B 12 'fffff0c4\|-3900' "$out" | tail -60 || echo "(none seen; nothing triggered the init?)"
+grep -n 'INVALID PARAMETERS' "$out" || echo "(none; see the trace for what ran)"
+echo
+echo "--- every negative return ---"
+grep -n '<<<' "$out" | head -20
 echo
 echo "full trace: $out"
