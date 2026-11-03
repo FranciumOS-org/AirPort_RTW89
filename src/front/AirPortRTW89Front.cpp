@@ -796,40 +796,7 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
     }
     memcpy(mbuf_data(m), frame, len);
 
-    /*
-     * The receive gate, re-asserted rather than assumed.
-     *
-     * actionFrameProcessInput() looks at a frame only while the sync state at
-     * 0xcd4 is non-zero, and setAwdlSyncState() is the only thing that writes
-     * it -- from whatever value its caller passes. awdlEnableThread() sets it
-     * once at startup, and that was enough to get the first peer created; but
-     * it has been seen back at 0 later in the same boot, with the state flags
-     * still 0x23 and a peer still in the list, and from then on every frame
-     * from the phone was discarded again. wifip2pd tearing its AWDL interface
-     * down is the likely writer of the zero.
-     *
-     * So it is set again here, where we know a frame is waiting to go
-     * through, rather than left to whoever closed it. Only when the engine
-     * says it is otherwise on, so this cannot be what starts it.
-     */
-    {
-        const uint8_t *vraw = reinterpret_cast<const uint8_t *>(vif);
-        const uint8_t *pm = *reinterpret_cast<const uint8_t *const *>(vraw + 0xb0);
-
-        if (pm && (*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2) &&
-            !*reinterpret_cast<const unsigned int *>(pm + 0xcd4)) {
-            struct rtw89_awdl_sync_state want = { APPLE80211_VERSION, 1 };
-            int e = rtw89_awdl_set_sync_state(const_cast<uint8_t *>(pm), &want);
-
-            if (self->_awdlResyncs++ < 8)
-                LOG("the AWDL sync state had gone back to 0 with the engine still "
-                    "on; setAwdlSyncState(1) -> %d, sync state now %u (%u time(s))",
-                    e, *reinterpret_cast<const unsigned int *>(pm + 0xcd4),
-                    self->_awdlResyncs);
-        }
-    }
-
-    memcpy(hdr, peer, 6);
+memcpy(hdr, peer, 6);
     chan[0] = APPLE80211_VERSION;   /* apple80211_channel.version */
     chan[1] = channel;              /* .channel, the one updateAFStats reads */
     chan[2] = channel <= 14 ? APPLE80211_C_FLAG_2GHZ : APPLE80211_C_FLAG_5GHZ;
@@ -922,11 +889,9 @@ void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
             {
                 const uint8_t *q = *reinterpret_cast<const uint8_t *const *>(pm + 0x58);
 
-                LOG("    peers known %u, peers ever added %u, sync state set "
-                    "again %u time(s)",
+                LOG("    peers known %u, peers ever added %u",
                     q ? *reinterpret_cast<const unsigned int *>(q + 0x34) : 0,
-                    *reinterpret_cast<const uint8_t *>(pm + 0x8ede),
-                    self->_awdlResyncs);
+                    *reinterpret_cast<const uint8_t *>(pm + 0x8ede));
             }
         }
     }
