@@ -79,11 +79,21 @@ void tick(thread_call_param_t, thread_call_param_t)
 
     gClock.windows++;
     if (gClock.windows % AW_REPORT_EVERY == 0) {
-        uint32_t sent = 0, failed = 0;
+        uint32_t sent = 0, failed = 0, dsent = 0, dfailed = 0;
 
         rtw89_glue_awdl_tx_counts(&sent, &failed);
-        LOG("awdl clock: %llu windows, %u frame(s) sent, %u not, %u window(s) missed",
-            (unsigned long long)gClock.windows, sent, failed, gClock.missed);
+        /*
+         * The data frames too, which until now were reported once and never
+         * again: the only line about them said the first could not be sent,
+         * and whether any of the hundreds after it went out was unknowable.
+         * They are the ones a transfer is made of, so they are counted here
+         * beside the sync frames.
+         */
+        rtw89_glue_awdl_data_counts(&dsent, &dfailed);
+        LOG("awdl clock: %llu windows, %u frame(s) sent, %u not, %u window(s) missed; "
+            "data frames %u sent, %u not",
+            (unsigned long long)gClock.windows, sent, failed, gClock.missed,
+            dsent, dfailed);
     }
 
     deadline = gClock.baseAbs + gClock.windows * gClock.periodAbs;
