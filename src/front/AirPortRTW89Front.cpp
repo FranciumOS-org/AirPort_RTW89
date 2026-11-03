@@ -50,6 +50,16 @@ static volatile bool gAppleRsn;
  * half is at fault, because the pointer chain it walks has been checked and
  * is whole.
  */
+/*
+ * The family's decompression buffers. All twelve guard checks in the family
+ * compare these two bytes with 0xaa and panic otherwise, and nothing in it ever
+ * writes them, so the first peer TLV it decompresses panics the machine. The
+ * output is bounded to 0x200 by its callers, so the guards are never reached.
+ */
+extern "C" unsigned char bufout[];
+#define RTW89_BUFOUT_GUARD_1    0x200
+#define RTW89_BUFOUT_GUARD_2    0x410
+
 extern "C" IOReturn rtw89_peer_manager_enable(void *peerManager, const char *why)
     __asm__("__ZN18IO80211PeerManager6enableEPKc");
 
@@ -587,6 +597,8 @@ bool AirPortRTW89Front::start(IOService *provider)
     _pci = OSDynamicCast(IOPCIDevice, provider);
     if (!_pci)
         return false;
+    bufout[RTW89_BUFOUT_GUARD_1] = 0xaa;
+    bufout[RTW89_BUFOUT_GUARD_2] = 0xaa;
     _backLock = IOLockAlloc();
     if (!_backLock)
         return false;

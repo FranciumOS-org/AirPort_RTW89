@@ -176,6 +176,8 @@ static bool advertiseWPA3()
     return state == 1;
 }
 
+extern "C" bool rtw89_awdl_strip_tlvs;
+
 /*
  * Whether the AWDL groundwork is live (boot-arg -rtw89awdl): macOS may create
  * the virtual interface awdl0 on this card, and every request that arrives on
@@ -189,6 +191,7 @@ static bool awdlEnabled()
         int dummy;
 
         state = PE_parse_boot_argn("-rtw89awdl", &dummy, sizeof(dummy)) ? 1 : 2;
+        rtw89_awdl_strip_tlvs = PE_parse_boot_argn("-rtw89awdlstrip", &dummy, sizeof(dummy));
     }
     return state == 1;
 }

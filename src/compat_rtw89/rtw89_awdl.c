@@ -187,6 +187,11 @@ static struct { u32 data_seen; u32 offered; u32 matched; u32 apple; u32 arpa;
  *
  *   panic: "bufout overflow! awdlUncompressData 1740"
  *
+ * The front now writes those two bytes when it starts, which is the
+ * initialiser that went missing, so the family gets these TLVs and learns its
+ * peers. wifip2pd said "peer not discovered" for as long as it did not. The
+ * boot-arg -rtw89awdlstrip goes back to leaving them out.
+ *
  * This is IO80211FamilyLegacy 1200.12.2b1, a beta build, and the check looks
  * like instrumentation whose initialiser did not survive into it. Nothing we
  * put on the wire can satisfy it, and both ways in are reached from one TLV
@@ -198,9 +203,12 @@ static struct { u32 data_seen; u32 offered; u32 matched; u32 apple; u32 arpa;
  * the channel sequence, the data path state -- is carried in other TLVs and
  * goes through untouched.
  */
+bool rtw89_awdl_strip_tlvs;
+
 static bool awdl_tlv_breaks_io80211(u8 type)
 {
-    return type == AWDL_TLV_SERVICE_RESPONSE || type == AWDL_TLV_ARPA;
+    return rtw89_awdl_strip_tlvs &&
+           (type == AWDL_TLV_SERVICE_RESPONSE || type == AWDL_TLV_ARPA);
 }
 
 /*
@@ -594,7 +602,11 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
         u8 filtered[1024];
         size_t body_len = (size_t)(end - body);
 
-        if (body_len >= AWDL_FIXED_LEN && body_len <= sizeof(filtered)) {
+        if (!rtw89_awdl_strip_tlvs) {
+            rtw89_glue_awdl_frame(body, body_len, mgmt->sa,
+                                  ieee80211_frequency_to_channel(status->freq),
+                                  status->signal);
+        } else if (body_len >= AWDL_FIXED_LEN && body_len <= sizeof(filtered)) {
             const u8 *t = body + AWDL_FIXED_LEN;
             size_t out = AWDL_FIXED_LEN;
             bool stripped = false;
