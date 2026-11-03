@@ -263,6 +263,13 @@ int rtw89_mlme_tx_awdl(const u8 *frame, size_t len);
  * without a frame, so the schedule can wait instead of counting refusals. */
 bool rtw89_mlme_awdl_tx_ready(void);
 
+/* Why it is not ready, for a log line that names the cause rather than
+ * repeating ENETDOWN: the three preconditions, in the order they are asked. */
+#define RTW89_AWDL_TX_NO_INTERFACE  1
+#define RTW89_AWDL_TX_NO_CHANNEL    2
+#define RTW89_AWDL_TX_NO_LINK       3
+int rtw89_mlme_awdl_tx_why(void);
+
 /* Hold the radio on a social channel for AWDL while no network is joined,
  * and give it back. See rtw89_mlme_awdl_hold_channel(). */
 int rtw89_mlme_awdl_hold_channel(u16 freq);

@@ -3738,11 +3738,20 @@ bool rtw89_compat_vif_can_tx(struct ieee80211_vif *vif);
  * window where AirDrop is first opened and a peer is first looking for us.
  * Waiting is not a failure and should not be counted or logged as one.
  */
+int rtw89_mlme_awdl_tx_why(void)
+{
+    if (!mlme.hw || !mlme.vif || !mlme.local)
+        return RTW89_AWDL_TX_NO_INTERFACE;
+    if (!mlme.chan)
+        return RTW89_AWDL_TX_NO_CHANNEL;
+    if (!rtw89_compat_vif_can_tx(mlme.vif))
+        return RTW89_AWDL_TX_NO_LINK;
+    return 0;
+}
+
 bool rtw89_mlme_awdl_tx_ready(void)
 {
-    if (!mlme.hw || !mlme.vif || !mlme.local || !mlme.chan)
-        return false;
-    return rtw89_compat_vif_can_tx(mlme.vif);
+    return rtw89_mlme_awdl_tx_why() == 0;
 }
 
 int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
@@ -3752,7 +3761,8 @@ int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
     if (!frame || !len)
         return -EINVAL;
     if (!mlme.hw || !mlme.vif || !mlme.local || !mlme.chan)
-        return -ENETDOWN;       /* no radio to send it with yet */
+        return -ENETDOWN;       /* no radio to send it with yet; the caller
+                                 * asks rtw89_mlme_awdl_tx_why() which */
     /* Those four being set is not enough: during teardown they still point at
      * a vif whose link pool has gone, and sending then panicked the machine.
      * See rtw89_compat_vif_can_tx() for what the driver does with it. */

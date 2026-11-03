@@ -848,6 +848,7 @@ static struct {
     int  last_err;              /* the last refusal, so a change is noticed */
     u32  waiting;               /* windows passed before the radio was ready */
     bool ready_said;
+    int  last_why;              /* the last refusal from the radio, see tick() */
     u8   master[ETH_ALEN];      /* the master we follow, when we follow one */
 } gTx;
 
@@ -914,9 +915,36 @@ void rtw89_awdl_tick(u32 now_us)
      * the window number advances through the wait either way, so the timeline
      * does not shift when the radio becomes ready.
      */
-    if (!rtw89_mlme_awdl_tx_ready()) {
-        gTx.waiting++;
-        return;
+    {
+        int why = rtw89_mlme_awdl_tx_why();
+
+        /*
+         * Which precondition it is, and whether a scan is running.
+         *
+         * A boot that held its own channel context sent 16 sync frames in
+         * 1800 windows and refused 35 of 38 packets from awdl0 with
+         * ENETDOWN, and ENETDOWN is three different conditions here: no
+         * interface, no channel, or no link the driver will send on. There is
+         * no telling them apart from the errno, and the answer decides
+         * whether the channel hold is wrong or the scans are.
+         */
+        if (why) {
+            gTx.waiting++;
+            if (why != gTx.last_why) {
+                gTx.last_why = why;
+                awdl_log("the radio cannot carry a frame: %s%s",
+                         why == RTW89_AWDL_TX_NO_INTERFACE ? "there is no interface" :
+                         why == RTW89_AWDL_TX_NO_CHANNEL ? "no channel is set" :
+                         "the driver has no link to send on",
+                         rtw89_glue_scanning() ? ", and a scan is running" : "");
+            }
+            return;
+        }
+        if (gTx.last_why) {
+            gTx.last_why = 0;
+            awdl_log("the radio can carry frames again%s",
+                     rtw89_glue_scanning() ? ", with a scan still running" : "");
+        }
     }
     if (gTx.waiting && !gTx.ready_said) {
         gTx.ready_said = true;
@@ -1182,8 +1210,20 @@ int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
     }
     err = rtw89_mlme_tx_awdl(frame, len);
     if (err) {
-        if (!gTx.data_failed++)
-            awdl_log("the first data frame could not be sent: %d", err);
+        /* The reason, not just the errno: ENETDOWN here is three different
+         * conditions, and the one it is decides what to fix. */
+        if (!gTx.data_failed++ || !(gTx.data_failed % 64)) {
+            int why = rtw89_mlme_awdl_tx_why();
+
+            awdl_log("a data frame could not be sent: %d (%s%s); %u sent, %u not",
+                     err,
+                     why == RTW89_AWDL_TX_NO_INTERFACE ? "there is no interface" :
+                     why == RTW89_AWDL_TX_NO_CHANNEL ? "no channel is set" :
+                     why == RTW89_AWDL_TX_NO_LINK ? "the driver has no link to send on" :
+                     "the radio took it and the send itself failed",
+                     rtw89_glue_scanning() ? ", and a scan is running" : "",
+                     (unsigned int)gTx.data_sent, (unsigned int)gTx.data_failed);
+        }
     } else {
         gTx.data_sent++;
     }

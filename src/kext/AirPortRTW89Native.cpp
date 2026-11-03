@@ -1866,7 +1866,16 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
          * most every kAwdlScanGap, and in between is answered from what has
          * already been heard.
          */
-        if (_ns->awdlClockOn && !wantSsidLen && !nWantFreqs) {
+        /*
+         * Any sweep that does not name a network, channel list or not.
+         *
+         * Only the wildcard ones were thinned, and while nothing is joined
+         * macOS sweeps eight and fourteen channels over and over looking for
+         * something to auto-join: four scans in twenty seconds, each taking
+         * the radio off the AWDL channel. A join always names the network it
+         * wants, so those still run at once.
+         */
+        if (_ns->awdlClockOn && !wantSsidLen) {
             const uint64_t kAwdlScanGap = 10ULL * 1000 * 1000 * 1000;
             uint64_t now;
 
