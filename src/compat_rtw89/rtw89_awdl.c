@@ -1393,8 +1393,9 @@ void rtw89_awdl_tick(u32 now_us)
                 17, 14, 0, 0xbf, 12, 0x30, 0x00, 0x80, 0x03,
                 0xfa, 0xff, 0x00, 0x00, 0xfa, 0xff, 0x00, 0x00,
             };
-            static bool logged_psf, logged_mif;
-            bool *logged = p.subtype == AWDL_SUBTYPE_MIF ? &logged_mif : &logged_psf;
+            /* Repeatedly: a peer's frames fill the log ring in about 100 s. */
+            static u32 composed_psf, composed_mif;
+            u32 *count = p.subtype == AWDL_SUBTYPE_MIF ? &composed_mif : &composed_psf;
 
             composed = awdl_insert_before_version(tlv_out, composed, sizeof(tlv_out),
                                                   gMaster.tlv19, gMaster.tlv19_len);
@@ -1405,8 +1406,9 @@ void rtw89_awdl_tick(u32 now_us)
                 memcpy(tlv_out + composed, gMaster.tlv33, gMaster.tlv33_len);
                 composed += gMaster.tlv33_len;
             }
-            if (!*logged && gMaster.tlv33_len) {
-                *logged = true;
+            if ((*count)++ % 64 == 0) {
+                awdl_log("    master's TLV 19: %u bytes, TLV 33: %u bytes",
+                         gMaster.tlv19_len, gMaster.tlv33_len);
                 awdl_log_hex(p.subtype == AWDL_SUBTYPE_MIF ? "our MIF's TLVs" : "our PSF's TLVs",
                              tlv_out, composed);
             }
