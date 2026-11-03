@@ -97,6 +97,22 @@ def on_service_open(frame, bp_loc, extra, internal_dict):
     return False
 
 
+def on_connect_call(frame, bp_loc, extra, internal_dict):
+    """IOConnectCall*Method(connect, selector, ...).
+
+    Apple80211BindToInterfaceWithService opens the user client and then calls
+    external methods on it. A failure there takes a path that closes the
+    session and puts +0x17c back to zero while still returning 0, which is how
+    the open can succeed and the connection still be gone by the time the AWDL
+    init reads it.
+    """
+    name = frame.GetFunctionName() or "IOConnectCall?"
+    print("%-50s connect=%#x selector=%d"
+          % (name, _u64(frame, "rdi"), _u64(frame, "rsi") & 0xffffffff))
+    _arm_return(frame, "%s sel %d" % (name, _u64(frame, "rsi") & 0xffffffff))
+    return False
+
+
 def on_return(frame, bp_loc, extra, internal_dict):
     rax = _s32(frame, "rax")
     stack = _names.get(frame.GetPC(), [])
@@ -123,8 +139,17 @@ def arm(debugger, command, result, internal_dict):
     uc = target.BreakpointCreateByName("IOServiceOpen")
     uc.SetScriptCallbackFunction("trace_wifip2pd.on_service_open")
 
-    print("armed %d Apple80211 locations, %d on IOServiceOpen"
-          % (bp.GetNumLocations(), uc.GetNumLocations()))
+    # The external methods bind calls on that user client, where the session is
+    # lost again. IOServiceClose says when it is given up.
+    cc = target.BreakpointCreateByRegex(r"^IOConnectCall(Scalar|Struct|Async)?.*Method$")
+    cc.SetScriptCallbackFunction("trace_wifip2pd.on_connect_call")
+    close = target.BreakpointCreateByName("IOServiceClose")
+    close.SetScriptCallbackFunction("trace_wifip2pd.on_connect_call")
+
+    print("armed %d Apple80211 locations, %d on IOServiceOpen, %d on IOConnectCall*, "
+          "%d on IOServiceClose"
+          % (bp.GetNumLocations(), uc.GetNumLocations(), cc.GetNumLocations(),
+             close.GetNumLocations()))
 
 
 def __lldb_init_module(debugger, internal_dict):
