@@ -45,8 +45,11 @@ settings set target.process.stop-on-sharedlibrary-events false
 settings set auto-confirm true
 # Every Apple80211 entry point the framework exports. -s keeps the regex off
 # the rest of the address space, where it would match thousands of symbols.
-breakpoint set -r '^Apple80211' -s IO80211 -N a80211
-breakpoint command add -N a80211
+breakpoint set -r '^Apple80211' -s IO80211
+# The id, not the -N name: `breakpoint command add` takes a breakpt-id, and -N
+# is not one of its options. The regex breakpoint above is the first one set,
+# so it is always 1.
+breakpoint command add 1
 bt 1
 register read rdi rsi rdx rcx
 thread step-out
