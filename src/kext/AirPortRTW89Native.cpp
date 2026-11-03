@@ -992,7 +992,7 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
      * building it, and took EOPNOTSUPP badly. The card is the same one either
      * way, so answer as the real interface does. */
     case APPLE80211_IOC_CARD_CAPABILITIES:
-        return isSet ? EOPNOTSUPP : nativeRequest(false, number, data);
+        return isSet ? EOPNOTSUPP : errnoOf(nativeRequest(false, number, data));
 
     /*
      * The radio behind the AWDL interface is the same radio, so these are the
@@ -1012,7 +1012,17 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
     case APPLE80211_IOC_HT_CAPABILITY:
     case APPLE80211_IOC_VHT_CAPABILITY:
     case APPLE80211_IOC_POWER:
-        return isSet ? EOPNOTSUPP : nativeRequest(false, number, data);
+        /*
+         * As an errno, which is what the caller of this is owed.
+         *
+         * HT and VHT capability came back from the real interface as
+         * kIOReturnUnsupported and were handed on raw: the log showed
+         * "get request 154 -> -536870201", which is 0xe00002c7 arriving where
+         * a small positive errno belongs. Everything else forwarded here
+         * happened to succeed, so the mistake only showed once these two were
+         * added.
+         */
+        return isSet ? EOPNOTSUPP : errnoOf(nativeRequest(false, number, data));
 
     /*
      * Whether AWDL synchronisation is on. The family asks for this and goes no
@@ -1079,6 +1089,24 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
                 "%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5]);
         }
         return kIOReturnSuccess;
+
+    /*
+     * How awdl0 authenticates, asked for immediately after its name. It does
+     * not: an AWDL link is open and unencrypted at this layer, so that is
+     * what is reported rather than a refusal.
+     */
+    case APPLE80211_IOC_AUTH_TYPE: {
+        struct apple80211_authtype_data *d =
+            static_cast<struct apple80211_authtype_data *>(data);
+
+        if (isSet)
+            return EOPNOTSUPP;
+        bzero(d, sizeof(*d));
+        d->version = APPLE80211_VERSION;
+        d->authtype_lower = APPLE80211_AUTHTYPE_OPEN;
+        d->authtype_upper = APPLE80211_AUTHTYPE_NONE;
+        return kIOReturnSuccess;
+    }
 
     /*
      * awdl0's own name, asked for three times and refused in the boot where
