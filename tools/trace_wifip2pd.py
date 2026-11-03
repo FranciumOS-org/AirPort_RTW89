@@ -64,16 +64,36 @@ def on_call(frame, bp_loc, extra, internal_dict):
           % (name, _u64(frame, "rdi"), _u64(frame, "rsi"),
              _u64(frame, "rdx"), _u64(frame, "rcx"), _ref(frame)))
 
+    _arm_return(frame, name)
+    return False
+
+
+def _arm_return(frame, name):
     thread = frame.GetThread()
     parent = thread.GetFrameAtIndex(1)
-    if parent.IsValid():
-        ret = parent.GetPC()
-        if ret not in _retbp:
-            target = thread.GetProcess().GetTarget()
-            bp = target.BreakpointCreateByAddress(ret)
-            bp.SetScriptCallbackFunction("trace_wifip2pd.on_return")
-            _retbp[ret] = bp.GetID()
-        _names.setdefault(ret, []).append(name)
+    if not parent.IsValid():
+        return
+    ret = parent.GetPC()
+    if ret not in _retbp:
+        target = thread.GetProcess().GetTarget()
+        bp = target.BreakpointCreateByAddress(ret)
+        bp.SetScriptCallbackFunction("trace_wifip2pd.on_return")
+        _retbp[ret] = bp.GetID()
+    _names.setdefault(ret, []).append(name)
+
+
+def on_service_open(frame, bp_loc, extra, internal_dict):
+    """IOServiceOpen(service, owningTask, type, &connect).
+
+    The user client the AWDL init wants is opened here, and for an AWDL virtual
+    interface IO80211VirtualInterface::newUserClient accepts only type 4 (role
+    6); anything else it logs as an invalid userClient type request. If this is
+    never called for awdl0, nothing in userspace ever asked for the connection.
+    """
+    print("IOServiceOpen   service=%#x task=%#x type=%d out=%#x"
+          % (_u64(frame, "rdi"), _u64(frame, "rsi"),
+             _u64(frame, "rdx") & 0xffffffff, _u64(frame, "rcx")))
+    _arm_return(frame, "IOServiceOpen")
     return False
 
 
@@ -96,7 +116,15 @@ def arm(debugger, command, result, internal_dict):
     target = debugger.GetSelectedTarget()
     bp = target.BreakpointCreateByRegex(r"^Apple80211", "IO80211")
     bp.SetScriptCallbackFunction("trace_wifip2pd.on_call")
-    print("armed %d locations" % bp.GetNumLocations())
+
+    # IOServiceOpen is where the user client whose absence returns -3900 would
+    # be created, so it is worth watching wherever in the process it is called
+    # from, not only out of IO80211.
+    uc = target.BreakpointCreateByName("IOServiceOpen")
+    uc.SetScriptCallbackFunction("trace_wifip2pd.on_service_open")
+
+    print("armed %d Apple80211 locations, %d on IOServiceOpen"
+          % (bp.GetNumLocations(), uc.GetNumLocations()))
 
 
 def __lldb_init_module(debugger, internal_dict):
