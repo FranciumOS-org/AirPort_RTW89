@@ -1080,6 +1080,43 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
         }
         return kIOReturnSuccess;
 
+    /*
+     * awdl0's own name, asked for three times and refused in the boot where
+     * wifip2pd gave up. An AWDL interface has no SSID -- it is not joining
+     * anything -- so the honest answer is an empty one, which is still an
+     * answer. Refusing left the question unanswered, and the state machine
+     * takes that badly everywhere else it has been tried.
+     */
+    case APPLE80211_IOC_SSID: {
+        struct apple80211_ssid_data *d = static_cast<struct apple80211_ssid_data *>(data);
+
+        if (isSet)
+            return EOPNOTSUPP;
+        bzero(d, sizeof(*d));
+        d->version = APPLE80211_VERSION;
+        d->ssid_len = 0;
+        return kIOReturnSuccess;
+    }
+
+    /*
+     * How many peers the cache may hold. The family keeps its own number for
+     * this (setAwdlMaxPeers), but the question reached us, so answer it: the
+     * driver imposes no limit of its own beyond what the family allocates.
+     */
+    case APPLE80211_IOC_PEER_CACHE_MAXIMUM_SIZE: {
+        struct apple80211_peer_cache_maximum_size *d =
+            static_cast<struct apple80211_peer_cache_maximum_size *>(data);
+
+        if (isSet) {
+            LOG("awdl: the peer cache is capped at %u", (unsigned int)d->max_peers);
+            return kIOReturnSuccess;
+        }
+        bzero(d, sizeof(*d));
+        d->version = APPLE80211_VERSION;
+        d->max_peers = 32;
+        return kIOReturnSuccess;
+    }
+
     case APPLE80211_IOC_AWDL_SYNC_ENABLED: {
         struct apple80211_awdl_sync_enabled *d =
             static_cast<struct apple80211_awdl_sync_enabled *>(data);
