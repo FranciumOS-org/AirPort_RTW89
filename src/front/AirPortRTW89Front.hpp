@@ -35,9 +35,26 @@
  * not known, and the handshake alone is all
  * Apple80211RawP2PEventMonitoringInit checks, so passing it is what lets
  * wifip2pd keep awdl0 at all.
+ *
+ * THE NAME IS NOT OURS TO CHOOSE, which is why this one class is named like
+ * Apple's. wifip2pd runs under /System/Library/Sandbox/Profiles/
+ * com.apple.wifip2pd.sb, and that profile ends an iokit-open rule with a list
+ * of the user client classes it may open by name:
+ *
+ *     IO80211APIUserClient  IO80211AsyncEventUserClient
+ *     IO80211P2PDaemonUserClient  IOUserUserClient
+ *     AppleKeyStoreUserClient  RootDomainUserClient
+ *
+ * Anything else is refused by the MAC check IOServiceOpen makes on the client
+ * after newUserClient() has returned it -- the kernel logs "IOUC %s failed
+ * MACF in process %s" and hands back kIOReturnNotPermitted, which is what a
+ * class of our own naming got. IO80211AsyncEventUserClient is taken by the
+ * family, but IO80211P2PDaemonUserClient is defined nowhere on this system
+ * (not by the family, not by the kernel), so it is free for us to register and
+ * it is the name of the daemon this client exists for.
  */
-class AirPortRTW89AwdlUserClient : public IOUserClient {
-    OSDeclareDefaultStructors(AirPortRTW89AwdlUserClient)
+class IO80211P2PDaemonUserClient : public IOUserClient {
+    OSDeclareDefaultStructors(IO80211P2PDaemonUserClient)
 
 public:
     bool initWithTask(task_t owningTask, void *securityID, UInt32 type,

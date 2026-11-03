@@ -201,7 +201,7 @@ UInt32 AirPortRTW89AwdlInterface::outputPacket(mbuf_t m, void *param)
     return kIOReturnOutputDropped;
 }
 
-OSDefineMetaClassAndStructors(AirPortRTW89AwdlUserClient, IOUserClient)
+OSDefineMetaClassAndStructors(IO80211P2PDaemonUserClient, IOUserClient)
 
 /*
  * The selectors the framework calls, decoded in HANDOFF.md. Named here so the
@@ -236,7 +236,7 @@ enum {
  */
 #define RTW89_AWDL_EVENT_ENTITLEMENT "com.apple.wifi_awdl.event_monitor"
 
-bool AirPortRTW89AwdlUserClient::initWithTask(task_t owningTask, void *securityID, UInt32 type,
+bool IO80211P2PDaemonUserClient::initWithTask(task_t owningTask, void *securityID, UInt32 type,
                                               OSDictionary *properties)
 {
     OSObject *ent;
@@ -270,7 +270,7 @@ bool AirPortRTW89AwdlUserClient::initWithTask(task_t owningTask, void *securityI
  * which would come back to the framework as a refusal to create the client at
  * all and tell us nothing about why.
  */
-IOBufferMemoryDescriptor *AirPortRTW89AwdlUserClient::region(IOBufferMemoryDescriptor **slot)
+IOBufferMemoryDescriptor *IO80211P2PDaemonUserClient::region(IOBufferMemoryDescriptor **slot)
 {
     if (!*slot) {
         *slot = IOBufferMemoryDescriptor::inTaskWithOptions(
@@ -295,7 +295,7 @@ IOBufferMemoryDescriptor *AirPortRTW89AwdlUserClient::region(IOBufferMemoryDescr
  * events the family raises itself turn out to be needed in userspace, this is
  * where that thread starts.
  */
-bool AirPortRTW89AwdlUserClient::start(IOService *provider)
+bool IO80211P2PDaemonUserClient::start(IOService *provider)
 {
     if (!IOUserClient::start(provider))
         return false;
@@ -304,7 +304,7 @@ bool AirPortRTW89AwdlUserClient::start(IOService *provider)
     return true;
 }
 
-void AirPortRTW89AwdlUserClient::stop(IOService *provider)
+void IO80211P2PDaemonUserClient::stop(IOService *provider)
 {
     IOUserClient::stop(provider);
 }
@@ -315,7 +315,7 @@ void AirPortRTW89AwdlUserClient::stop(IOService *provider)
  * and so is one torn down from below. The regions are let go here so that
  * neither path leaks a page pair.
  */
-void AirPortRTW89AwdlUserClient::free()
+void IO80211P2PDaemonUserClient::free()
 {
     if (_ringBuffer) {
         _ringBuffer->release();
@@ -328,7 +328,7 @@ void AirPortRTW89AwdlUserClient::free()
     IOUserClient::free();
 }
 
-IOReturn AirPortRTW89AwdlUserClient::clientClose()
+IOReturn IO80211P2PDaemonUserClient::clientClose()
 {
     if (_wakePort != MACH_PORT_NULL) {
         /* Balances the port registerNotificationPort() was given. */
@@ -341,7 +341,7 @@ IOReturn AirPortRTW89AwdlUserClient::clientClose()
     return kIOReturnSuccess;
 }
 
-IOReturn AirPortRTW89AwdlUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
+IOReturn IO80211P2PDaemonUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
                                                          IOMemoryDescriptor **memory)
 {
     IOBufferMemoryDescriptor *md;
@@ -365,14 +365,14 @@ IOReturn AirPortRTW89AwdlUserClient::clientMemoryForType(UInt32 type, IOOptionBi
     return kIOReturnSuccess;
 }
 
-IOReturn AirPortRTW89AwdlUserClient::registerNotificationPort(mach_port_t port, UInt32 type,
+IOReturn IO80211P2PDaemonUserClient::registerNotificationPort(mach_port_t port, UInt32 type,
                                                               io_user_reference_t refCon)
 {
     _wakePort = port;
     return kIOReturnSuccess;
 }
 
-IOReturn AirPortRTW89AwdlUserClient::externalMethod(uint32_t selector,
+IOReturn IO80211P2PDaemonUserClient::externalMethod(uint32_t selector,
                                                     IOExternalMethodArguments *args,
                                                     IOExternalMethodDispatch *dispatch,
                                                     OSObject *target, void *reference)
@@ -458,7 +458,7 @@ IOReturn AirPortRTW89AwdlUserClient::externalMethod(uint32_t selector,
  * Translating type 0 to the 4 the family wants was enough to get the client
  * created, and not enough to keep it: the framework then calls external
  * methods the family does not have, and closes the client when the first one
- * fails. So type 0 now gets AirPortRTW89AwdlUserClient, which answers the
+ * fails. So type 0 now gets IO80211P2PDaemonUserClient, which answers the
  * protocol the framework actually speaks. Every other type is still the
  * family's, reached by its symbol rather than by writing
  * IO80211VirtualInterface::newUserClient(), which clang compiles into
@@ -478,7 +478,7 @@ IOReturn AirPortRTW89AwdlInterface::newUserClient(task_t owningTask, void *secur
                                                   OSDictionary *properties,
                                                   IOUserClient **handler)
 {
-    AirPortRTW89AwdlUserClient *uc;
+    IO80211P2PDaemonUserClient *uc;
 
     /*
      * Type 0 is what the framework asks for, and what the family answers with
@@ -493,7 +493,7 @@ IOReturn AirPortRTW89AwdlInterface::newUserClient(task_t owningTask, void *secur
         return kIOReturnBadArgument;
 
     LOG("awdl: the framework is asking for an event user client");
-    uc = OSTypeAlloc(AirPortRTW89AwdlUserClient);
+    uc = OSTypeAlloc(IO80211P2PDaemonUserClient);
     if (!uc) {
         LOG("awdl: out of memory for the event user client");
         return kIOReturnNoMemory;
