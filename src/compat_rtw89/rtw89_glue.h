@@ -375,6 +375,13 @@ bool rtw89_glue_awdl_master_phase(uint64_t *next_aw_us, uint16_t *aw_period_tu);
  */
 bool rtw89_glue_rx_local_us(uint64_t mactime, uint64_t *local_us);
 
+/*
+ * The channel the followed master keeps its windows on, or 0 while no master
+ * is followed. Sitting anywhere else means being present in its windows on a
+ * channel it is not listening to.
+ */
+uint8_t rtw89_glue_awdl_master_channel(void);
+
 /* An Ethernet frame the family sent to awdl0, to go out as an AWDL data
  * frame. Returns 0, or a negative errno when there is nothing to send it on. */
 int rtw89_glue_awdl_data_tx(const uint8_t *eth, size_t len);

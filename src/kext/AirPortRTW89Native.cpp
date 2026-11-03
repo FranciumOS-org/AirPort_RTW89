@@ -68,6 +68,7 @@ struct AirPort_RTW89::NativeState {
     uint8_t awdlClockChannel = 0;   /* the channel the schedule is describing */
     bool awdlClockOn = false;       /* whether the window clock is running */
     unsigned int awdlScanHeld = 0;  /* scans answered from the cache for it */
+    uint8_t awdlMasterChannel = 0;  /* the followed master's own channel */
     uint64_t lastAwdlScan = 0;      /* when the last full scan ran under it */
     /* The sync frame the family builds for us to put on air. Broadcom's
      * setAWDL_SYNC_FRAME_TEMPLATE allocates 0x724 bytes for it, so that is the
@@ -2451,6 +2452,52 @@ void AirPort_RTW89::awdlClockUpdate()
     else
         channel = isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
                                     : awdlSocialChannel();
+    /*
+     * The master's own channel outranks all of that once one is being
+     * followed. Its sync frames say which channel it keeps its windows on,
+     * and until now we sat wherever the boot-arg or the association put us:
+     * the log read "following the AWDL master .. on channel 6" while this
+     * card sat on 149, so we were keeping its time perfectly on a channel it
+     * was not listening to. It is heard on 149 because it passes through;
+     * being heard back means being where it dwells.
+     */
+    {
+        uint8_t mchan = rtw89_glue_awdl_master_channel();
+
+        if (mchan && mchan != channel) {
+            if (_ns->awdlMasterChannel != mchan)
+                LOG("awdl: the master keeps its windows on channel %u, so that "
+                    "is where we sit rather than %u",
+                    (unsigned int)mchan, (unsigned int)channel);
+            _ns->awdlMasterChannel = mchan;
+            channel = mchan;
+        } else if (mchan) {
+            _ns->awdlMasterChannel = mchan;
+        }
+    }
+    /*
+     * The master's own channel outranks all of that once one is being
+     * followed. Its sync frames say which channel it keeps its windows on,
+     * and until now we sat wherever the boot-arg or the association put us:
+     * the log read "following the AWDL master .. on channel 6" while this
+     * card sat on 149, so we were keeping its time perfectly on a channel it
+     * was not listening to. It is heard on 149 because it passes through;
+     * being heard back means being where it dwells.
+     */
+    {
+        uint8_t mchan = rtw89_glue_awdl_master_channel();
+
+        if (mchan && mchan != channel) {
+            if (_ns->awdlMasterChannel != mchan)
+                LOG("awdl: the master keeps its windows on channel %u, so that "
+                    "is where we sit rather than %u",
+                    (unsigned int)mchan, (unsigned int)channel);
+            _ns->awdlMasterChannel = mchan;
+            channel = mchan;
+        } else if (mchan) {
+            _ns->awdlMasterChannel = mchan;
+        }
+    }
     /*
      * A frame goes out on whatever channel the radio is on, and its own sync
      * parameters tell peers which channel the next window is on. Those have

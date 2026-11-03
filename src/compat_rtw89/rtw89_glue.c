@@ -2211,6 +2211,12 @@ bool rtw89_glue_awdl_master_phase(uint64_t *next_aw_us, uint16_t *aw_period_tu)
     return rtw89_awdl_master_timeline(NULL, next_aw_us, NULL, aw_period_tu);
 }
 
+/* The channel the master says it keeps its own windows on, or 0. */
+uint8_t rtw89_glue_awdl_master_channel(void)
+{
+    return rtw89_awdl_master_channel();
+}
+
 int rtw89_glue_awdl_data_tx(const uint8_t *eth, size_t len)
 {
     return rtw89_awdl_data_tx(eth, len);

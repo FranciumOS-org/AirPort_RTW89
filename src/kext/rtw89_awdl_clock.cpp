@@ -115,10 +115,21 @@ void tick(thread_call_param_t, thread_call_param_t)
                 gClock.baseUs += off;
                 nanoseconds_to_absolutetime(gClock.baseUs * 1000, &gClock.baseAbs);
                 gClock.rephasedAt = gClock.windows;
-                if (gClock.rephased++ < 8)
-                    LOG("awdl clock: moved %llu us onto the master's window "
-                        "boundary (window %llu)", (unsigned long long)off,
+                if (gClock.rephased++ < 8) {
+                    /*
+                     * Signed, because the shift is always forward and a small
+                     * backward correction therefore reads as nearly a whole
+                     * window: 15751 us is the same phase as -633, and a log
+                     * that printed the former made converging corrections
+                     * look like noise.
+                     */
+                    int64_t by = off > AW_PERIOD_US / 2
+                                     ? (int64_t)off - AW_PERIOD_US : (int64_t)off;
+
+                    LOG("awdl clock: %lld us onto the master's window boundary "
+                        "(window %llu)", (long long)by,
                         (unsigned long long)gClock.windows);
+                }
             }
         } else if (periodTu && (uint32_t)periodTu * 1024 != AW_PERIOD_US &&
                    !gClock.oddPeriodSaid) {

@@ -131,6 +131,9 @@ u32 rtw89_awdl_tx_waiting(void);
 bool rtw89_awdl_master_timeline(u8 addr[6], u64 *next_aw_us, u16 *aw_seq,
                                 u16 *aw_period_tu);
 
+/* The channel that master keeps its windows on, or 0 if none is followed. */
+u8 rtw89_awdl_master_channel(void);
+
 /*
  * Data frames: what a transfer travels in, once peers know about each other.
  * @eth is a whole Ethernet frame as the family handed it to awdl0.

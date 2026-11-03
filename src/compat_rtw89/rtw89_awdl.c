@@ -231,6 +231,13 @@ static void awdl_note_master(const u8 *sa, const u8 *v, size_t len, u64 rx_us)
     gMaster.frames++;
 }
 
+u8 rtw89_awdl_master_channel(void)
+{
+    if (!gMaster.have || awdl_now_us() - gMaster.seen_us > AWDL_MASTER_STALE_US)
+        return 0;
+    return gMaster.channel;
+}
+
 bool rtw89_awdl_master_timeline(u8 addr[ETH_ALEN], u64 *next_aw_us, u16 *aw_seq,
                                 u16 *aw_period_tu)
 {
