@@ -42,6 +42,7 @@ struct Clock {
     uint64_t baseUs = 0;        /* the same instant, in us */
     uint64_t windows = 0;       /* windows since the start, counting every one */
     uint32_t missed = 0;        /* wake-ups a whole window or more late */
+    uint32_t rephased = 0;      /* times we moved onto the master's boundary */
     bool running = false;
     volatile bool inTick = false;
 };
@@ -78,6 +79,45 @@ void tick(thread_call_param_t, thread_call_param_t)
     rtw89_glue_awdl_tick((uint32_t)due);
 
     gClock.windows++;
+
+    /*
+     * Put our window boundaries on the master's.
+     *
+     * The clock used to start whenever awdl0 came up and keep its own time
+     * from there. Every peer on a channel divides time the same way, so one
+     * that begins counting at an arbitrary instant is listening and talking
+     * in the gaps between everyone else's windows: frames are heard only when
+     * the two happen to overlap, which is what twenty-two packets in a minute
+     * looked like.
+     *
+     * The compat side reads the master's next boundary off its sync frames in
+     * this same timebase, so aligning is arithmetic: move the base to that
+     * boundary and start counting windows again from there. Done only when we
+     * are off by more than a quarter of a TU, so ordinary jitter does not
+     * re-base us every window, and reported the first few times because a
+     * clock that re-phases constantly is a bug rather than a fix.
+     */
+    {
+        uint64_t nextAw = 0;
+        uint16_t periodTu = 0;
+
+        if (rtw89_glue_awdl_master_phase(&nextAw, &periodTu) && periodTu) {
+            uint64_t period = (uint64_t)periodTu * 1024;
+            uint64_t ours = gClock.baseUs + gClock.windows * AW_PERIOD_US;
+            uint64_t off = (ours > nextAw ? ours - nextAw : nextAw - ours) % period;
+            uint64_t skew = off > period / 2 ? period - off : off;
+
+            if (skew > 256) {
+                gClock.baseUs = nextAw;
+                nanoseconds_to_absolutetime(nextAw * 1000, &gClock.baseAbs);
+                gClock.windows = 0;
+                if (gClock.rephased++ < 4)
+                    LOG("awdl clock: phased onto the master's timeline, %llu us "
+                        "off a %u TU window", (unsigned long long)skew, periodTu);
+            }
+        }
+    }
+
     if (gClock.windows % AW_REPORT_EVERY == 0) {
         uint32_t sent = 0, failed = 0, dsent = 0, dfailed = 0;
 

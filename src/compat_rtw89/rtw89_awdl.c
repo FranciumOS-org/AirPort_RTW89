@@ -148,6 +148,110 @@ static void awdl_log_hex(const char *what, const u8 *v, size_t len)
 /* What has come back the other way; see rtw89_awdl_rx(). */
 static struct { u32 data_seen; u32 offered; u32 matched; u32 apple; } gRx;
 
+/*
+ * The master's timeline, which is the thing we were missing.
+ *
+ * Everything else works: a peer is heard steadily, its frames reach the
+ * family, our own frames go out on schedule with no window missed, and
+ * packets pass in both directions. What has never happened is the iPhone
+ * seeing this machine at all, and the reason is that we kept our own time.
+ * The clock started whenever awdl0 came up and the sync frames we sent named
+ * ourselves as master, so our availability windows and the peer's coincided
+ * only by luck -- which is what two packets in a minute looks like.
+ *
+ * AWDL is a timeline, so being on it means adopting someone else's. A sync
+ * frame says how much of the current window is left (remaining_aw_length, in
+ * TU) and which window it is (the sequence number), so a frame heard at a
+ * known local time says exactly when the master's next window starts on our
+ * own clock. That is recorded here and used both to phase the clock and to
+ * fill in the frames we send.
+ *
+ * Election is not decoded yet, so the tie-break is the lowest address, which
+ * is at least deterministic and cannot oscillate between two peers. Adopting
+ * the wrong master costs synchronisation with the right one; adopting none,
+ * as until now, costs everything.
+ */
+#define AWDL_MASTER_STALE_US  3000000   /* forget a master unheard this long */
+
+static struct {
+    bool have;
+    u8   addr[ETH_ALEN];
+    u8   channel;           /* the master's own channel */
+    u16  aw_period;         /* TU, 16 on every frame seen so far */
+    u16  aw_seq;            /* the window number that starts at next_aw_us */
+    u64  next_aw_us;        /* our clock, when that window begins */
+    u64  seen_us;
+    u32  frames;
+} gMaster;
+
+static u64 awdl_now_us(void)
+{
+    return ktime_get_boottime_ns() / 1000;
+}
+
+static void awdl_note_master(const u8 *sa, const u8 *v, size_t len, u64 rx_us)
+{
+    const struct awdl_sync_params *p = (const void *)v;
+    u16 remaining, period;
+
+    /* 31 bytes: the fixed struct, plus the presence mode and the window
+     * sequence number that follow it at offsets 27..30. */
+    if (len < 31)
+        return;
+    period = le16_to_cpu(p->aw_period);
+    remaining = le16_to_cpu(p->remaining_aw_length);
+    if (!period || remaining > period)
+        return;             /* not a schedule we can read */
+
+    /* Only the master's own frames carry its timeline; a peer repeating it
+     * would be a second-hand copy with its own delay in it. */
+    if (!ether_addr_equal(p->master_addr, sa))
+        return;
+    if (gMaster.have && !ether_addr_equal(gMaster.addr, sa)) {
+        if (awdl_now_us() - gMaster.seen_us < AWDL_MASTER_STALE_US &&
+            memcmp(sa, gMaster.addr, ETH_ALEN) > 0)
+            return;         /* we already follow one at least as good */
+    }
+    if (!gMaster.have || !ether_addr_equal(gMaster.addr, sa))
+        awdl_log("following the AWDL master %02x:%02x:%02x:%02x:%02x:%02x on "
+                 "channel %u, windows of %u TU",
+                 sa[0], sa[1], sa[2], sa[3], sa[4], sa[5],
+                 p->master_channel, (unsigned int)period);
+    gMaster.have = true;
+    memcpy(gMaster.addr, sa, ETH_ALEN);
+    gMaster.channel = p->master_channel;
+    gMaster.aw_period = period;
+    /* What is left of the window this frame went out in tells us where the
+     * next one begins; the frame's own window is that sequence number. */
+    gMaster.next_aw_us = rx_us + (u64)remaining * 1024;
+    /* The window this frame belongs to is at offset 29, the same place we
+     * write ours; the one starting at next_aw_us is the one after it. */
+    gMaster.aw_seq = (u16)((v[29] | ((u16)v[30] << 8)) + 1);
+    gMaster.seen_us = awdl_now_us();
+    gMaster.frames++;
+}
+
+bool rtw89_awdl_master_timeline(u8 addr[ETH_ALEN], u64 *next_aw_us, u16 *aw_seq,
+                                u16 *aw_period_tu)
+{
+    if (!gMaster.have)
+        return false;
+    if (awdl_now_us() - gMaster.seen_us > AWDL_MASTER_STALE_US) {
+        gMaster.have = false;
+        awdl_log("the AWDL master has gone quiet; keeping our own time again");
+        return false;
+    }
+    if (addr)
+        memcpy(addr, gMaster.addr, ETH_ALEN);
+    if (next_aw_us)
+        *next_aw_us = gMaster.next_aw_us;
+    if (aw_seq)
+        *aw_seq = gMaster.aw_seq;
+    if (aw_period_tu)
+        *aw_period_tu = gMaster.aw_period;
+    return true;
+}
+
 bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
 {
     const struct ieee80211_mgmt *mgmt = (const void *)skb->data;
@@ -245,6 +349,27 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
     if (body[0] != WLAN_CATEGORY_VENDOR_SPECIFIC ||
         memcmp(body + 1, kAppleOui, sizeof(kAppleOui)) != 0 || body[4] != AWDL_TYPE)
         return false;
+
+    /*
+     * The master's schedule, read whether or not we are logging: following
+     * the timeline is not a diagnostic any more, and gWatching used to gate
+     * the only code that looked at these TLVs.
+     */
+    {
+        const u8 *t = body + AWDL_FIXED_LEN;
+
+        while (t + 3 <= end) {
+            size_t tl = (size_t)(t[1] | (t[2] << 8));
+
+            if (t + 3 + tl > end)
+                break;
+            if (t[0] == AWDL_TLV_SYNC_PARAMS) {
+                awdl_note_master(mgmt->sa, t + 3, tl, awdl_now_us());
+                break;
+            }
+            t += 3 + tl;
+        }
+    }
 
     /* It is AWDL from here on, whether or not we are watching. */
     if (gDelivering)
@@ -530,6 +655,7 @@ static struct {
     int  last_err;              /* the last refusal, so a change is noticed */
     u32  waiting;               /* windows passed before the radio was ready */
     bool ready_said;
+    u8   master[ETH_ALEN];      /* the master we follow, when we follow one */
 } gTx;
 
 void rtw89_awdl_tx_start(u8 channel)
@@ -554,6 +680,11 @@ void rtw89_awdl_tx_stop(void)
 bool rtw89_awdl_transmitting(void)
 {
     return gTx.on;
+}
+
+u32 rtw89_awdl_tx_waiting(void)
+{
+    return gTx.waiting;
 }
 
 void rtw89_awdl_tx_counts(u32 *sent, u32 *failed)
@@ -582,6 +713,13 @@ void rtw89_awdl_tick(u32 now_us)
      * not shift once it is ready.
      */
     gTx.aw_seq++;
+    if (gTx.windows++ % AWDL_AW_PER_AF)
+        return;
+    /*
+     * Only the windows that would have carried a frame count as waiting, and
+     * the window number advances through the wait either way, so the timeline
+     * does not shift when the radio becomes ready.
+     */
     if (!rtw89_mlme_awdl_tx_ready()) {
         gTx.waiting++;
         return;
@@ -591,8 +729,6 @@ void rtw89_awdl_tick(u32 now_us)
         awdl_log("the radio can carry frames now, after %u window(s) of waiting",
                  (unsigned int)gTx.waiting);
     }
-    if (gTx.windows++ % AWDL_AW_PER_AF)
-        return;
 
     /* Nothing to send until IO80211's engine has given us its half. */
     tlv_len = rtw89_awdl_get_template(&tlvs, &mac);
@@ -602,9 +738,44 @@ void rtw89_awdl_tick(u32 now_us)
     memset(&sched, 0, sizeof(sched));
     sched.channel = gTx.channel;
     sched.tx_down_counter = 0;      /* we do not hop, so the channel never changes */
-    sched.remaining_aw = AWDL_SYNC_AW_PERIOD;
+    sched.master = mac;             /* ours until a master is heard */
     sched.aw_seq = gTx.aw_seq;
-    sched.master = mac;             /* our own address: we are our own master */
+    sched.remaining_aw = AWDL_SYNC_AW_PERIOD;
+    /*
+     * A master's window numbering and our own place in it, when one is being
+     * followed. Naming ourselves master in every frame while a real device
+     * was already the master is why this machine was never adopted as a peer:
+     * two masters on one channel have no common timeline to be on.
+     *
+     * The remainder is measured against the master's own window boundary
+     * rather than claimed as a whole window, so a peer can tell where in the
+     * window this frame was sent.
+     */
+    {
+        u8 maddr[ETH_ALEN];
+        u64 next_aw;
+        u16 mseq, mperiod;
+
+        if (rtw89_awdl_master_timeline(maddr, &next_aw, &mseq, &mperiod)) {
+            u64 now = awdl_now_us();
+            u64 period_us = (u64)mperiod * 1024;
+            u64 elapsed, into;
+
+            memcpy(gTx.master, maddr, ETH_ALEN);
+            sched.master = gTx.master;
+            if (now >= next_aw) {
+                elapsed = now - next_aw;
+                into = elapsed % period_us;
+                sched.aw_seq = (u16)(mseq + elapsed / period_us);
+            } else {
+                /* before that window begins: still in the one before it */
+                into = period_us - ((next_aw - now) % period_us);
+                sched.aw_seq = (u16)(mseq - 1);
+            }
+            sched.remaining_aw = (u16)((period_us - into) / 1024);
+            gTx.aw_seq = sched.aw_seq;
+        }
+    }
     if (!rtw89_awdl_build_sync_params(sync_params, sizeof(sync_params), &sched))
         return;
 

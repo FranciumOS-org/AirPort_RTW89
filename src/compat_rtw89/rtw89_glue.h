@@ -360,6 +360,14 @@ void rtw89_glue_awdl_tick(uint32_t now_us);
 /* How many sync frames went out, and how many could not. */
 void rtw89_glue_awdl_tx_counts(uint32_t *sent, uint32_t *failed);
 
+/*
+ * When the followed master's next availability window begins, on the same
+ * clock the kext keeps time with, and the window length it advertises. False
+ * while no master is being followed. The clock uses it to put its own window
+ * boundaries on the master's, which is what being on the timeline means.
+ */
+bool rtw89_glue_awdl_master_phase(uint64_t *next_aw_us, uint16_t *aw_period_tu);
+
 /* An Ethernet frame the family sent to awdl0, to go out as an AWDL data
  * frame. Returns 0, or a negative errno when there is nothing to send it on. */
 int rtw89_glue_awdl_data_tx(const uint8_t *eth, size_t len);

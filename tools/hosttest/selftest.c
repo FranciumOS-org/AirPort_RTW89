@@ -878,22 +878,30 @@ static void test_awdl_tick(void)
     rtw89_awdl_tx_stop();
     CHECK(!rtw89_awdl_transmitting());
 
-    /* with one: the first window carries a frame, then every seventh */
+    /*
+     * With one: the first window carries a frame, then every seventh.
+     *
+     * A window the radio cannot carry anything in is counted separately now
+     * -- waiting is not failing -- and in here there is no radio at all, so
+     * every one of them waits. What the schedule promises either way is that
+     * each seventh window is acted on exactly once.
+     */
     rtw89_awdl_set_template(tlvs, sizeof(tlvs), mac);
     rtw89_awdl_tx_start(6);
     for (i = 0; i < 21; i++) {
         rtw89_awdl_tick(i * 16384);
         rtw89_awdl_tx_counts(&sent, &failed);
-        CHECK(sent + failed == i / 7 + 1);
+        CHECK(sent + failed + rtw89_awdl_tx_waiting() == i / 7 + 1);
     }
     rtw89_awdl_tx_stop();
 
-    /* stopped means stopped: later windows are not acted on */
+    /* stopped means stopped: later windows are not acted on at all, not
+     * even as a window spent waiting for the radio */
     rtw89_awdl_tx_counts(&sent, &failed);
-    i = sent + failed;
+    i = sent + failed + rtw89_awdl_tx_waiting();
     rtw89_awdl_tick(22 * 16384);
     rtw89_awdl_tx_counts(&sent, &failed);
-    CHECK(sent + failed == i);
+    CHECK(sent + failed + rtw89_awdl_tx_waiting() == i);
     rtw89_awdl_set_template(NULL, 0, NULL);
 }
 

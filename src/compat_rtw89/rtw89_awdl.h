@@ -112,6 +112,26 @@ void rtw89_awdl_tick(u32 now_us);
 void rtw89_awdl_tx_counts(u32 *sent, u32 *failed);
 
 /*
+ * Windows that passed with the radio unable to carry anything, which is
+ * neither a frame sent nor a frame refused: at startup the schedule runs for
+ * about half a minute before the radio is ready.
+ */
+u32 rtw89_awdl_tx_waiting(void);
+
+/*
+ * The timeline of the master we follow, if we follow one: its address, the
+ * instant its next availability window begins on our own clock, that window's
+ * number, and the window length it advertises.  False when no master has been
+ * heard lately, in which case we keep our own time as before.
+ *
+ * Read from the sync frames a master sends about itself. This is what lets
+ * the window clock be phased onto the timeline a peer is already on, instead
+ * of running on one of our own that coincides with it only by chance.
+ */
+bool rtw89_awdl_master_timeline(u8 addr[6], u64 *next_aw_us, u16 *aw_seq,
+                                u16 *aw_period_tu);
+
+/*
  * Data frames: what a transfer travels in, once peers know about each other.
  * @eth is a whole Ethernet frame as the family handed it to awdl0.
  */

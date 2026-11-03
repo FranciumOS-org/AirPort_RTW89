@@ -2176,6 +2176,12 @@ void rtw89_glue_awdl_tx_counts(uint32_t *sent, uint32_t *failed)
     rtw89_awdl_tx_counts(sent, failed);
 }
 
+/* The master's window boundary, for the clock in the kext to phase onto. */
+bool rtw89_glue_awdl_master_phase(uint64_t *next_aw_us, uint16_t *aw_period_tu)
+{
+    return rtw89_awdl_master_timeline(NULL, next_aw_us, NULL, aw_period_tu);
+}
+
 int rtw89_glue_awdl_data_tx(const uint8_t *eth, size_t len)
 {
     return rtw89_awdl_data_tx(eth, len);
