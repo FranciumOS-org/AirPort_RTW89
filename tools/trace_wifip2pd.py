@@ -18,6 +18,15 @@ import lldb
 
 INVALID_PARAMETERS = -3900   # Apple80211Error.invalidParameters
 
+# Fields of the Apple80211 handle that rdi points at.
+# Apple80211BindToInterfaceWithService copies the interface name into +4
+# ("movl $0x10, %edx" over "leaq 0x4(%r14), %r13"), and keeps the user client
+# connection in +0x17c: Apple80211EventMonitoringInitIOUC returns -3900 the
+# moment it reads that as zero, which is the only way the AWDL init can fail
+# with Invalid Parameters.
+REF_NAME = 0x04
+REF_IOUC = 0x17c
+
 _retbp = {}    # return address -> breakpoint id
 _names = {}    # return address -> stack of function names still outstanding
 
@@ -35,11 +44,25 @@ def _s32(frame, name):
     return n - (1 << 32) if n & 0x80000000 else n
 
 
+def _ref(frame):
+    """The interface name and user client connection of the handle in rdi."""
+    ref = _u64(frame, "rdi")
+    if not ref:
+        return ""
+    proc = frame.GetThread().GetProcess()
+    err = lldb.SBError()
+    name = proc.ReadCStringFromMemory(ref + REF_NAME, 17, err)
+    if err.Fail():
+        return ""
+    iouc = proc.ReadUnsignedFromMemory(ref + REF_IOUC, 4, lldb.SBError())
+    return " [%s iouc=%#x]" % (name.strip() or "?", iouc)
+
+
 def on_call(frame, bp_loc, extra, internal_dict):
     name = frame.GetFunctionName() or "?"
-    print("%-50s rdi=%#x rsi=%#x rdx=%#x rcx=%#x"
+    print("%-50s rdi=%#x rsi=%#x rdx=%#x rcx=%#x%s"
           % (name, _u64(frame, "rdi"), _u64(frame, "rsi"),
-             _u64(frame, "rdx"), _u64(frame, "rcx")))
+             _u64(frame, "rdx"), _u64(frame, "rcx"), _ref(frame)))
 
     thread = frame.GetThread()
     parent = thread.GetFrameAtIndex(1)
