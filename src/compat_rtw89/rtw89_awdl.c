@@ -24,6 +24,7 @@
 #include <linux/ieee80211.h>
 #include <linux/skbuff.h>
 #include <net/mac80211.h>
+#include "rtw89_awdl_mdns.h"
 
 #define awdl_log(fmt, ...) IOLog("[rtw89 awdl] " fmt "\n", ##__VA_ARGS__)
 
@@ -1266,6 +1267,8 @@ void rtw89_awdl_tick(u32 now_us)
                                                   gHaveHost && p.subtype == AWDL_SUBTYPE_MIF ?
                                                   sizeof(gHost) : 0);
 
+        if (composed && p.subtype == AWDL_SUBTYPE_MIF)
+            composed += awdl_svc_append(tlv_out + composed, sizeof(tlv_out) - composed);
         if (composed) {
             p.tlvs = tlv_out;
             p.tlv_len = composed;
@@ -1403,6 +1406,7 @@ int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
         return -EINVAL;
     }
 
+    awdl_mdns_note_frame(eth, eth_len);
     {
         u8 host[sizeof(gHost)];
 
