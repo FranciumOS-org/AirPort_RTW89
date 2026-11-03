@@ -527,6 +527,7 @@ static struct {
     u32  failed;
     u32  data_sent;
     u32  data_failed;
+    int  last_err;              /* the last refusal, so a change is noticed */
 } gTx;
 
 void rtw89_awdl_tx_start(u8 channel)
@@ -617,8 +618,18 @@ void rtw89_awdl_tick(u32 now_us)
 
     err = rtw89_mlme_tx_awdl(frame, len);
     if (err) {
-        if (!gTx.failed++)
-            awdl_log("the first sync frame could not be sent: %d", err);
+        /*
+         * The errno, and again whenever it changes or every 64th refusal.
+         * One run sent 63 sync frames and failed 452, and the single line
+         * printed at the first failure said nothing about the 451 after it --
+         * which matters, because -ENETDOWN from the transmit guard and
+         * -ENOMEM from the frame pool want opposite fixes, and an iPhone that
+         * never sees this machine is the symptom of either.
+         */
+        if (!gTx.failed++ || err != gTx.last_err || gTx.failed % 64 == 0)
+            awdl_log("a sync frame could not be sent: %d (%u sent, %u not)",
+                     err, (unsigned int)gTx.sent, (unsigned int)gTx.failed);
+        gTx.last_err = err;
         return;
     }
     if (gTx.sent++ < 4 || !(gTx.sent % 64))
