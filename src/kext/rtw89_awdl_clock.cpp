@@ -43,6 +43,8 @@ struct Clock {
     uint64_t windows = 0;       /* windows since the start, counting every one */
     uint32_t missed = 0;        /* wake-ups a whole window or more late */
     uint32_t rephased = 0;      /* times we moved onto the master's boundary */
+    uint64_t rephasedAt = 0;    /* the window the last move was made in */
+    bool oddPeriodSaid = false;
     bool running = false;
     volatile bool inTick = false;
 };
@@ -83,38 +85,46 @@ void tick(thread_call_param_t, thread_call_param_t)
     /*
      * Put our window boundaries on the master's.
      *
-     * The clock used to start whenever awdl0 came up and keep its own time
-     * from there. Every peer on a channel divides time the same way, so one
-     * that begins counting at an arbitrary instant is listening and talking
-     * in the gaps between everyone else's windows: frames are heard only when
-     * the two happen to overlap, which is what twenty-two packets in a minute
-     * looked like.
+     * Every peer on a channel divides time the same way, so a clock that
+     * begins counting at an arbitrary instant talks and listens in the gaps
+     * between everyone else's windows. The compat side reads the master's
+     * boundary off its sync frames in this same timebase, so aligning is
+     * arithmetic.
      *
-     * The compat side reads the master's next boundary off its sync frames in
-     * this same timebase, so aligning is arithmetic: move the base to that
-     * boundary and start counting windows again from there. Done only when we
-     * are off by more than a quarter of a TU, so ordinary jitter does not
-     * re-base us every window, and reported the first few times because a
-     * clock that re-phases constantly is a bug rather than a fix.
+     * The first attempt at this re-phased on every single window: it compared
+     * against a recorded boundary that never advances, and it reset the window
+     * counter, which collapsed every later deadline to the base and sent 392
+     * frames in four seconds. So the comparison is modulo one window -- all
+     * that matters is where in the window we sit, not which window -- and the
+     * correction shifts the base and leaves the counter alone, so the whole
+     * future schedule moves together and stays monotonic.
      */
     {
         uint64_t nextAw = 0;
         uint16_t periodTu = 0;
 
-        if (rtw89_glue_awdl_master_phase(&nextAw, &periodTu) && periodTu) {
-            uint64_t period = (uint64_t)periodTu * 1024;
+        if (rtw89_glue_awdl_master_phase(&nextAw, &periodTu) &&
+            (uint32_t)periodTu * 1024 == AW_PERIOD_US) {
             uint64_t ours = gClock.baseUs + gClock.windows * AW_PERIOD_US;
-            uint64_t off = (ours > nextAw ? ours - nextAw : nextAw - ours) % period;
-            uint64_t skew = off > period / 2 ? period - off : off;
+            uint64_t off = (nextAw - ours) % AW_PERIOD_US;
+            uint64_t skew = off > AW_PERIOD_US / 2 ? AW_PERIOD_US - off : off;
 
-            if (skew > 256) {
-                gClock.baseUs = nextAw;
-                nanoseconds_to_absolutetime(nextAw * 1000, &gClock.baseAbs);
-                gClock.windows = 0;
-                if (gClock.rephased++ < 4)
-                    LOG("awdl clock: phased onto the master's timeline, %llu us "
-                        "off a %u TU window", (unsigned long long)skew, periodTu);
+            /* Not oftener than once a second, so a correction has a chance to
+             * be measured before the next one is made. */
+            if (skew > 256 && gClock.windows - gClock.rephasedAt >= 64) {
+                gClock.baseUs += off;
+                nanoseconds_to_absolutetime(gClock.baseUs * 1000, &gClock.baseAbs);
+                gClock.rephasedAt = gClock.windows;
+                if (gClock.rephased++ < 8)
+                    LOG("awdl clock: moved %llu us onto the master's window "
+                        "boundary (window %llu)", (unsigned long long)off,
+                        (unsigned long long)gClock.windows);
             }
+        } else if (periodTu && (uint32_t)periodTu * 1024 != AW_PERIOD_US &&
+                   !gClock.oddPeriodSaid) {
+            gClock.oddPeriodSaid = true;
+            LOG("awdl clock: the master's window is %u TU, not 16; keeping our "
+                "own time rather than guessing at its schedule", periodTu);
         }
     }
 
