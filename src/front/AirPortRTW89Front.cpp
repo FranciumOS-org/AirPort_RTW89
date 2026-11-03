@@ -90,6 +90,26 @@ extern "C" int rtw89_awdl_set_sync_state(void *peerManager,
                                          struct rtw89_awdl_sync_state *state)
     __asm__("__ZN22IO80211AWDLPeerManager16setAwdlSyncStateEP26apple80211_awdl_sync_state");
 
+/*
+ * Delivery to awdl0 itself, past the peer manager.
+ *
+ * inputPacket() is the obvious door and it does not open: it hands the packet
+ * to IO80211AWDLPeerManager::inputPacket() first, and frees it when that
+ * returns false. That filter looks the sender up with findPeer() and rejects
+ * anything from a peer it has not built an object for, so the first frame
+ * from a peer -- the only one that could start a conversation -- is always
+ * the one thrown away. A data frame from a real iPhone reached that call 214
+ * bytes long and awdl0's Ipkts stayed at 0.
+ *
+ * pushPacket() is the half that delivers: it sets the receive interface,
+ * strips the 14-byte header it expects to find and calls ifnet_input(). What
+ * is given up is the filter's own bookkeeping, which decides when the family
+ * switches the schedule into data mode -- worth coming back to once a
+ * transfer runs at all.
+ */
+extern "C" void rtw89_vif_push_packet(void *virtualInterface, mbuf_t m)
+    __asm__("__ZN23IO80211VirtualInterface10pushPacketEP6__mbuf");
+
 /* The front whose back takes the log lines; see LOG above. */
 static AirPortRTW89Front *gLogFront;
 
@@ -821,7 +841,6 @@ void AirPortRTW89Front::opAwdlDataRx(void *ctx, const uint8_t *eth, size_t len)
 {
     AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
     IO80211VirtualInterface *vif = self->_vif;
-    uint8_t tag[64] = {};
     mbuf_t m;
 
     self->_awdlDataInSeen++;
@@ -831,7 +850,7 @@ void AirPortRTW89Front::opAwdlDataRx(void *ctx, const uint8_t *eth, size_t len)
     if (!m)
         return;
     memcpy(mbuf_data(m), eth, len);
-    vif->inputPacket(m, reinterpret_cast<packet_info_tag *>(tag));
+    rtw89_vif_push_packet(vif, m);
     if (!self->_awdlDataInUp++)
         LOG("the first data frame from a peer went up to awdl0, %u bytes",
             (unsigned int)len);
