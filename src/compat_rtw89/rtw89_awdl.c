@@ -688,17 +688,41 @@ int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
     size_t len;
     int err;
 
-    if (!gTx.on)
-        return -ENETDOWN;       /* no schedule: nothing a peer would hear */
-    if (!rtw89_awdl_get_template(NULL, &mac) || !mac)
+    /*
+     * Every refusal counts as a failure and says why once.
+     *
+     * awdl0 handed down 38 packets and the report read "data frames 0 sent,
+     * 0 not": these three returns happen before anything is counted, so a
+     * path that refuses every packet looked exactly like a path nothing ever
+     * reached. Which of them it is matters -- no schedule, no template and a
+     * bad length are three different bugs.
+     */
+    if (!gTx.on) {
+        if (!gTx.data_failed++)
+            awdl_log("a packet from awdl0 was dropped: no schedule is running");
         return -ENETDOWN;
-    if (eth_len < ETH_HLEN || eth_len > 2048 + ETH_HLEN)
+    }
+    if (!rtw89_awdl_get_template(NULL, &mac) || !mac) {
+        if (!gTx.data_failed++)
+            awdl_log("a packet from awdl0 was dropped: no sync frame template, "
+                     "so we have no AWDL address to send from");
+        return -ENETDOWN;
+    }
+    if (eth_len < ETH_HLEN || eth_len > 2048 + ETH_HLEN) {
+        if (!gTx.data_failed++)
+            awdl_log("a packet from awdl0 was dropped: %u bytes is not a frame "
+                     "we can carry", (unsigned int)eth_len);
         return -EINVAL;
+    }
 
     len = rtw89_awdl_build_data_frame(frame, sizeof(frame), mac, eth, eth_len,
                                       gDataSeq++ & AWDL_SEQ_MASK);
-    if (!len)
+    if (!len) {
+        if (!gTx.data_failed++)
+            awdl_log("a packet from awdl0 was dropped: it would not build into "
+                     "a frame");
         return -EINVAL;
+    }
     if (!gTx.data_sent && !gTx.data_failed) {
         awdl_log("the first data frame: %u bytes from awdl0 in %u on air, to "
                  "%02x:%02x:%02x:%02x:%02x:%02x, 802.3 length %u",
