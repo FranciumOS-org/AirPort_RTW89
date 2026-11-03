@@ -476,6 +476,39 @@ void rtw89_awdl_set_template(const u8 *tlvs, size_t len, const u8 *mac)
     }
     awdl_log("keeping a %u byte sync frame template%s", (unsigned int)len,
              gTemplateMacSet ? "" : " (no address for it yet)");
+    /*
+     * What is in it, which has never been looked at.
+     *
+     * The template is appended to every frame we send, verbatim, and the
+     * family built it while it believed this machine was the master. Our own
+     * synchronisation parameters now name the peer as master, so if the
+     * election TLV in here still names us the frame contradicts itself and no
+     * peer would adopt us -- which is exactly the symptom: the timeline is
+     * followed to within a millisecond, the channel is the master's own, 454
+     * frames go out with no window missed, and the iPhone does not list this
+     * machine at all.
+     *
+     * The TLV types are listed so the election one can be found, and the
+     * bytes with them, because the layouts here are read off captures rather
+     * than known.
+     */
+    {
+        const u8 *t = gTemplate;
+        const u8 *e = gTemplate + gTemplateLen;
+
+        while (t + 3 <= e) {
+            size_t tl = (size_t)(t[1] | (t[2] << 8));
+
+            if (t + 3 + tl > e) {
+                awdl_log("    a TLV of type %u claims %u bytes with %u left",
+                         t[0], (unsigned int)tl, (unsigned int)(e - t - 3));
+                break;
+            }
+            awdl_log("    template TLV type %u, %u bytes", t[0], (unsigned int)tl);
+            awdl_log_hex("      its bytes", t + 3, tl < 40 ? tl : 40);
+            t += 3 + tl;
+        }
+    }
 }
 
 size_t rtw89_awdl_get_template(const u8 **tlvs, const u8 **mac)
