@@ -700,6 +700,7 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
              * a capture yet. */
             if (type == AWDL_TLV_CHANSEQ || type == AWDL_TLV_ELECTION_V1 ||
                 type == AWDL_TLV_HT || type == 17 || type == 33 ||
+                type == 6 || type == 12 ||
                 type == AWDL_TLV_ARPA || type == AWDL_TLV_SERVICE_RESPONSE)
                 awdl_log_hex("its contents", tlv + 3, tlen);
         }
