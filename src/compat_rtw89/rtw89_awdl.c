@@ -401,11 +401,27 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
      * transmit side learned -- so all that is missing is the 802.3 header
      * the interface works in, built from the addresses the 802.11 header
      * carries.
+     *
+     * The header is not always 24 bytes: an iPhone sends QoS data, with two
+     * more bytes of QoS control. Left in, they sat in front of the SNAP header
+     * (06 00 aa aa 03 ...), so its _airdrop question reached awdl0 as a frame
+     * nothing could read and the question was never answered.
      */
     if (ieee80211_is_data(mgmt->frame_control)) {
-        const u8 *body = (const u8 *)mgmt + sizeof(struct ieee80211_hdr_3addr);
-        size_t payload = len - sizeof(struct ieee80211_hdr_3addr);
+        size_t hdr = sizeof(struct ieee80211_hdr_3addr);
+        const u8 *body;
+        size_t payload;
         u8 eth[ETH_HLEN + 2048];
+
+        if (ieee80211_is_data_qos(mgmt->frame_control)) {
+            hdr += IEEE80211_QOS_CTL_LEN;
+            if (ieee80211_has_order(mgmt->frame_control))
+                hdr += IEEE80211_HT_CTL_LEN;
+        }
+        if (len <= hdr)
+            return false;
+        body = (const u8 *)mgmt + hdr;
+        payload = len - hdr;
 
         if (!payload || payload > sizeof(eth) - ETH_HLEN)
             return false;
