@@ -259,6 +259,12 @@ static struct {
     u8   election_v1[RTW89_AWDL_ELECTION_V1_LEN];
     u8   ht_len;
     u8   ht[RTW89_AWDL_HT_MAX];
+    /* Two more of its TLVs we repeat without knowing their meaning, whole with
+     * their headers: type 19, and type 33, which names its channel. */
+    u8   tlv19_len;
+    u8   tlv19[AWDL_TLV_HDR_LEN + 16];
+    u8   tlv33_len;
+    u8   tlv33[AWDL_TLV_HDR_LEN + 32];
 } gMaster;
 
 static u64 awdl_now_us(void)
@@ -547,6 +553,20 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
                          gMaster.have && ether_addr_equal(gMaster.addr, mgmt->sa)) {
                     memcpy(gMaster.ht, t + 3, tl);
                     gMaster.ht_len = (u8)tl;
+                }
+                else if (t[0] == 19 && tl <= sizeof(gMaster.tlv19) - AWDL_TLV_HDR_LEN &&
+                         gMaster.have && ether_addr_equal(gMaster.addr, mgmt->sa)) {
+                    if (!gMaster.tlv19_len)
+                        awdl_log_hex("the master's TLV 19", t + 3, tl);
+                    memcpy(gMaster.tlv19, t, AWDL_TLV_HDR_LEN + tl);
+                    gMaster.tlv19_len = (u8)(AWDL_TLV_HDR_LEN + tl);
+                }
+                else if (t[0] == 33 && tl <= sizeof(gMaster.tlv33) - AWDL_TLV_HDR_LEN &&
+                         gMaster.have && ether_addr_equal(gMaster.addr, mgmt->sa)) {
+                    if (!gMaster.tlv33_len)
+                        awdl_log_hex("the master's TLV 33", t + 3, tl);
+                    memcpy(gMaster.tlv33, t, AWDL_TLV_HDR_LEN + tl);
+                    gMaster.tlv33_len = (u8)(AWDL_TLV_HDR_LEN + tl);
                 }
                 t += 3 + tl;
             }
@@ -1053,6 +1073,27 @@ size_t rtw89_awdl_compose_tlvs(u8 *out, size_t size, const u8 *sync_params,
 }
 
 /*
+ * Put @blob in front of the version TLV, where real frames have the TLVs that
+ * follow HT capabilities. Returns the new length; too little room leaves the
+ * TLVs as they were.
+ */
+static size_t awdl_insert_before_version(u8 *tlvs, size_t len, size_t size,
+                                         const u8 *blob, size_t blob_len)
+{
+    size_t off = 0;
+
+    if (!blob_len || len + blob_len > size)
+        return len;
+    while (off + AWDL_TLV_HDR_LEN <= len && tlvs[off] != AWDL_TLV_VERSION)
+        off += AWDL_TLV_HDR_LEN + (size_t)(tlvs[off + 1] | (tlvs[off + 2] << 8));
+    if (off > len)
+        off = len;
+    memmove(tlvs + off + blob_len, tlvs + off, len - off);
+    memcpy(tlvs + off, blob, blob_len);
+    return len + blob_len;
+}
+
+/*
  * The host name our services name, as it goes past in our own mDNS: a DNS label
  * of 36 characters shaped like a UUID, which wifip2pd makes up and the driver is
  * told no other way. Returns true and fills @out (36 bytes) when there is one.
@@ -1342,6 +1383,34 @@ void rtw89_awdl_tick(u32 now_us)
                                                   gHaveHost && p.subtype == AWDL_SUBTYPE_MIF ?
                                                   sizeof(gHost) : 0);
 
+        /*
+         * Every Apple peer sends these and we did not. TLV 17 holds an 802.11
+         * VHT capabilities element: ours is modest, LDPC and short guard at
+         * 80 MHz with two streams. TLVs 19 and 33 are the master's, unread.
+         */
+        if (composed) {
+            static const u8 vht[] = {
+                17, 14, 0, 0xbf, 12, 0x30, 0x00, 0x80, 0x03,
+                0xfa, 0xff, 0x00, 0x00, 0xfa, 0xff, 0x00, 0x00,
+            };
+            static bool logged_psf, logged_mif;
+            bool *logged = p.subtype == AWDL_SUBTYPE_MIF ? &logged_mif : &logged_psf;
+
+            composed = awdl_insert_before_version(tlv_out, composed, sizeof(tlv_out),
+                                                  gMaster.tlv19, gMaster.tlv19_len);
+            composed = awdl_insert_before_version(tlv_out, composed, sizeof(tlv_out),
+                                                  vht, sizeof(vht));
+            if (gMaster.tlv33_len &&
+                composed + gMaster.tlv33_len <= sizeof(tlv_out)) {
+                memcpy(tlv_out + composed, gMaster.tlv33, gMaster.tlv33_len);
+                composed += gMaster.tlv33_len;
+            }
+            if (!*logged && gMaster.tlv33_len) {
+                *logged = true;
+                awdl_log_hex(p.subtype == AWDL_SUBTYPE_MIF ? "our MIF's TLVs" : "our PSF's TLVs",
+                             tlv_out, composed);
+            }
+        }
         if (composed && p.subtype == AWDL_SUBTYPE_MIF)
             composed += awdl_svc_append(tlv_out + composed, sizeof(tlv_out) - composed);
         if (composed) {
