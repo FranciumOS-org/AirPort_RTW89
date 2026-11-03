@@ -39,6 +39,8 @@ static const u8 kAppleOui[3] = { 0x00, 0x17, 0xf2 };
  * The family builds ours naming this machine, which contradicts the
  * synchronisation parameters once a real master is being followed. */
 #define AWDL_TLV_ELECTION_V2 24
+/* The peer's host name, which IO80211 cannot parse without panicking */
+#define AWDL_TLV_ARPA        0x10
 
 /* category + OUI + type + version + subtype + reserved + the two timestamps */
 #define AWDL_FIXED_LEN      (1 + 3 + 1 + 1 + 1 + 1 + 4 + 4)
@@ -150,7 +152,7 @@ static void awdl_log_hex(const char *what, const u8 *v, size_t len)
 }
 
 /* What has come back the other way; see rtw89_awdl_rx(). */
-static struct { u32 data_seen; u32 offered; u32 matched; u32 apple; } gRx;
+static struct { u32 data_seen; u32 offered; u32 matched; u32 apple; u32 arpa; } gRx;
 
 /*
  * The master's timeline, which is the thing we were missing.
@@ -445,10 +447,55 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
      * makes addAWDLPeer() give up ("Unable to create peer"); the threshold
      * at 0x6e84 is -70 dBm by default, so the figure has to be a real one.
      */
-    if (gDelivering)
-        rtw89_glue_awdl_frame(body, (size_t)(end - body), mgmt->sa,
-                              ieee80211_frequency_to_channel(status->freq),
-                              status->signal);
+    if (gDelivering) {
+        /*
+         * Everything but the peer's host name.
+         *
+         * IO80211ServiceRequestDescriptor::initWithArpaTLV() takes the ARPA
+         * TLV -- type 0x10, which a phone sends and we do not -- accepts a
+         * length of up to 260 bytes, and expands it with uncompressAwdl()
+         * into a single 512-byte global with guard bytes after it and no cap
+         * on the output. When the expansion runs past the end the guard check
+         * panics the machine: "bufout overflow! awdlUncompressData 1740",
+         * three boots in a row at about thirty seconds, as soon as the phone
+         * was heard. Nothing we can put on the wire avoids it, because the
+         * TLV is the phone's and the buffer is Apple's.
+         *
+         * So it is left out of the copy the family is given. What it carries
+         * is the peer's .local host name; peers, elections and the timeline
+         * are all in other TLVs, and those still go through untouched.
+         */
+        u8 filtered[1024];
+        size_t body_len = (size_t)(end - body);
+
+        if (body_len >= AWDL_FIXED_LEN && body_len <= sizeof(filtered)) {
+            const u8 *t = body + AWDL_FIXED_LEN;
+            size_t out = AWDL_FIXED_LEN;
+            bool stripped = false;
+
+            memcpy(filtered, body, AWDL_FIXED_LEN);
+            while (t + 3 <= end) {
+                size_t tl = (size_t)(t[1] | (t[2] << 8));
+
+                if (t + 3 + tl > end)
+                    break;
+                if (t[0] == AWDL_TLV_ARPA)
+                    stripped = true;
+                else {
+                    memcpy(filtered + out, t, 3 + tl);
+                    out += 3 + tl;
+                }
+                t += 3 + tl;
+            }
+            if (stripped && !gRx.arpa++)
+                awdl_log("the peer's host name TLV is left out of what IO80211 "
+                         "is given: its own decompressor overruns a fixed "
+                         "buffer and panics on it");
+            rtw89_glue_awdl_frame(filtered, out, mgmt->sa,
+                                  ieee80211_frequency_to_channel(status->freq),
+                                  status->signal);
+        }
+    }
     if (!gWatching)
         return true;
 
