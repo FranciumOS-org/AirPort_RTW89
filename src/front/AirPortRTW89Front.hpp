@@ -62,6 +62,9 @@ private:
      * post an event; released in clientClose(). */
     mach_port_t _wakePort = MACH_PORT_NULL;
     bool _armed = false;
+    /* Whether the task held the event entitlement; recorded, not required,
+     * which is what the family does with it too. */
+    bool _entitled = false;
 };
 
 class AirPortRTW89FrontInterface : public IO80211Interface {

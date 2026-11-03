@@ -224,10 +224,15 @@ enum {
 
 /*
  * The entitlement the family's own IO80211AsyncEventUserClient::initWithTask
- * demands for an AWDL interface: its table of four names is indexed by the
- * interface type, which is 2 for role 6. wifip2pd has it. Demanding the same
- * thing here keeps the check rather than quietly dropping it by replacing the
- * family's client with ours.
+ * looks for on an AWDL interface: a table of four names indexed by the
+ * interface type, which is 2 for role 6.
+ *
+ * It is recorded, not required. The family's initWithTask takes the missing
+ * case (`je` to a branch that only zeroes the flag) straight back into the
+ * rest of its initialisation; the one thing that does fail it is an
+ * interfaceType of 4 or more. So this must not be a gate either -- making it
+ * one is what had IOServiceOpen returning kIOReturnNotPermitted, which is this
+ * file's own code, not the family's.
  */
 #define RTW89_AWDL_EVENT_ENTITLEMENT "com.apple.wifi_awdl.event_monitor"
 
@@ -235,19 +240,22 @@ bool AirPortRTW89AwdlUserClient::initWithTask(task_t owningTask, void *securityI
                                               OSDictionary *properties)
 {
     OSObject *ent;
-    bool allowed;
+    OSBoolean *flag;
 
     if (!IOUserClient::initWithTask(owningTask, securityID, type, properties))
         return false;
 
+    /* A cast and isTrue(), not a pointer comparison against kOSBooleanTrue:
+     * copyClientEntitlement hands back a copy, and nothing promises it is the
+     * singleton. */
     ent = IOUserClient::copyClientEntitlement(owningTask, RTW89_AWDL_EVENT_ENTITLEMENT);
-    allowed = ent == kOSBooleanTrue;
+    flag = OSDynamicCast(OSBoolean, ent);
+    _entitled = flag && flag->isTrue();
     if (ent)
         ent->release();
-    if (!allowed) {
-        LOG("awdl: refusing an event client without " RTW89_AWDL_EVENT_ENTITLEMENT);
-        return false;
-    }
+    if (!_entitled)
+        LOG("awdl: the event client's task does not hold "
+            RTW89_AWDL_EVENT_ENTITLEMENT "; carrying on, as the family does");
 
     /*
      * One page each. The framework only reports the sizes it was given and
@@ -285,7 +293,8 @@ bool AirPortRTW89AwdlUserClient::start(IOService *provider)
 {
     if (!IOUserClient::start(provider))
         return false;
-    LOG("awdl: the event user client is open");
+    LOG("awdl: the event user client is open%s",
+        _entitled ? "" : " (unentitled)");
     return true;
 }
 
