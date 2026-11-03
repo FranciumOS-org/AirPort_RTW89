@@ -201,6 +201,224 @@ UInt32 AirPortRTW89AwdlInterface::outputPacket(mbuf_t m, void *param)
     return kIOReturnOutputDropped;
 }
 
+OSDefineMetaClassAndStructors(AirPortRTW89AwdlUserClient, IOUserClient)
+
+/*
+ * The selectors the framework calls, decoded in HANDOFF.md. Named here so the
+ * switch below reads as the protocol rather than as numbers.
+ */
+enum {
+    kAwdlUCSanity        = 0,  /* struct in 0x3c30, struct out 0x180: a version */
+    kAwdlUCEventRead     = 1,  /* one byte out, kept by the framework at +0x179 */
+    kAwdlUCStartEvents   = 2,  /* async, carries the wake port */
+    kAwdlUCArm           = 3,  /* no arguments */
+    kAwdlUCUseEventPipe  = 5,  /* one byte out; false makes the framework give up */
+    kAwdlUCPipeReady     = 7,  /* one byte out, kept at +0x17a */
+};
+
+/* What the framework asks for by memory type in IOConnectMapMemory64. */
+enum {
+    kAwdlUCRingBuffer = 1,
+    kAwdlUCRingState  = 2,
+};
+
+/*
+ * The entitlement the family's own IO80211AsyncEventUserClient::initWithTask
+ * demands for an AWDL interface: its table of four names is indexed by the
+ * interface type, which is 2 for role 6. wifip2pd has it. Demanding the same
+ * thing here keeps the check rather than quietly dropping it by replacing the
+ * family's client with ours.
+ */
+#define RTW89_AWDL_EVENT_ENTITLEMENT "com.apple.wifi_awdl.event_monitor"
+
+bool AirPortRTW89AwdlUserClient::initWithTask(task_t owningTask, void *securityID, UInt32 type,
+                                              OSDictionary *properties)
+{
+    OSObject *ent;
+    bool allowed;
+
+    if (!IOUserClient::initWithTask(owningTask, securityID, type, properties))
+        return false;
+
+    ent = IOUserClient::copyClientEntitlement(owningTask, RTW89_AWDL_EVENT_ENTITLEMENT);
+    allowed = ent == kOSBooleanTrue;
+    if (ent)
+        ent->release();
+    if (!allowed) {
+        LOG("awdl: refusing an event client without " RTW89_AWDL_EVENT_ENTITLEMENT);
+        return false;
+    }
+
+    /*
+     * One page each. The framework only reports the sizes it was given and
+     * reads the ring through them; nothing requires a particular size, and
+     * until an event is posted nothing reads the contents at all. They are
+     * allocated here rather than in clientMemoryForType() so that a second
+     * mapping of the same type hands back the same memory, which is what the
+     * framework expects of ringBuffer and ringState.
+     */
+    _ringBuffer = IOBufferMemoryDescriptor::inTaskWithOptions(
+        kernel_task, kIOMemoryKernelUserShared | kIODirectionInOut, page_size, page_size);
+    _ringState = IOBufferMemoryDescriptor::inTaskWithOptions(
+        kernel_task, kIOMemoryKernelUserShared | kIODirectionInOut, page_size, page_size);
+    if (!_ringBuffer || !_ringState) {
+        LOG("awdl: out of memory for the event ring");
+        return false;
+    }
+    bzero(_ringBuffer->getBytesNoCopy(), _ringBuffer->getCapacity());
+    bzero(_ringState->getBytesNoCopy(), _ringState->getCapacity());
+    return true;
+}
+
+/*
+ * One thing this deliberately does not do: the family's own
+ * startAsyncEventUserClientForTask() puts its client in the interface's
+ * _asyncEventUserClient (+0xa0) and then calls back into it through its
+ * vtable, so that the family can post events of its own. Ours is not of that
+ * class, and leaving a foreign object there would have the family calling its
+ * own slots on us. So +0xa0 stays null, which also means the family's "cannot
+ * have more than one user client per interface" check no longer fires. If
+ * events the family raises itself turn out to be needed in userspace, this is
+ * where that thread starts.
+ */
+bool AirPortRTW89AwdlUserClient::start(IOService *provider)
+{
+    if (!IOUserClient::start(provider))
+        return false;
+    LOG("awdl: the event user client is open");
+    return true;
+}
+
+void AirPortRTW89AwdlUserClient::stop(IOService *provider)
+{
+    IOUserClient::stop(provider);
+}
+
+/*
+ * clientClose() is the ordinary way out, but it is not the only one: a client
+ * whose initWithTask() refuses the task is released without ever being closed,
+ * and so is one torn down from below. The regions are let go here so that
+ * neither path leaks a page pair.
+ */
+void AirPortRTW89AwdlUserClient::free()
+{
+    if (_ringBuffer) {
+        _ringBuffer->release();
+        _ringBuffer = nullptr;
+    }
+    if (_ringState) {
+        _ringState->release();
+        _ringState = nullptr;
+    }
+    IOUserClient::free();
+}
+
+IOReturn AirPortRTW89AwdlUserClient::clientClose()
+{
+    if (_wakePort != MACH_PORT_NULL) {
+        /* Balances the port registerNotificationPort() was given. */
+        IOUserClient::releaseNotificationPort(_wakePort);
+        _wakePort = MACH_PORT_NULL;
+    }
+    /* The regions are released in free(), which every path reaches. */
+    _armed = false;
+    terminate();
+    return kIOReturnSuccess;
+}
+
+IOReturn AirPortRTW89AwdlUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
+                                                         IOMemoryDescriptor **memory)
+{
+    IOBufferMemoryDescriptor *md;
+
+    switch (type) {
+    case kAwdlUCRingBuffer: md = _ringBuffer; break;
+    case kAwdlUCRingState:  md = _ringState;  break;
+    default:
+        LOG("awdl: the event client was asked for memory type %u, which it has no region for",
+            (unsigned int)type);
+        return kIOReturnBadArgument;
+    }
+    if (!md)
+        return kIOReturnNotReady;
+
+    md->retain();   /* the caller releases what it is handed */
+    *memory = md;
+    *options = 0;
+    return kIOReturnSuccess;
+}
+
+IOReturn AirPortRTW89AwdlUserClient::registerNotificationPort(mach_port_t port, UInt32 type,
+                                                              io_user_reference_t refCon)
+{
+    _wakePort = port;
+    return kIOReturnSuccess;
+}
+
+IOReturn AirPortRTW89AwdlUserClient::externalMethod(uint32_t selector,
+                                                    IOExternalMethodArguments *args,
+                                                    IOExternalMethodDispatch *dispatch,
+                                                    OSObject *target, void *reference)
+{
+    if (!args)
+        return kIOReturnBadArgument;
+
+    switch (selector) {
+    case kAwdlUCSanity:
+        /*
+         * The handshake. The framework hands over a 0x3c30 struct stamped
+         * 0xc02869c9 -- which arrives as a descriptor rather than inline,
+         * being well over a page -- and reads 0x180 bytes back. The only use
+         * it makes of the answer is "%s" in its own "Sanity test passed.
+         * Version - %s", so a string is the whole contract.
+         */
+        if (args->structureOutput && args->structureOutputSize) {
+            bzero(args->structureOutput, args->structureOutputSize);
+            strlcpy(static_cast<char *>(args->structureOutput), "AirPort_RTW89",
+                    args->structureOutputSize);
+        }
+        return kIOReturnSuccess;
+
+    case kAwdlUCUseEventPipe:
+        /*
+         * Answering false here is not a way out: the framework jumps straight
+         * to its -3903 exit rather than falling back to anything older.
+         */
+    case kAwdlUCEventRead:
+    case kAwdlUCPipeReady:
+        if (args->structureOutput && args->structureOutputSize >= 1) {
+            *static_cast<UInt8 *>(args->structureOutput) = 1;
+            return kIOReturnSuccess;
+        }
+        if (args->scalarOutputCount >= 1) {
+            args->scalarOutput[0] = 1;
+            return kIOReturnSuccess;
+        }
+        return kIOReturnBadArgument;
+
+    case kAwdlUCArm:
+        _armed = true;
+        return kIOReturnSuccess;
+
+    case kAwdlUCStartEvents:
+        /*
+         * The async one. Nothing is posted yet, so the port and reference are
+         * only kept: the framework waits on them and an empty ring simply
+         * means no events, not an error.
+         */
+        if (args->asyncWakePort != MACH_PORT_NULL)
+            _wakePort = args->asyncWakePort;
+        LOG("awdl: wifip2pd is listening for events%s",
+            _armed ? "" : " (before the arm, which is unexpected)");
+        return kIOReturnSuccess;
+
+    default:
+        LOG("awdl: the event client was asked for selector %u, which it does not implement",
+            (unsigned int)selector);
+        return kIOReturnUnsupported;
+    }
+}
+
 /*
  * The user client wifip2pd needs, and the reason AirDrop got no further than a
  * peer in the list.
@@ -220,13 +438,13 @@ UInt32 AirPortRTW89AwdlInterface::outputPacket(mbuf_t m, void *param)
  * kIOReturnBadArgument after logging "Invalid userClient type request". A real
  * Mac never meets this because its Wi-Fi comes with the matching family.
  *
- * So type 0 is translated to the 4 the family wants. Nothing else is touched:
- * the family still decides the interface type from the role (2, "awdl", for
- * role 6), still asks IOUserClient for com.apple.wifi_awdl.event_monitor, and
- * still refuses a second client per interface.
- *
- * The family's own implementation is reached by its symbol rather than by
- * writing IO80211VirtualInterface::newUserClient(), which clang compiles into
+ * Translating type 0 to the 4 the family wants was enough to get the client
+ * created, and not enough to keep it: the framework then calls external
+ * methods the family does not have, and closes the client when the first one
+ * fails. So type 0 now gets AirPortRTW89AwdlUserClient, which answers the
+ * protocol the framework actually speaks. Every other type is still the
+ * family's, reached by its symbol rather than by writing
+ * IO80211VirtualInterface::newUserClient(), which clang compiles into
  * a jump through a slot of the imported IO80211VirtualInterface vtable. That
  * vtable is the one MacKernelSDK's header describes, and this header is known
  * to disagree with the family about three slots already (see the note above
@@ -243,17 +461,38 @@ IOReturn AirPortRTW89AwdlInterface::newUserClient(task_t owningTask, void *secur
                                                   OSDictionary *properties,
                                                   IOUserClient **handler)
 {
-    static bool told;
+    AirPortRTW89AwdlUserClient *uc;
 
-    if (type == 0) {
-        if (!told) {
-            told = true;
-            LOG("awdl: the user client is asked for as type 0 and the family takes only "
-                "type 4 for an AWDL role, so it is opened as 4");
-        }
-        type = 4;
+    /*
+     * Type 0 is what the framework asks for, and what the family answers with
+     * kIOReturnBadArgument. It is also the only type whose protocol the family
+     * cannot speak, so this is where our own client goes; anything else is
+     * still the family's business.
+     */
+    if (type != 0)
+        return rtw89_vif_new_user_client(this, owningTask, securityID, type, properties, handler);
+
+    if (!handler)
+        return kIOReturnBadArgument;
+
+    uc = OSTypeAlloc(AirPortRTW89AwdlUserClient);
+    if (!uc)
+        return kIOReturnNoMemory;
+    if (!uc->initWithTask(owningTask, securityID, type, properties)) {
+        uc->release();
+        return kIOReturnNotPermitted;
     }
-    return rtw89_vif_new_user_client(this, owningTask, securityID, type, properties, handler);
+    if (!uc->attach(this)) {
+        uc->release();
+        return kIOReturnInternalError;
+    }
+    if (!uc->start(this)) {
+        uc->detach(this);
+        uc->release();
+        return kIOReturnInternalError;
+    }
+    *handler = uc;
+    return kIOReturnSuccess;
 }
 
 UInt32 AirPortRTW89FrontInterface::inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options,

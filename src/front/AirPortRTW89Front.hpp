@@ -12,10 +12,57 @@
 #include <IOKit/80211/IO80211P2PInterface.h>
 #include <IOKit/80211/IO80211VirtualInterface.h>
 #include <IOKit/80211/IO80211WorkLoop.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOLocks.h>
+#include <IOKit/IOUserClient.h>
 #include <IOKit/pci/IOPCIDevice.h>
 
 #include "rtw89_front_api.h"
+
+/*
+ * The async event user client awdl0 hands to wifip2pd.
+ *
+ * The IO80211 framework on macOS 26 speaks a user client protocol that the
+ * Ventura IO80211FamilyLegacy we inject never implemented: a version
+ * handshake, three one-byte queries, an arm, two mapped regions it calls
+ * ringBuffer and ringState, and an async method carrying a wake port. The
+ * family's whole table is two methods of other sizes, and its externalMethod
+ * refuses any selector above 1, so the framework's first call fails, bind
+ * closes the client, and every later event call reads a zero connection and
+ * returns -3900. See HANDOFF.md for how each call was decoded.
+ *
+ * This answers that handshake. No event is ever posted yet: the ring layout is
+ * not known, and the handshake alone is all
+ * Apple80211RawP2PEventMonitoringInit checks, so passing it is what lets
+ * wifip2pd keep awdl0 at all.
+ */
+class AirPortRTW89AwdlUserClient : public IOUserClient {
+    OSDeclareDefaultStructors(AirPortRTW89AwdlUserClient)
+
+public:
+    bool initWithTask(task_t owningTask, void *securityID, UInt32 type,
+                      OSDictionary *properties) override;
+    bool start(IOService *provider) override;
+    void stop(IOService *provider) override;
+    IOReturn clientClose() override;
+    IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments *args,
+                            IOExternalMethodDispatch *dispatch, OSObject *target,
+                            void *reference) override;
+    IOReturn clientMemoryForType(UInt32 type, IOOptionBits *options,
+                                 IOMemoryDescriptor **memory) override;
+    IOReturn registerNotificationPort(mach_port_t port, UInt32 type,
+                                      io_user_reference_t refCon) override;
+    void free() override;
+
+private:
+    /* The two regions the framework maps, by the memory types it asks for. */
+    IOBufferMemoryDescriptor *_ringBuffer = nullptr;   /* type 1 */
+    IOBufferMemoryDescriptor *_ringState = nullptr;    /* type 2 */
+    /* The wake port and reference of the async method, kept for the day we
+     * post an event; released in clientClose(). */
+    mach_port_t _wakePort = MACH_PORT_NULL;
+    bool _armed = false;
+};
 
 class AirPortRTW89FrontInterface : public IO80211Interface {
     OSDeclareDefaultStructors(AirPortRTW89FrontInterface)
