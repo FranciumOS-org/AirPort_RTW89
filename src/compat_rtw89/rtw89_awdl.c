@@ -872,32 +872,63 @@ size_t rtw89_awdl_build_sync_params(u8 *buf, size_t size,
  * order real frames use: channel sequence, election parameters, then the
  * family's template with the HT capabilities before its version TLV.
  *
- * The channel sequence is the 38 bytes already in the synchronisation
- * parameters plus three of padding, which makes the 41 real frames have. The
- * election and HT TLVs have no layout we can vouch for, so they are the
- * master's own: a follower's election TLV differs only in its distance (offset
- * 3) and self metric (offset 15), and either TLV is left out when no master
- * has given us one.
+ * The channel sequence is not the one in the synchronisation parameters: on
+ * the air it has encoding 3 and each slot is the channel and its operating
+ * class (2c 80, 95 80, 06 51), where those use encoding 1 (1d 2e, 1d 97, 2b 06).
+ * The election and HT TLVs are the master's own: a follower's election TLV
+ * differs only in its distance (offset 3) and self metric (offset 15), and
+ * either TLV is left out when no master has given us one.
+ *
+ * @host is our AWDL host name, 03, its length, the label, then a pointer to
+ * ".local" at c0 0c: the bytes every peer's type 0x10 TLV has. Real frames carry
+ * it in MIFs only.
  */
+static size_t awdl_put_arpa(u8 *out, const u8 *host, size_t host_len)
+{
+    size_t tl = 4 + host_len;
+
+    out[0] = AWDL_TLV_ARPA;
+    awdl_put_le16(out + 1, (u16)tl);
+    out[3] = 3;
+    out[4] = (u8)host_len;
+    memcpy(out + 5, host, host_len);
+    out[5 + host_len] = 0xc0;
+    out[6 + host_len] = 0x0c;
+    return AWDL_TLV_HDR_LEN + tl;
+}
+
 size_t rtw89_awdl_compose_tlvs(u8 *out, size_t size, const u8 *sync_params,
                                const u8 *tlvs, size_t tlv_len,
-                               const u8 *election_v1, const u8 *ht, size_t ht_len)
+                               const u8 *election_v1, const u8 *ht, size_t ht_len,
+                               const u8 *host, size_t host_len)
 {
-    size_t at = 0, off = 0;
+    size_t at = 0, off = 0, i;
+    u8 channel = sync_params ? sync_params[0] : 0;
     size_t need = AWDL_TLV_HDR_LEN + 41 + tlv_len +
                   (election_v1 ? AWDL_TLV_HDR_LEN + RTW89_AWDL_ELECTION_V1_LEN : 0) +
-                  (ht_len ? AWDL_TLV_HDR_LEN + ht_len : 0);
+                  (ht_len ? AWDL_TLV_HDR_LEN + ht_len : 0) +
+                  (host_len ? AWDL_TLV_HDR_LEN + 4 + host_len : 0);
     bool ht_done = !ht_len;
 
-    if (!out || !sync_params || (tlv_len && !tlvs) || (ht_len && !ht) || need > size)
+    if (!out || !sync_params || (tlv_len && !tlvs) || (ht_len && !ht) || need > size ||
+        (host_len && (!host || host_len > 63)))
         return 0;
 
     out[at++] = AWDL_TLV_CHANSEQ;
     awdl_put_le16(out + at, 41);
     at += 2;
-    memcpy(out + at, sync_params + 33, 38);
-    memset(out + at + 38, 0, 3);
-    at += 41;
+    out[at++] = AWDL_SYNC_SLOTS - 1;
+    out[at++] = 3;                  /* encoding: channel, operating class */
+    out[at++] = 0;
+    out[at++] = AWDL_SYNC_STEP_COUNT;
+    out[at++] = 0xff;
+    out[at++] = 0xff;
+    for (i = 0; i < AWDL_SYNC_SLOTS; i++) {
+        out[at++] = channel;
+        out[at++] = channel <= 14 ? 0x51 : 0x80;
+    }
+    memset(out + at, 0, 3);
+    at += 3;
 
     if (election_v1) {
         out[at++] = AWDL_TLV_ELECTION_V1;
@@ -917,6 +948,10 @@ size_t rtw89_awdl_compose_tlvs(u8 *out, size_t size, const u8 *sync_params,
 
         if (off + whole > tlv_len)
             whole = tlv_len - off;  /* not ours to judge: passed on as given */
+        if (host_len && tlvs[off] == AWDL_TLV_VERSION) {
+            at += awdl_put_arpa(out + at, host, host_len);
+            host_len = 0;
+        }
         if (!ht_done && tlvs[off] == AWDL_TLV_VERSION) {
             out[at++] = AWDL_TLV_HT;
             awdl_put_le16(out + at, (u16)ht_len);
@@ -936,7 +971,37 @@ size_t rtw89_awdl_compose_tlvs(u8 *out, size_t size, const u8 *sync_params,
         memcpy(out + at, ht, ht_len);
         at += ht_len;
     }
+    if (host_len)
+        at += awdl_put_arpa(out + at, host, host_len);
     return at;
+}
+
+/*
+ * The host name our services name, as it goes past in our own mDNS: a DNS label
+ * of 36 characters shaped like a UUID, which wifip2pd makes up and the driver is
+ * told no other way. Returns true and fills @out (36 bytes) when there is one.
+ */
+bool rtw89_awdl_find_host(const u8 *data, size_t len, u8 *out)
+{
+    size_t off, i;
+
+    for (off = 0; off + 37 <= len; off++) {
+        if (data[off] != 36)
+            continue;
+        for (i = 0; i < 36; i++) {
+            u8 c = data[off + 1 + i];
+            bool dash = i == 8 || i == 13 || i == 18 || i == 23;
+
+            if (dash ? c != '-' : !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                                    (c >= 'A' && c <= 'F')))
+                break;
+        }
+        if (i == 36) {
+            memcpy(out, data + off + 1, 36);
+            return true;
+        }
+    }
+    return false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -969,6 +1034,11 @@ static struct {
     int  last_why;              /* the last refusal from the radio, see tick() */
     u8   master[ETH_ALEN];      /* the master we follow, when we follow one */
 } gTx;
+
+/* Outlives a schedule: it is wifip2pd's name, and awdl0 going up and down does
+ * not change it. See rtw89_awdl_find_host(). */
+static u8 gHost[36];
+static bool gHaveHost;
 
 void rtw89_awdl_tx_start(u8 channel)
 {
@@ -1124,7 +1194,8 @@ void rtw89_awdl_tick(u32 now_us)
     memset(&p, 0, sizeof(p));
     p.src = mac;
     p.version = 0x10;
-    p.subtype = AWDL_SUBTYPE_PSF;
+    /* Turn about, as the captures have them; the MIF is the one that names us. */
+    p.subtype = gTx.sent & 1 ? AWDL_SUBTYPE_MIF : AWDL_SUBTYPE_PSF;
     p.seq = gTx.seq++ & AWDL_SEQ_MASK;
     /*
      * target_tx_time is when this window was due and phy_tx_time when the
@@ -1185,7 +1256,10 @@ void rtw89_awdl_tick(u32 now_us)
         size_t composed = rtw89_awdl_compose_tlvs(tlv_out, sizeof(tlv_out), sync_params,
                                                   p.tlvs, p.tlv_len,
                                                   gMaster.have_election_v1 ? gMaster.election_v1 : NULL,
-                                                  gMaster.ht, gMaster.ht_len);
+                                                  gMaster.ht, gMaster.ht_len,
+                                                  gHost,
+                                                  gHaveHost && p.subtype == AWDL_SUBTYPE_MIF ?
+                                                  sizeof(gHost) : 0);
 
         if (composed) {
             p.tlvs = tlv_out;
@@ -1322,6 +1396,17 @@ int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
             awdl_log("a packet from awdl0 was dropped: %u bytes is not a frame "
                      "we can carry", (unsigned int)eth_len);
         return -EINVAL;
+    }
+
+    {
+        u8 host[sizeof(gHost)];
+
+        if (rtw89_awdl_find_host(eth, eth_len, host) &&
+            (!gHaveHost || memcmp(host, gHost, sizeof(gHost)))) {
+            memcpy(gHost, host, sizeof(gHost));
+            gHaveHost = true;
+            awdl_log("our AWDL host name, from our own mDNS: %.36s", (const char *)gHost);
+        }
     }
 
     len = rtw89_awdl_build_data_frame(frame, sizeof(frame), mac, eth, eth_len,

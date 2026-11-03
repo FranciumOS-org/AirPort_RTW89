@@ -90,11 +90,13 @@ struct rtw89_awdl_schedule {
 /*
  * Everything after the synchronisation parameters in a sync frame: see the
  * definition.  Returns the bytes written, 0 if they do not fit.  @election_v1
- * may be NULL and @ht_len 0, which leaves that TLV out.
+ * may be NULL and @ht_len and @host_len 0, which leaves that TLV out.
  */
 size_t rtw89_awdl_compose_tlvs(u8 *out, size_t size, const u8 *sync_params,
                                const u8 *tlvs, size_t tlv_len,
-                               const u8 *election_v1, const u8 *ht, size_t ht_len);
+                               const u8 *election_v1, const u8 *ht, size_t ht_len,
+                               const u8 *host, size_t host_len);
+bool rtw89_awdl_find_host(const u8 *data, size_t len, u8 *out);
 size_t rtw89_awdl_build_sync_params(u8 *buf, size_t size,
                                     const struct rtw89_awdl_schedule *s);
 

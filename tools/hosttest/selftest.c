@@ -1104,16 +1104,18 @@ static void test_awdl_sync_params(void)
 
         memset(el, 0x11, sizeof(el));
         n = rtw89_awdl_compose_tlvs(out, sizeof(out), buf, tmpl, sizeof(tmpl),
-                                    el, ht, sizeof(ht));
+                                    el, ht, sizeof(ht), NULL, 0);
         CHECK(n == 3 + 41 + 3 + 21 + sizeof(tmpl) + 3 + 2);
         CHECK(out[0] == 18 && out[1] == 41 && out[2] == 0);
-        CHECK(memcmp(out + 3, buf + 33, 38) == 0);
+        /* the header and slots an iPhone sends for channel 6 */
+        CHECK(out[3] == 0x0f && out[4] == 3 && out[6] == 3);
+        CHECK(out[9] == 6 && out[10] == 0x51 && out[39] == 6 && out[40] == 0x51);
         CHECK(out[44] == 5 && out[47 + 3] == 0x12 && out[47 + 15] == 65);
         CHECK(out[68] == 6 && out[72] == 7 && out[77] == 21);
         /* nothing from a master yet: only what we can vouch for */
-        n = rtw89_awdl_compose_tlvs(out, sizeof(out), buf, tmpl, sizeof(tmpl), NULL, NULL, 0);
+        n = rtw89_awdl_compose_tlvs(out, sizeof(out), buf, tmpl, sizeof(tmpl), NULL, NULL, 0, NULL, 0);
         CHECK(n == 3 + 41 + sizeof(tmpl));
-        CHECK(rtw89_awdl_compose_tlvs(out, 20, buf, tmpl, sizeof(tmpl), NULL, NULL, 0) == 0);
+        CHECK(rtw89_awdl_compose_tlvs(out, 20, buf, tmpl, sizeof(tmpl), NULL, NULL, 0, NULL, 0) == 0);
     }
 
     /* and everything else is what the real frame carried */
