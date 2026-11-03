@@ -27,7 +27,7 @@
 #include <stdint.h>
 #include <sys/kernel_types.h>   /* mbuf_t */
 
-#define RTW89_FRONT_API_VERSION 7
+#define RTW89_FRONT_API_VERSION 8
 #define RTW89_FRONT_CLASS       "AirPortRTW89Front"
 /* callPlatformFunction(name, true, back ops, front ops out, 0, 0) */
 #define RTW89_FRONT_CONNECT     "RTW89FrontConnect"
@@ -87,6 +87,16 @@ struct rtw89_front_ops {
      * are lost and AirDrop never gets past "Waiting...".
      */
     void (*awdl_data_rx)(void *ctx, const uint8_t *eth, size_t len);
+    /*
+     * An availability window has begun: @aw_seq is its number on the followed
+     * master's timeline and @master that master's address.
+     *
+     * The family keeps its own idea of the timeline and will not move its
+     * data path along without being told. Its service parameters TLV went out
+     * as nine zero bytes -- we advertise no services at all, so a peer has
+     * nothing to show -- and this is the one input it has never had from us.
+     */
+    void (*awdl_window)(void *ctx, uint32_t aw_seq, const uint8_t master[6]);
 };
 
 /* What the back does for the front. */

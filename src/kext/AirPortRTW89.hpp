@@ -93,6 +93,7 @@ private:
     static void awdlFrame(void *ctx, const uint8_t *frame, size_t len,
                           const uint8_t peer[6], uint32_t channel);
     static void awdlData(void *ctx, const uint8_t *eth, size_t len);
+    static void awdlWindow(void *ctx, uint32_t aw_seq, const uint8_t master[6]);
     static void txWake(void *ctx);
     /* Start or stop the availability window clock, from whatever just
      * changed: it runs only while awdl0 is up, macOS has asked for sync and

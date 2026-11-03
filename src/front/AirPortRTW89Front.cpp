@@ -110,6 +110,36 @@ extern "C" int rtw89_awdl_set_sync_state(void *peerManager,
 extern "C" void rtw89_vif_push_packet(void *virtualInterface, mbuf_t m)
     __asm__("__ZN23IO80211VirtualInterface10pushPacketEP6__mbuf");
 
+/*
+ * Telling the family which availability window it is in.
+ *
+ * It keeps its own idea of the timeline and nothing we have done so far
+ * touches it, which is the last input it has never had: its service
+ * parameters TLV goes out as nine zero bytes, so we advertise no services and
+ * a peer has nothing to display even once it adopts us.
+ *
+ * Event 41 is the window start, and apple80211_availability_window_start is
+ * in no header here. The layout below is what the family reads out of it,
+ * from reportDataPathEvents(), monitorTimeline() and logAWStart():
+ *
+ *   +0x00  the window number, as a word
+ *   +0x08  a six byte address, compared against the peer manager's own
+ *   +0x0e  a second six byte address, compared against another of its own
+ *   +0x14  a word read big-endian and logged
+ *   +0x18  a timestamp, kept as-is
+ *   +0x20  a word, kept as-is
+ *
+ * Every one of those is a scalar or an array read out of the buffer we pass
+ * and none is a pointer followed, so a field misread here is a wrong value
+ * rather than a fault. The buffer is larger than the struct and zeroed, so
+ * anything read past what is understood reads zero.
+ */
+extern "C" int rtw89_awdl_report_event(void *peerManager, unsigned int event,
+                                       void *payload, unsigned long len)
+    __asm__("__ZN22IO80211AWDLPeerManager20reportDataPathEventsEjPvm");
+
+#define RTW89_AWDL_EVENT_AW_START   41
+
 /* The front whose back takes the log lines; see LOG above. */
 static AirPortRTW89Front *gLogFront;
 
@@ -504,6 +534,7 @@ IOReturn AirPortRTW89Front::connectBack(const struct rtw89_back_ops *back,
     front->destroy_vif = opDestroyVif;
     front->awdl_rx = opAwdlRx;
     front->awdl_data_rx = opAwdlDataRx;
+    front->awdl_window = opAwdlWindow;
 
     gLogFront = this;
     setProperty("RTW89 Back Connected", kOSBooleanTrue);
@@ -854,6 +885,43 @@ void AirPortRTW89Front::opAwdlDataRx(void *ctx, const uint8_t *eth, size_t len)
     if (!self->_awdlDataInUp++)
         LOG("the first data frame from a peer went up to awdl0, %u bytes",
             (unsigned int)len);
+}
+
+/*
+ * One availability window, reported to the family. See the declaration of
+ * rtw89_awdl_report_event() above for where the layout comes from and why a
+ * misread field here cannot fault.
+ */
+void AirPortRTW89Front::opAwdlWindow(void *ctx, uint32_t aw_seq,
+                                     const uint8_t master[6])
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+    IO80211VirtualInterface *vif = self->_vif;
+    const uint8_t *vraw, *pm;
+    uint8_t payload[64] = {};
+
+    if (!vif || !master)
+        return;
+    vraw = reinterpret_cast<const uint8_t *>(vif);
+    pm = *reinterpret_cast<const uint8_t *const *>(vraw + 0xb0);
+    if (!pm)
+        return;
+    /* the engine has to be enabled, or this is reported into nothing */
+    if (!(*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2))
+        return;
+
+    *reinterpret_cast<uint32_t *>(payload) = aw_seq;
+    memcpy(payload + 0x08, master, 6);
+    memcpy(payload + 0x0e, self->_mac.bytes, 6);
+    *reinterpret_cast<uint32_t *>(payload + 0x14) = OSSwapHostToBigInt32(aw_seq);
+    *reinterpret_cast<uint64_t *>(payload + 0x18) = mach_absolute_time();
+    *reinterpret_cast<uint32_t *>(payload + 0x20) = 16;   /* the window, in TU */
+
+    rtw89_awdl_report_event(const_cast<uint8_t *>(pm), RTW89_AWDL_EVENT_AW_START,
+                            payload, 0x24);
+    if (!self->_awdlWindows++)
+        LOG("told the family about the first availability window (%u on the "
+            "master's numbering)", aw_seq);
 }
 
 void AirPortRTW89Front::opDestroyVif(void *ctx)

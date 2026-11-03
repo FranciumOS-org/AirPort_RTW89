@@ -933,6 +933,19 @@ void rtw89_awdl_tick(u32 now_us)
     if (!len)
         return;
 
+    /*
+     * Tell the family which window this is, on the master's numbering, so it
+     * can keep its own timeline. Reported once per action frame window rather
+     * than once per window: it is the progression the family tracks, and
+     * eight a second is enough of it.
+     */
+    {
+        u8 maddr[ETH_ALEN];
+
+        if (rtw89_awdl_master_timeline(maddr, NULL, NULL, NULL))
+            rtw89_glue_awdl_window(sched.aw_seq, maddr);
+    }
+
     err = rtw89_mlme_tx_awdl(frame, len);
     if (err) {
         /*

@@ -2286,6 +2286,13 @@ void rtw89_glue_awdl_frame(const u8 *frame, size_t len, const u8 peer[6], u32 ch
         glue.plat.awdl_frame(glue.plat.ctx, frame, len, peer, channel);
 }
 
+/* From rtw89_awdl.c, once per action frame window. */
+void rtw89_glue_awdl_window(u32 aw_seq, const u8 *master)
+{
+    if (glue.plat.awdl_window)
+        glue.plat.awdl_window(glue.plat.ctx, aw_seq, master);
+}
+
 /* From rtw89_awdl.c as well, with the frame already in 802.3 form. */
 void rtw89_glue_awdl_data(const u8 *eth, size_t len)
 {

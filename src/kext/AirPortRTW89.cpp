@@ -480,6 +480,7 @@ bool AirPort_RTW89::start(IOService *provider)
     platform.scan_done = scanDone;
     platform.awdl_frame = awdlFrame;
     platform.awdl_data = awdlData;
+    platform.awdl_window = awdlWindow;
 
     LOG("probing");
     ret = rtw89_glue_probe(&platform, &device);

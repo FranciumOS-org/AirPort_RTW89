@@ -66,6 +66,8 @@ struct rtw89_glue_platform {
      * works in -- destination, source, length, then the payload as it
      * arrived. Only valid during the call; the receive thread again. */
     void (*awdl_data)(void *ctx, const uint8_t *eth, size_t len);
+    /* An availability window has begun, on the followed master's numbering. */
+    void (*awdl_window)(void *ctx, uint32_t aw_seq, const uint8_t master[6]);
 };
 
 struct rtw89_glue_device {
@@ -394,6 +396,7 @@ void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac
 void rtw89_glue_awdl_frame(const uint8_t *frame, size_t len, const uint8_t peer[6],
                            uint32_t channel);
 void rtw89_glue_awdl_data(const uint8_t *eth, size_t len);
+void rtw89_glue_awdl_window(uint32_t aw_seq, const uint8_t *master);
 
 /*
  * For testing on the real card. rtw89_glue_probe_ap() acts as if the driver

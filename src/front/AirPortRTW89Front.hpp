@@ -120,6 +120,7 @@ private:
     static void opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
                          const uint8_t peer[6], uint32_t channel);
     static void opAwdlDataRx(void *ctx, const uint8_t *eth, size_t len);
+    static void opAwdlWindow(void *ctx, uint32_t aw_seq, const uint8_t master[6]);
 
     IOPCIDevice *_pci = nullptr;
     IO80211WorkLoop *_workLoop = nullptr;
@@ -135,6 +136,7 @@ private:
     /* and of the received AWDL data frames (see opAwdlDataRx) */
     unsigned int _awdlDataInSeen = 0;
     unsigned int _awdlDataInUp = 0;
+    unsigned int _awdlWindows = 0;   /* windows reported to the family */
     /* Switching the family's AWDL engine on, once, off the workloop. */
     thread_call_t _awdlEnableCall = nullptr;
     bool _awdlEnableAsked = false;

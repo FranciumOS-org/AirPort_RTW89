@@ -944,6 +944,15 @@ void AirPort_RTW89::awdlData(void *ctx, const uint8_t *eth, size_t len)
         me->_ns->front.awdl_data_rx(me->_ns->front.ctx, eth, len);
 }
 
+/* An availability window has begun, for the family's own timeline. */
+void AirPort_RTW89::awdlWindow(void *ctx, uint32_t aw_seq, const uint8_t master[6])
+{
+    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
+
+    if (me->_ns && me->_ns->front.awdl_window)
+        me->_ns->front.awdl_window(me->_ns->front.ctx, aw_seq, master);
+}
+
 int AirPort_RTW89::backVirtualRequest(void *ctx, unsigned int type, int number,
                                       void *virtual_interface, void *data)
 {
