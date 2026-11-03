@@ -33,6 +33,8 @@ static const u8 kAwdlBssid[ETH_ALEN] = { 0x00, 0x25, 0x00, 0xff, 0x94, 0x73 };
 static const u8 kAppleOui[3] = { 0x00, 0x17, 0xf2 };
 
 #define AWDL_TYPE           0x08
+static const u8 kAwdlSnap[] = { 0xaa, 0xaa, 0x03, 0x00, 0x17, 0xf2, 0x08, 0x00 };
+
 #define AWDL_SUBTYPE_PSF    0
 #define AWDL_SUBTYPE_MIF    3
 #define AWDL_TLV_SYNC_PARAMS 4
@@ -427,8 +429,22 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
             return false;
         memcpy(eth, mgmt->da, ETH_ALEN);
         memcpy(eth + ETH_ALEN, mgmt->sa, ETH_ALEN);
-        eth[12] = (u8)(payload >> 8);
-        eth[13] = (u8)payload;
+        /*
+         * Apple's SNAP and AWDL headers come off here: aa aa 03 00 17 f2 08 00,
+         * six bytes of AWDL header, then the real EtherType. The family adds
+         * them on the way out but does not take them off on the way in, and
+         * the stack has no use for a frame with them on: an iPhone's mDNS
+         * reached awdl0 as "SNAP, oui 0x0017f2" and nothing answered it.
+         */
+        if (payload > 16 && !memcmp(body, kAwdlSnap, sizeof(kAwdlSnap))) {
+            eth[12] = body[14];
+            eth[13] = body[15];
+            body += 16;
+            payload -= 16;
+        } else {
+            eth[12] = (u8)(payload >> 8);
+            eth[13] = (u8)payload;
+        }
         memcpy(eth + ETH_HLEN, body, payload);
         if (!gRx.data_seen++)
             awdl_log("the first data frame from a peer: %u bytes on air, %u to "
@@ -1379,6 +1395,13 @@ size_t rtw89_awdl_build_data_frame(u8 *buf, size_t size, const u8 *src,
     hdr->duration_id = 0;
     /* where the frame was going, which for mDNS is a multicast group */
     memcpy(hdr->addr1, eth, ETH_ALEN);
+    /*
+     * The family hands mDNS down addressed to 33:33:80:00:00:fb. That is not
+     * the group for ff02::fb, and an iPhone sends its own to 33:33:00:00:00:fb,
+     * so it has no reason to take ours.
+     */
+    if (eth[0] == 0x33 && eth[1] == 0x33)
+        hdr->addr1[2] &= 0x7f;
     memcpy(hdr->addr2, src, ETH_ALEN);
     memcpy(hdr->addr3, kAwdlBssid, ETH_ALEN);
     hdr->seq_ctrl = cpu_to_le16((u16)(seq << 4));
