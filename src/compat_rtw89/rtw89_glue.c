@@ -112,6 +112,12 @@ static struct {
      * and the scan and join started from here wait for some of them. */
     struct workqueue_struct *rejoin_wq;
     struct delayed_work rejoin_work;
+    /* The channel AWDL wants held while nothing is joined, 0 for none, and
+     * the work that takes the wiphy mutex to do it: the request comes from
+     * the link notify, which already holds that mutex. */
+    struct work_struct awdl_chan_work;
+    u16 awdl_chan_freq;
+    u16 awdl_chan_held;
 
     /* the rate of the last frame the AP sent to us alone, see glue_rx_rate() */
     u32 rx_rate;
@@ -143,6 +149,7 @@ static void glue_tx_wake(void);
 struct rtw89_glue_bss_entry;
 static void glue_bss_describe(struct rtw89_glue_bss_entry *e);
 static void glue_rejoin_work(struct work_struct *work);
+static void glue_awdl_chan_work(struct work_struct *work);
 static void glue_rejoin_queue(unsigned long delay);
 
 /* ------------------------------------------------------------------ */
@@ -460,8 +467,10 @@ static void glue_teardown(void)
     unsigned int leaked;
 
     /* while the work queue machinery is still there */
-    if (glue.rejoin_wq)
+    if (glue.rejoin_wq) {
+        cancel_work_sync(&glue.awdl_chan_work);
         destroy_workqueue(glue.rejoin_wq);
+    }
     rtw88_compat_exit();
 
     kfree(glue.scan_req);
@@ -508,6 +517,7 @@ int rtw89_glue_probe(const struct rtw89_glue_platform *platform,
     spin_lock_init(&glue.bss_lock);
     mutex_init(&glue.cmd_lock);
     INIT_DELAYED_WORK(&glue.rejoin_work, glue_rejoin_work);
+    INIT_WORK(&glue.awdl_chan_work, glue_awdl_chan_work);
     glue.rejoin_wq = alloc_ordered_workqueue("rtw89_rejoin", 0);
     for (i = 0; i < RTW89_GLUE_DMA_BUCKETS; i++)
         INIT_HLIST_HEAD(&glue.dma_hash[i]);
@@ -2215,6 +2225,53 @@ bool rtw89_glue_awdl_master_phase(uint64_t *next_aw_us, uint16_t *aw_period_tu)
 uint8_t rtw89_glue_awdl_master_channel(void)
 {
     return rtw89_awdl_master_channel();
+}
+
+/*
+ * Park the radio on a channel for AWDL, or let it go again.
+ *
+ * Only while nothing is joined: a join takes the radio back and the mlme
+ * gives the context up on its way in. Returns 0, or a negative errno; -EBUSY
+ * means a network has it, which is the ordinary answer while associated.
+ */
+static void glue_awdl_chan_work(struct work_struct *work)
+{
+    struct ieee80211_hw *hw = glue_hw();
+    u16 freq = glue.awdl_chan_freq;
+    int ret;
+
+    if (!glue.active || !hw)
+        return;
+    if (freq == glue.awdl_chan_held)
+        return;
+    wiphy_lock(hw->wiphy);
+    if (!freq) {
+        rtw89_mlme_awdl_release_channel();
+        glue.awdl_chan_held = 0;
+        ret = 0;
+    } else {
+        ret = rtw89_mlme_awdl_hold_channel(freq);
+        if (!ret)
+            glue.awdl_chan_held = freq;
+    }
+    wiphy_unlock(hw->wiphy);
+    /* -EBUSY is the ordinary answer while a network has the radio, and the
+     * association's channel is then what AWDL runs on; anything else is
+     * worth a line, once per channel asked for. */
+    if (ret && ret != -EBUSY)
+        IOLog("[rtw89 awdl] the radio could not be held on %u MHz: %d\n",
+              (unsigned int)freq, ret);
+}
+
+void rtw89_glue_awdl_hold_channel(uint16_t freq)
+{
+    if (!glue.active)
+        return;
+    if (glue.awdl_chan_freq == freq)
+        return;
+    glue.awdl_chan_freq = freq;
+    if (glue.rejoin_wq)
+        queue_work(glue.rejoin_wq, &glue.awdl_chan_work);
 }
 
 int rtw89_glue_awdl_data_tx(const uint8_t *eth, size_t len)

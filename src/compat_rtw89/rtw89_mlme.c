@@ -112,6 +112,7 @@ static struct {
 
     struct ieee80211_chanctx_conf *chanctx;
     bool chanctx_assigned;
+    bool awdl_chanctx;          /* the context is AWDL's, not a join's */
     struct ieee80211_sta *sta;
     enum ieee80211_sta_state sta_state;
     u16 aid;
@@ -750,6 +751,28 @@ static void mlme_send_deauth(u16 reason)
 static void mlme_ba_teardown(void);
 
 /* Undo whatever the join got to. @deauth_reason: tell the AP first if non-zero. */
+/* ieee80211_link_release_channel(): give the radio back. */
+static void mlme_release_chanctx(void)
+{
+    const struct ieee80211_ops *ops = mlme.local->ops;
+    struct ieee80211_bss_conf *conf = &mlme.vif->bss_conf;
+
+    if (mlme.chanctx) {
+        if (mlme.chanctx_assigned) {
+            if (ops->unassign_vif_chanctx)      /* absent when rtw89 emulates
+                                                 * channel contexts */
+                ops->unassign_vif_chanctx(mlme.hw, mlme.vif, conf, mlme.chanctx);
+            conf->chanctx_conf = NULL;
+            mlme.chanctx_assigned = false;
+        }
+        ops->remove_chanctx(mlme.hw, mlme.chanctx);
+        kfree(mlme.chanctx);
+        mlme.chanctx = NULL;
+    }
+    mlme.awdl_chanctx = false;
+    memset(&conf->chanreq, 0, sizeof(conf->chanreq));
+}
+
 static void mlme_teardown(u16 deauth_reason)
 {
     const struct ieee80211_ops *ops = mlme.local->ops;
@@ -850,19 +873,7 @@ static void mlme_teardown(u16 deauth_reason)
     if (ops->link_info_changed)
         ops->link_info_changed(mlme.hw, mlme.vif, conf, changed);
 
-    /* ieee80211_link_release_channel() */
-    if (mlme.chanctx) {
-        if (mlme.chanctx_assigned) {
-            if (ops->unassign_vif_chanctx)      /* as above */
-                ops->unassign_vif_chanctx(mlme.hw, mlme.vif, conf, mlme.chanctx);
-            conf->chanctx_conf = NULL;
-            mlme.chanctx_assigned = false;
-        }
-        ops->remove_chanctx(mlme.hw, mlme.chanctx);
-        kfree(mlme.chanctx);
-        mlme.chanctx = NULL;
-    }
-    memset(&conf->chanreq, 0, sizeof(conf->chanreq));
+    mlme_release_chanctx();
 
     mlme_set_state(RTW89_MLME_IDLE);
 }
@@ -3757,6 +3768,97 @@ int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
     return 0;
 }
 
+/*
+ * Hold the radio on one channel for AWDL, with no network joined.
+ *
+ * AWDL lives on channels 6, 44 and 149 and nowhere else. Until now the radio
+ * went where the association put it and the schedule followed: on an access
+ * point parked on channel 1 every sync frame went out on 1, 11 of 5120 frames
+ * offered to the AWDL path were on the AWDL BSSID, and no peer ever heard
+ * this machine. Not everyone can move their access point.
+ *
+ * One radio still cannot be in two places, so this is the other half of the
+ * trade: with no network joined, take a channel context on a social channel
+ * and keep it. That is all an association gave the transmit path -- the
+ * checks in rtw89_mlme_tx_awdl() are a channel and a link, and the link is
+ * there from add_interface() -- so the frames go out exactly as they did,
+ * on a channel where there is someone to hear them. A join takes the radio
+ * back (mlme_connect() gives this up first), and macOS keeps Wi-Fi scanning
+ * and awdl0 up either way.
+ */
+int rtw89_mlme_awdl_hold_channel(u16 freq)
+{
+    const struct ieee80211_ops *ops;
+    struct ieee80211_bss_conf *conf;
+    struct ieee80211_channel *chan;
+    struct cfg80211_chan_def chandef;
+    int ret;
+
+    if (!mlme.running || !mlme.hw || !mlme.vif || !mlme.local)
+        return -ENETDOWN;
+    ops = mlme.local->ops;
+    conf = &mlme.vif->bss_conf;
+    /* a network owns the radio whenever one is being joined or held */
+    if (mlme.state != RTW89_MLME_IDLE)
+        return -EBUSY;
+    if (mlme.chanctx && !mlme.awdl_chanctx)
+        return -EBUSY;
+    if (mlme.awdl_chanctx && mlme.chan && mlme.chan->center_freq == freq)
+        return 0;               /* already there */
+    chan = ieee80211_get_channel(mlme.hw->wiphy, freq);
+    if (!chan || (chan->flags & IEEE80211_CHAN_DISABLED))
+        return -EINVAL;
+    if (mlme.awdl_chanctx)
+        mlme_release_chanctx();
+
+    /* 20 MHz and no 802.11n: an AWDL sync frame is a basic-rate management
+     * frame and the width only has to match what peers expect to find. */
+    cfg80211_chandef_create(&chandef, chan, NL80211_CHAN_NO_HT);
+    mlme.chanctx = kzalloc(sizeof(*mlme.chanctx) + mlme.hw->chanctx_data_size,
+                           GFP_KERNEL);
+    if (!mlme.chanctx)
+        return -ENOMEM;
+    mlme.chanctx->def = chandef;
+    mlme.chanctx->min_def = chandef;
+    mlme.chanctx->rx_chains_static = 1;
+    mlme.chanctx->rx_chains_dynamic = 1;
+    ret = ops->add_chanctx(mlme.hw, mlme.chanctx);
+    if (ret) {
+        kfree(mlme.chanctx);
+        mlme.chanctx = NULL;
+        return ret;
+    }
+    conf->chanreq.oper = chandef;
+    ret = ops->assign_vif_chanctx ?
+          ops->assign_vif_chanctx(mlme.hw, mlme.vif, conf, mlme.chanctx) : 0;
+    if (ret) {
+        ops->remove_chanctx(mlme.hw, mlme.chanctx);
+        kfree(mlme.chanctx);
+        mlme.chanctx = NULL;
+        memset(&conf->chanreq, 0, sizeof(conf->chanreq));
+        return ret;
+    }
+    conf->chanctx_conf = mlme.chanctx;
+    mlme.chanctx_assigned = true;
+    mlme.awdl_chanctx = true;
+    mlme.chan = chan;
+    mlme.sband = mlme.hw->wiphy->bands[chan->band];
+    mlme.chandef = chandef;
+    mlme_info("holding %u MHz for AWDL; no network is joined", (unsigned int)freq);
+    return 0;
+}
+
+/* Give it back: the clock stopped, or a network is wanted instead. */
+void rtw89_mlme_awdl_release_channel(void)
+{
+    if (!mlme.running || !mlme.awdl_chanctx)
+        return;
+    mlme_release_chanctx();
+    mlme.chan = NULL;
+    mlme.sband = NULL;
+    mlme_info("the AWDL channel is given back");
+}
+
 void rtw89_mlme_start(struct ieee80211_hw *hw, struct ieee80211_vif *vif, void (*notify)(void))
 {
     void (*tap)(const u8 *, size_t) = mlme.tx_tap;
@@ -3789,6 +3891,9 @@ void rtw89_mlme_stop(void)
     if (!mlme.running)
         return;
 
+    /* before the teardown, which returns at once while nothing is joined and
+     * would leave an AWDL channel context behind */
+    rtw89_mlme_awdl_release_channel();
     mlme_teardown(WLAN_REASON_DEAUTH_LEAVING);
     mlme.running = false;
     wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
@@ -3994,6 +4099,16 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk,
         return -EBUSY;
     if (bss->ies_len > MLME_MAX_IES || !bss->ssid_len)
         return -EINVAL;
+
+    /* A join outranks AWDL: the radio goes to the AP's channel. The context
+     * held for the availability windows is given back first, since the one
+     * built below replaces it. */
+    if (mlme.awdl_chanctx) {
+        mlme_info("giving the AWDL channel back: a network is being joined");
+        mlme_release_chanctx();
+        mlme.chan = NULL;
+        mlme.sband = NULL;
+    }
 
     mlme.bss = *bss;
     memcpy(mlme.ies, bss->ies, bss->ies_len);

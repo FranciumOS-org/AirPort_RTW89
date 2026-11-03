@@ -262,6 +262,11 @@ int rtw89_mlme_tx_awdl(const u8 *frame, size_t len);
 /* Whether that call would get as far as the radio: the same conditions, asked
  * without a frame, so the schedule can wait instead of counting refusals. */
 bool rtw89_mlme_awdl_tx_ready(void);
+
+/* Hold the radio on a social channel for AWDL while no network is joined,
+ * and give it back. See rtw89_mlme_awdl_hold_channel(). */
+int rtw89_mlme_awdl_hold_channel(u16 freq);
+void rtw89_mlme_awdl_release_channel(void);
 /* The AP's beacons while associated, FCS on; takes the skb. Any context. */
 void rtw89_mlme_rx_beacon(struct sk_buff *skb);
 /* The driver reports missed beacons / is done with a frame. Any context. */

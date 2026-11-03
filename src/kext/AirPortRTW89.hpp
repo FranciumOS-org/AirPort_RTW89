@@ -99,6 +99,8 @@ private:
      * changed: it runs only while awdl0 is up, macOS has asked for sync and
      * the family has given us a template to send. */
     void awdlClockUpdate();
+    void awdlChannelHold();
+    void awdlClockUpdateAndHold();
     bool transmit(mbuf_t m);
 
     /* Native Wi-Fi (AirPortRTW89Native.cpp): connected to AirPortRTW89Front

@@ -388,6 +388,14 @@ bool rtw89_glue_rx_local_us(uint64_t mactime, uint64_t *local_us);
  */
 uint8_t rtw89_glue_awdl_master_channel(void);
 
+/*
+ * Ask for the radio to be held on @freq for AWDL while no network is joined,
+ * or let it go again with 0. The request is carried out on a work thread,
+ * because the caller may be the link notify, which already holds the wiphy
+ * mutex. A network always outranks it.
+ */
+void rtw89_glue_awdl_hold_channel(uint16_t freq);
+
 /* An Ethernet frame the family sent to awdl0, to go out as an AWDL data
  * frame. Returns 0, or a negative errno when there is nothing to send it on. */
 int rtw89_glue_awdl_data_tx(const uint8_t *eth, size_t len);

@@ -69,6 +69,7 @@ struct AirPort_RTW89::NativeState {
     bool awdlClockOn = false;       /* whether the window clock is running */
     unsigned int awdlScanHeld = 0;  /* scans answered from the cache for it */
     uint8_t awdlMasterChannel = 0;  /* the followed master's own channel */
+    uint16_t awdlHeldFreq = 0;      /* the frequency asked for with nothing joined */
     uint64_t lastAwdlScan = 0;      /* when the last full scan ran under it */
     /* The sync frame the family builds for us to put on air. Broadcom's
      * setAWDL_SYNC_FRAME_TEMPLATE allocates 0x724 bytes for it, so that is the
@@ -767,7 +768,7 @@ void AirPort_RTW89::nativeLink(const struct rtw89_glue_link &link)
         _ns->front.set_link(_ns->front.ctx, true, mbit * 1000000ULL, 0);
         /* the radio has a channel and a vif now: the schedule follows it, and
          * frames stop being refused with ENETDOWN as they were before this */
-        awdlClockUpdate();
+        awdlClockUpdateAndHold();
         /* the join macOS asked for is complete: associated and keys in place */
         nativePost(APPLE80211_M_ASSOC_DONE, nullptr, 0);
         LOG("native link up");
@@ -780,7 +781,7 @@ void AirPort_RTW89::nativeLink(const struct rtw89_glue_link &link)
             nativePost(APPLE80211_M_DEAUTH_RECEIVED, nullptr, 0);
         nativePost(APPLE80211_M_LINK_CHANGED, nullptr, 0);
         /* back to the social channel the schedule describes when unassociated */
-        awdlClockUpdate();
+        awdlClockUpdateAndHold();
         LOG("native link down");
     } else if (!up && !joining && _ns->wasJoining) {
         /* a join that did not get there: macOS is waiting to hear */
@@ -1168,7 +1169,7 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
             _ns->awdlSyncEnabled = d->enabled != 0;
             _ns->awdlSyncOff = !_ns->awdlSyncEnabled;
             LOG("awdl: macOS asks for sync %s", _ns->awdlSyncEnabled ? "on" : "off");
-            awdlClockUpdate();
+            awdlClockUpdateAndHold();
             return kIOReturnSuccess;
         }
         bzero(d, sizeof(*d));
@@ -1203,7 +1204,7 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
             _ns->awdlTemplateLen = 0;
             rtw89_glue_awdl_template(nullptr, 0, nullptr);
             LOG("awdl: the sync frame template was cleared");
-            awdlClockUpdate();
+            awdlClockUpdateAndHold();
             return kIOReturnSuccess;
         }
         n = d->payload_len;
@@ -1219,7 +1220,7 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
          * transmit loop appends to the schedule it works out itself */
         rtw89_glue_awdl_template(_ns->awdlTemplate, n, _ns->vifMac);
         /* the last of the three things the clock waits for, usually */
-        awdlClockUpdate();
+        awdlClockUpdateAndHold();
         return kIOReturnSuccess;
     }
 
@@ -2505,6 +2506,12 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
  * trade the user asked for. Unassociated, we take social channel 6, which is
  * where 2.4 GHz AWDL peers listen.
  */
+void AirPort_RTW89::awdlClockUpdateAndHold()
+{
+    awdlClockUpdate();
+    awdlChannelHold();
+}
+
 void AirPort_RTW89::awdlClockUpdate()
 {
     struct rtw89_glue_link link;
@@ -2601,6 +2608,41 @@ void AirPort_RTW89::awdlClockUpdate()
 }
 
 /*
+ * Park the radio where the schedule says, when nothing else wants it.
+ *
+ * The association's channel is the radio's, and on an access point that
+ * cannot be moved off channel 1 that is the end of AWDL: every sync frame
+ * goes out where no peer listens. But macOS keeps Wi-Fi on and awdl0 up with
+ * no network joined -- that is the state AirDrop runs in on a machine that
+ * gets its internet elsewhere -- and in that state nothing else wants the
+ * radio. So it is asked for, on the social channel the schedule describes.
+ *
+ * Asked for, not taken: the request is carried out on a work thread and a
+ * join always wins, so this never stands between the user and a network.
+ */
+void AirPort_RTW89::awdlChannelHold()
+{
+    struct rtw89_glue_link link;
+    uint16_t freq = 0;
+
+    if (!_ns)
+        return;
+    rtw89_glue_link(&link);
+    if (_ns->awdlClockOn && !isConnected(link) && !isJoining(link))
+        freq = (uint16_t)freqOfChannel(_ns->awdlClockChannel, 0);
+    if (freq != _ns->awdlHeldFreq) {
+        if (freq)
+            LOG("awdl: nothing is joined, so the radio is asked to sit on "
+                "channel %u for the availability windows",
+                (unsigned int)_ns->awdlClockChannel);
+        else if (_ns->awdlHeldFreq)
+            LOG("awdl: the radio is wanted elsewhere; the schedule follows it");
+        _ns->awdlHeldFreq = freq;
+    }
+    rtw89_glue_awdl_hold_channel(freq);
+}
+
+/*
  * macOS asks for awdl0 with APPLE80211_IOC_VIRTUAL_IF_CREATE, role
  * APPLE80211_VIF_AWDL (6 on Ventura and later). The front hands the request to
  * the family, which builds the interface and names it; we only report the name
@@ -2647,7 +2689,7 @@ int AirPort_RTW89::nativeVirtualIfCreate(void *data)
     strlcpy(_ns->vifName, name, sizeof(_ns->vifName));
     /* There is somewhere to put received AWDL frames now. */
     rtw89_glue_awdl_deliver(true);
-    awdlClockUpdate();
+    awdlClockUpdateAndHold();
     LOG("virtual interface %s is up", _ns->vifName);
     bzero(d->bsd_name, sizeof(d->bsd_name));
     memcpy(d->bsd_name, name, strnlen(name, sizeof(d->bsd_name)));
@@ -2664,7 +2706,7 @@ int AirPort_RTW89::nativeVirtualIfDelete(void *data)
         return kIOReturnUnsupported;
     rtw89_glue_awdl_deliver(false);
     _ns->vifUp = false;
-    awdlClockUpdate();
+    awdlClockUpdateAndHold();
     _ns->front.destroy_vif(_ns->front.ctx);
     bzero(_ns->vifName, sizeof(_ns->vifName));
     return kIOReturnSuccess;
