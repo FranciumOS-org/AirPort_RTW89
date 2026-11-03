@@ -135,6 +135,14 @@ bool rtw89_awdl_master_timeline(u8 addr[6], u64 *next_aw_us, u16 *aw_seq,
 u8 rtw89_awdl_master_channel(void);
 
 /*
+ * The master half of the followed master's election parameters v2 TLV: its
+ * master address, synchronisation master address, metric and counter, 20
+ * bytes as it sent them. A follower repeats these unchanged; the family
+ * builds ours naming this machine, which contradicts the schedule we send.
+ */
+bool rtw89_awdl_master_election(u8 out[20]);
+
+/*
  * Data frames: what a transfer travels in, once peers know about each other.
  * @eth is a whole Ethernet frame as the family handed it to awdl0.
  */

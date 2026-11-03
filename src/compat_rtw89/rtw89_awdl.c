@@ -35,6 +35,10 @@ static const u8 kAppleOui[3] = { 0x00, 0x17, 0xf2 };
 #define AWDL_SUBTYPE_PSF    0
 #define AWDL_SUBTYPE_MIF    3
 #define AWDL_TLV_SYNC_PARAMS 4
+/* Election parameters v2, which names the master and carries its metric.
+ * The family builds ours naming this machine, which contradicts the
+ * synchronisation parameters once a real master is being followed. */
+#define AWDL_TLV_ELECTION_V2 24
 
 /* category + OUI + type + version + subtype + reserved + the two timestamps */
 #define AWDL_FIXED_LEN      (1 + 3 + 1 + 1 + 1 + 1 + 4 + 4)
@@ -182,6 +186,14 @@ static struct {
     u64  next_aw_us;        /* our clock, when that window begins */
     u64  seen_us;
     u32  frames;
+    /*
+     * The master half of its election parameters v2 TLV: the master address,
+     * the synchronisation master address, and the metric and counter that go
+     * with them -- the first 20 bytes of that TLV. A follower repeats these
+     * unchanged and keeps only its own self metric and counter.
+     */
+    bool have_election;
+    u8   election[20];
 } gMaster;
 
 static u64 awdl_now_us(void)
@@ -229,6 +241,17 @@ static void awdl_note_master(const u8 *sa, const u8 *v, size_t len, u64 rx_us)
     gMaster.aw_seq = (u16)((v[29] | ((u16)v[30] << 8)) + 1);
     gMaster.seen_us = awdl_now_us();
     gMaster.frames++;
+}
+
+bool rtw89_awdl_master_election(u8 out[20])
+{
+    if (!gMaster.have || !gMaster.have_election)
+        return false;
+    if (awdl_now_us() - gMaster.seen_us > AWDL_MASTER_STALE_US)
+        return false;
+    if (out)
+        memcpy(out, gMaster.election, sizeof(gMaster.election));
+    return true;
 }
 
 u8 rtw89_awdl_master_channel(void)
@@ -375,16 +398,31 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
          */
         if ((status->flag & RX_FLAG_MACTIME_START) &&
             rtw89_glue_rx_local_us(status->mactime, &arrived)) {
+            const u8 *election = NULL;
+            size_t election_len = 0;
+
             while (t + 3 <= end) {
                 size_t tl = (size_t)(t[1] | (t[2] << 8));
 
                 if (t + 3 + tl > end)
                     break;
-                if (t[0] == AWDL_TLV_SYNC_PARAMS) {
+                if (t[0] == AWDL_TLV_SYNC_PARAMS)
                     awdl_note_master(mgmt->sa, t + 3, tl, arrived);
-                    break;
+                else if (t[0] == AWDL_TLV_ELECTION_V2) {
+                    election = t + 3;
+                    election_len = tl;
                 }
                 t += 3 + tl;
+            }
+            /* Only from the master we settled on, and only after the sync
+             * parameters above have had their say about who that is. */
+            if (election && election_len >= sizeof(gMaster.election) &&
+                gMaster.have && ether_addr_equal(gMaster.addr, mgmt->sa)) {
+                memcpy(gMaster.election, election, sizeof(gMaster.election));
+                if (!gMaster.have_election)
+                    awdl_log("    and its election parameters, which we repeat "
+                             "rather than claiming to be master ourselves");
+                gMaster.have_election = true;
             }
         }
     }
@@ -750,6 +788,7 @@ void rtw89_awdl_tick(u32 now_us)
 {
     u8 sync_params[RTW89_AWDL_SYNC_PARAMS_LEN];
     u8 frame[RTW89_AWDL_SYNC_PARAMS_LEN + AWDL_TEMPLATE_MAX + 128];
+    u8 tlv_patched[AWDL_TEMPLATE_MAX];
     struct rtw89_awdl_schedule sched;
     struct rtw89_awdl_frame_params p;
     const u8 *tlvs = NULL, *mac = NULL;
@@ -848,6 +887,47 @@ void rtw89_awdl_tick(u32 now_us)
     p.sync_params_len = sizeof(sync_params);
     p.tlvs = tlvs;
     p.tlv_len = tlv_len;
+    /*
+     * The election parameters, made to agree with the schedule.
+     *
+     * The family builds the template believing this machine is the master:
+     * its election parameters v2 TLV carried our own address twice with a
+     * metric of 0x41. Our synchronisation parameters name the peer we follow,
+     * so every frame we sent said one thing in one TLV and the opposite in
+     * another, and no peer would adopt a master that cannot agree with
+     * itself -- which is what the iPhone never listing this machine looked
+     * like, with the timeline followed to within a millisecond and 454 frames
+     * going out on the master's own channel.
+     *
+     * A follower repeats the master's half of that TLV unchanged and keeps
+     * only its own self metric and counter, so that is what is done: the
+     * master's first 20 bytes as it sent them, our own tail untouched. The
+     * template itself is left alone; the copy is what goes on air.
+     */
+    {
+        u8 election[20];
+
+        if (tlv_len <= sizeof(tlv_patched) &&
+            rtw89_awdl_master_election(election)) {
+            u8 *t = tlv_patched;
+            const u8 *e;
+
+            memcpy(tlv_patched, tlvs, tlv_len);
+            e = tlv_patched + tlv_len;
+            while (t + 3 <= e) {
+                size_t tl = (size_t)(t[1] | (t[2] << 8));
+
+                if (t + 3 + tl > e)
+                    break;
+                if (t[0] == AWDL_TLV_ELECTION_V2 && tl >= sizeof(election)) {
+                    memcpy(t + 3, election, sizeof(election));
+                    p.tlvs = tlv_patched;
+                    break;
+                }
+                t += 3 + tl;
+            }
+        }
+    }
 
     len = rtw89_awdl_build_sync_frame(frame, sizeof(frame), &p);
     if (!len)
