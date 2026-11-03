@@ -85,6 +85,9 @@ private:
     /* Whether the task held the event entitlement; recorded, not required,
      * which is what the family does with it too. */
     bool _entitled = false;
+    /* One bit per selector already named in the log, so an unknown one is
+     * reported once rather than on every call. */
+    uint32_t _loggedSelectors = 0;
 };
 
 class AirPortRTW89FrontInterface : public IO80211Interface {

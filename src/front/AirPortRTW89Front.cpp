@@ -430,9 +430,27 @@ IOReturn IO80211P2PDaemonUserClient::externalMethod(uint32_t selector,
         return kIOReturnSuccess;
 
     default:
-        LOG("awdl: the event client was asked for selector %u, which it does not implement",
-            (unsigned int)selector);
-        return kIOReturnUnsupported;
+        /*
+         * Anything else is answered as "nothing to report" rather than
+         * refused. The framework treats a non-zero return as fatal and gives
+         * up on the interface, and every call it makes here is a query about
+         * an event pipe that is legitimately empty, so success with a zeroed
+         * answer is the truthful reply and a refusal is not. Each selector is
+         * named once so the set the framework actually uses can be read off
+         * the log instead of costing a boot apiece.
+         */
+        if (selector < 32 && !(_loggedSelectors & (1u << selector))) {
+            _loggedSelectors |= 1u << selector;
+            LOG("awdl: the event client answered selector %u as empty "
+                "(%u bytes of struct out, %u scalars)",
+                (unsigned int)selector, (unsigned int)args->structureOutputSize,
+                (unsigned int)args->scalarOutputCount);
+        }
+        if (args->structureOutput && args->structureOutputSize)
+            bzero(args->structureOutput, args->structureOutputSize);
+        for (uint32_t i = 0; i < args->scalarOutputCount; i++)
+            args->scalarOutput[i] = 0;
+        return kIOReturnSuccess;
     }
 }
 
