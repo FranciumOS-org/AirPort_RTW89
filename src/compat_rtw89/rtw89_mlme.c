@@ -3718,6 +3718,22 @@ void rtw89_mlme_set_tx_tap(void (*tap)(const u8 *frame, size_t len))
 /* rtw89_core_wrap.c: needs core.c's static link helpers. */
 bool rtw89_compat_vif_can_tx(struct ieee80211_vif *vif);
 
+/*
+ * The conditions rtw89_mlme_tx_awdl() checks, asked on their own.
+ *
+ * The schedule starts as soon as awdl0 is up and the template has arrived,
+ * which is about half a minute before the radio will carry anything: 257
+ * sync frames were built and refused with -ENETDOWN, all of them in the
+ * window where AirDrop is first opened and a peer is first looking for us.
+ * Waiting is not a failure and should not be counted or logged as one.
+ */
+bool rtw89_mlme_awdl_tx_ready(void)
+{
+    if (!mlme.hw || !mlme.vif || !mlme.local || !mlme.chan)
+        return false;
+    return rtw89_compat_vif_can_tx(mlme.vif);
+}
+
 int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
 {
     struct sk_buff *skb;

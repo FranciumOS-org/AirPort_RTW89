@@ -528,6 +528,8 @@ static struct {
     u32  data_sent;
     u32  data_failed;
     int  last_err;              /* the last refusal, so a change is noticed */
+    u32  waiting;               /* windows passed before the radio was ready */
+    bool ready_said;
 } gTx;
 
 void rtw89_awdl_tx_start(u8 channel)
@@ -574,8 +576,21 @@ void rtw89_awdl_tick(u32 now_us)
 
     if (!gTx.on)
         return;
-    /* the window number counts every window, whether or not we send in it */
+    /*
+     * The window number counts every window, whether or not we send in it --
+     * including the ones spent waiting for the radio, so the timeline does
+     * not shift once it is ready.
+     */
     gTx.aw_seq++;
+    if (!rtw89_mlme_awdl_tx_ready()) {
+        gTx.waiting++;
+        return;
+    }
+    if (gTx.waiting && !gTx.ready_said) {
+        gTx.ready_said = true;
+        awdl_log("the radio can carry frames now, after %u window(s) of waiting",
+                 (unsigned int)gTx.waiting);
+    }
     if (gTx.windows++ % AWDL_AW_PER_AF)
         return;
 
