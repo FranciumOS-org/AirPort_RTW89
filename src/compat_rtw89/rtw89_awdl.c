@@ -39,6 +39,11 @@ static const u8 kAppleOui[3] = { 0x00, 0x17, 0xf2 };
  * The family builds ours naming this machine, which contradicts the
  * synchronisation parameters once a real master is being followed. */
 #define AWDL_TLV_ELECTION_V2 24
+#define AWDL_TLV_ELECTION_V1 5
+#define AWDL_TLV_HT          7
+#define AWDL_TLV_CHANSEQ     18
+#define AWDL_TLV_HDR_LEN     3
+#define AWDL_TLV_VERSION     21
 /*
  * The two TLVs IO80211 cannot parse without panicking: the service response
  * (type 2, which actionFrameReport()'s jump table sends to
@@ -60,6 +65,8 @@ static u32 gLastTargetTx;   /* to show the period between sync frames */
 /* Only the first few of each kind, so a busy room cannot fill the log ring. */
 static unsigned int gSeen[4];
 #define AWDL_LOG_LIMIT 12
+/* The metric the family's template gives us, 65 on every run so far. */
+#define AWDL_SELF_METRIC 65
 
 void rtw89_awdl_watch(bool on)
 {
@@ -234,6 +241,12 @@ static struct {
      */
     bool have_election;
     u8   election[20];
+    /* Its election parameters (v1) and HT capabilities TLVs, whole, for the
+     * frames we send; see rtw89_awdl_compose_tlvs(). */
+    bool have_election_v1;
+    u8   election_v1[RTW89_AWDL_ELECTION_V1_LEN];
+    u8   ht_len;
+    u8   ht[RTW89_AWDL_HT_MAX];
 } gMaster;
 
 static u64 awdl_now_us(void)
@@ -452,6 +465,17 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
                     election = t + 3;
                     election_len = tl;
                 }
+                else if (t[0] == AWDL_TLV_ELECTION_V1 &&
+                         tl == sizeof(gMaster.election_v1) &&
+                         gMaster.have && ether_addr_equal(gMaster.addr, mgmt->sa)) {
+                    memcpy(gMaster.election_v1, t + 3, tl);
+                    gMaster.have_election_v1 = true;
+                }
+                else if (t[0] == AWDL_TLV_HT && tl && tl <= sizeof(gMaster.ht) &&
+                         gMaster.have && ether_addr_equal(gMaster.addr, mgmt->sa)) {
+                    memcpy(gMaster.ht, t + 3, tl);
+                    gMaster.ht_len = (u8)tl;
+                }
                 t += 3 + tl;
             }
             /* Only from the master we settled on, and only after the sync
@@ -574,8 +598,15 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
             awdl_log_sync_params(tlv + 3, tlen);
             awdl_log_hex("sync params", tlv + 3, tlen);
         }
-        else
+        else {
             awdl_log("    TLV type %u, %u bytes", (unsigned int)type, (unsigned int)tlen);
+            /* The ones we have to send, or may have to, and do not know from
+             * a capture yet. */
+            if (type == AWDL_TLV_CHANSEQ || type == AWDL_TLV_ELECTION_V1 ||
+                type == AWDL_TLV_HT || type == 17 || type == 33 ||
+                type == AWDL_TLV_ARPA)
+                awdl_log_hex("its contents", tlv + 3, tlen);
+        }
         tlv += 3 + tlen;
     }
     return true;
@@ -665,7 +696,6 @@ size_t rtw89_awdl_get_template(const u8 **tlvs, const u8 **mac)
 }
 
 /* The TLV header the decoder above walks: type, then the length little endian. */
-#define AWDL_TLV_HDR_LEN    3
 
 size_t rtw89_awdl_sync_frame_len(size_t sync_params_len, size_t tlv_len)
 {
@@ -767,6 +797,22 @@ size_t rtw89_awdl_build_sync_frame(u8 *buf, size_t size,
 /* The first byte of a channel slot: 0x2b beside channel 6 in every capture.
  * It encodes the band and width; only the one we were given is known good. */
 #define AWDL_SLOT_FLAGS_2GHZ    0x2b
+/*
+ * 5 GHz slots, read off an iPhone's sequence: 1d 2e and 1d 97, channel 44 and
+ * 149 named by the centre of their 40 MHz pair. That iPhone was on channel 6
+ * in one slot of 16 and on 44 in six, so a 5 GHz slot written with the 2 GHz
+ * flags said we were somewhere no peer could look for us.
+ */
+#define AWDL_SLOT_FLAGS_5GHZ    0x1d
+
+static u8 awdl_slot_channel(u8 channel)
+{
+    if (channel <= 14)
+        return channel;
+    if (channel >= 149)
+        return (u8)(151 + (channel - 149) / 8 * 8);
+    return (u8)(38 + (channel - 36) / 8 * 8);
+}
 
 static void awdl_put_le16(u8 *p, u16 v)
 {
@@ -814,11 +860,83 @@ size_t rtw89_awdl_build_sync_params(u8 *buf, size_t size,
 
     seq = buf + 39;
     for (i = 0; i < AWDL_SYNC_SLOTS; i++) {
-        seq[2 * i] = AWDL_SLOT_FLAGS_2GHZ;
-        seq[2 * i + 1] = s->channel;
+        seq[2 * i] = s->channel <= 14 ? AWDL_SLOT_FLAGS_2GHZ : AWDL_SLOT_FLAGS_5GHZ;
+        seq[2 * i + 1] = awdl_slot_channel(s->channel);
     }
     /* 71..72 left zero: see above */
     return RTW89_AWDL_SYNC_PARAMS_LEN;
+}
+
+/*
+ * What a sync frame carries after the synchronisation parameters, in the
+ * order real frames use: channel sequence, election parameters, then the
+ * family's template with the HT capabilities before its version TLV.
+ *
+ * The channel sequence is the 38 bytes already in the synchronisation
+ * parameters plus three of padding, which makes the 41 real frames have. The
+ * election and HT TLVs have no layout we can vouch for, so they are the
+ * master's own: a follower's election TLV differs only in its distance (offset
+ * 3) and self metric (offset 15), and either TLV is left out when no master
+ * has given us one.
+ */
+size_t rtw89_awdl_compose_tlvs(u8 *out, size_t size, const u8 *sync_params,
+                               const u8 *tlvs, size_t tlv_len,
+                               const u8 *election_v1, const u8 *ht, size_t ht_len)
+{
+    size_t at = 0, off = 0;
+    size_t need = AWDL_TLV_HDR_LEN + 41 + tlv_len +
+                  (election_v1 ? AWDL_TLV_HDR_LEN + RTW89_AWDL_ELECTION_V1_LEN : 0) +
+                  (ht_len ? AWDL_TLV_HDR_LEN + ht_len : 0);
+    bool ht_done = !ht_len;
+
+    if (!out || !sync_params || (tlv_len && !tlvs) || (ht_len && !ht) || need > size)
+        return 0;
+
+    out[at++] = AWDL_TLV_CHANSEQ;
+    awdl_put_le16(out + at, 41);
+    at += 2;
+    memcpy(out + at, sync_params + 33, 38);
+    memset(out + at + 38, 0, 3);
+    at += 41;
+
+    if (election_v1) {
+        out[at++] = AWDL_TLV_ELECTION_V1;
+        awdl_put_le16(out + at, RTW89_AWDL_ELECTION_V1_LEN);
+        at += 2;
+        memcpy(out + at, election_v1, RTW89_AWDL_ELECTION_V1_LEN);
+        out[at + 3]++;              /* one further from the master than it is */
+        out[at + 15] = AWDL_SELF_METRIC;
+        memset(out + at + 16, 0, 3);
+        at += RTW89_AWDL_ELECTION_V1_LEN;
+    }
+
+    while (off < tlv_len) {
+        size_t tl = off + AWDL_TLV_HDR_LEN <= tlv_len ?
+                    (size_t)(tlvs[off + 1] | (tlvs[off + 2] << 8)) : tlv_len;
+        size_t whole = AWDL_TLV_HDR_LEN + tl;
+
+        if (off + whole > tlv_len)
+            whole = tlv_len - off;  /* not ours to judge: passed on as given */
+        if (!ht_done && tlvs[off] == AWDL_TLV_VERSION) {
+            out[at++] = AWDL_TLV_HT;
+            awdl_put_le16(out + at, (u16)ht_len);
+            at += 2;
+            memcpy(out + at, ht, ht_len);
+            at += ht_len;
+            ht_done = true;
+        }
+        memcpy(out + at, tlvs + off, whole);
+        at += whole;
+        off += whole;
+    }
+    if (!ht_done) {
+        out[at++] = AWDL_TLV_HT;
+        awdl_put_le16(out + at, (u16)ht_len);
+        at += 2;
+        memcpy(out + at, ht, ht_len);
+        at += ht_len;
+    }
+    return at;
 }
 
 /* ------------------------------------------------------------------ */
@@ -892,7 +1010,9 @@ void rtw89_awdl_tx_counts(u32 *sent, u32 *failed)
 void rtw89_awdl_tick(u32 now_us)
 {
     u8 sync_params[RTW89_AWDL_SYNC_PARAMS_LEN];
-    u8 frame[RTW89_AWDL_SYNC_PARAMS_LEN + AWDL_TEMPLATE_MAX + 128];
+    /* Static: the tick is the only user, and this much is unkind to a stack. */
+    static u8 frame[RTW89_AWDL_SYNC_PARAMS_LEN + AWDL_TEMPLATE_MAX + 256];
+    static u8 tlv_out[AWDL_TEMPLATE_MAX + 128];
     u8 tlv_patched[AWDL_TEMPLATE_MAX];
     struct rtw89_awdl_schedule sched;
     struct rtw89_awdl_frame_params p;
@@ -1058,6 +1178,18 @@ void rtw89_awdl_tick(u32 now_us)
                 }
                 t += 3 + tl;
             }
+        }
+    }
+
+    {
+        size_t composed = rtw89_awdl_compose_tlvs(tlv_out, sizeof(tlv_out), sync_params,
+                                                  p.tlvs, p.tlv_len,
+                                                  gMaster.have_election_v1 ? gMaster.election_v1 : NULL,
+                                                  gMaster.ht, gMaster.ht_len);
+
+        if (composed) {
+            p.tlvs = tlv_out;
+            p.tlv_len = composed;
         }
     }
 

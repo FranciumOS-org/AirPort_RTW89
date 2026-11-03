@@ -1082,6 +1082,40 @@ static void test_awdl_sync_params(void)
         CHECK(buf[39 + 2 * i + 1] == 6);
     }
 
+    /* a 5 GHz channel is written the way an iPhone writes it */
+    {
+        struct rtw89_awdl_schedule five = s;
+        u8 fbuf[RTW89_AWDL_SYNC_PARAMS_LEN];
+
+        five.channel = 44;
+        CHECK(rtw89_awdl_build_sync_params(fbuf, sizeof(fbuf), &five) == sizeof(fbuf));
+        CHECK(fbuf[39] == 0x1d && fbuf[40] == 46);
+        five.channel = 149;
+        CHECK(rtw89_awdl_build_sync_params(fbuf, sizeof(fbuf), &five) == sizeof(fbuf));
+        CHECK(fbuf[39] == 0x1d && fbuf[40] == 151);
+    }
+
+    /* the TLVs around the family's template, in the order real frames have */
+    {
+        static const u8 tmpl[] = { 6, 1, 0, 0xaa, 21, 2, 0, 0x71, 0x01 };
+        static const u8 ht[] = { 1, 2 };
+        u8 el[RTW89_AWDL_ELECTION_V1_LEN], out[128];
+        size_t n;
+
+        memset(el, 0x11, sizeof(el));
+        n = rtw89_awdl_compose_tlvs(out, sizeof(out), buf, tmpl, sizeof(tmpl),
+                                    el, ht, sizeof(ht));
+        CHECK(n == 3 + 41 + 3 + 21 + sizeof(tmpl) + 3 + 2);
+        CHECK(out[0] == 18 && out[1] == 41 && out[2] == 0);
+        CHECK(memcmp(out + 3, buf + 33, 38) == 0);
+        CHECK(out[44] == 5 && out[47 + 3] == 0x12 && out[47 + 15] == 65);
+        CHECK(out[68] == 6 && out[72] == 7 && out[77] == 21);
+        /* nothing from a master yet: only what we can vouch for */
+        n = rtw89_awdl_compose_tlvs(out, sizeof(out), buf, tmpl, sizeof(tmpl), NULL, NULL, 0);
+        CHECK(n == 3 + 41 + sizeof(tmpl));
+        CHECK(rtw89_awdl_compose_tlvs(out, 20, buf, tmpl, sizeof(tmpl), NULL, NULL, 0) == 0);
+    }
+
     /* and everything else is what the real frame carried */
     for (i = 0; i < sizeof(buf); i++) {
         bool mine = false;

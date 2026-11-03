@@ -84,6 +84,17 @@ struct rtw89_awdl_schedule {
 /* Writes the 73 byte payload into @buf; returns its length, or 0 if it does
  * not fit.  RTW89_AWDL_SYNC_PARAMS_LEN bytes are needed. */
 #define RTW89_AWDL_SYNC_PARAMS_LEN  73
+#define RTW89_AWDL_ELECTION_V1_LEN  21
+#define RTW89_AWDL_HT_MAX           24
+
+/*
+ * Everything after the synchronisation parameters in a sync frame: see the
+ * definition.  Returns the bytes written, 0 if they do not fit.  @election_v1
+ * may be NULL and @ht_len 0, which leaves that TLV out.
+ */
+size_t rtw89_awdl_compose_tlvs(u8 *out, size_t size, const u8 *sync_params,
+                               const u8 *tlvs, size_t tlv_len,
+                               const u8 *election_v1, const u8 *ht, size_t ht_len);
 size_t rtw89_awdl_build_sync_params(u8 *buf, size_t size,
                                     const struct rtw89_awdl_schedule *s);
 
