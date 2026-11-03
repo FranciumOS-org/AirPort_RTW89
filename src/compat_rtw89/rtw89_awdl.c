@@ -39,8 +39,17 @@ static const u8 kAppleOui[3] = { 0x00, 0x17, 0xf2 };
  * The family builds ours naming this machine, which contradicts the
  * synchronisation parameters once a real master is being followed. */
 #define AWDL_TLV_ELECTION_V2 24
-/* The peer's host name, which IO80211 cannot parse without panicking */
-#define AWDL_TLV_ARPA        0x10
+/*
+ * The two TLVs IO80211 cannot parse without panicking: the service response
+ * (type 2, which actionFrameReport()'s jump table sends to
+ * processServiceResponseTLV() and on to initWithTLVData()) and the peer's host
+ * name (type 0x10, which goes to initWithArpaTLV()). Those two functions are
+ * the only callers of awdlUncompressData(), so leaving these out is what shuts
+ * that path completely; see awdl_tlv_breaks_io80211() below for why it has to
+ * be shut.
+ */
+#define AWDL_TLV_SERVICE_RESPONSE 0x02
+#define AWDL_TLV_ARPA             0x10
 
 /* category + OUI + type + version + subtype + reserved + the two timestamps */
 #define AWDL_FIXED_LEN      (1 + 3 + 1 + 1 + 1 + 1 + 4 + 4)
@@ -153,6 +162,35 @@ static void awdl_log_hex(const char *what, const u8 *v, size_t len)
 
 /* What has come back the other way; see rtw89_awdl_rx(). */
 static struct { u32 data_seen; u32 offered; u32 matched; u32 apple; u32 arpa; } gRx;
+
+/*
+ * Whether handing this TLV to IO80211 would panic the machine.
+ *
+ * IO80211ServiceRequestDescriptor::awdlUncompressData() decompresses the TLV
+ * into a 512-byte buffer and then checks two guard bytes, at _bufout+0x200 and
+ * _bufout+0x410, for the value 0xaa. uncompressAwdl() itself is properly
+ * bounded -- it refuses to write past outlen-1, so it cannot reach either
+ * guard -- but _bufout lives in __DATA,__common, which is zero-filled when the
+ * kext loads, and nothing in the binary ever writes 0xaa there. So the
+ * comparison can never hold, and the first decompression that succeeds panics:
+ *
+ *   panic: "bufout overflow! awdlUncompressData 1740"
+ *
+ * This is IO80211FamilyLegacy 1200.12.2b1, a beta build, and the check looks
+ * like instrumentation whose initialiser did not survive into it. Nothing we
+ * put on the wire can satisfy it, and both ways in are reached from one TLV
+ * type each, so those two types are kept out of the copy the family is given.
+ *
+ * What is given up is real: the family never learns the peer's services or its
+ * host name from the air, which is what it would otherwise publish in the
+ * service parameters TLV. Everything structural -- synchronisation, election,
+ * the channel sequence, the data path state -- is carried in other TLVs and
+ * goes through untouched.
+ */
+static bool awdl_tlv_breaks_io80211(u8 type)
+{
+    return type == AWDL_TLV_SERVICE_RESPONSE || type == AWDL_TLV_ARPA;
+}
 
 /*
  * The master's timeline, which is the thing we were missing.
@@ -479,7 +517,7 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
 
                 if (t + 3 + tl > end)
                     break;
-                if (t[0] == AWDL_TLV_ARPA)
+                if (awdl_tlv_breaks_io80211(t[0]))
                     stripped = true;
                 else {
                     memcpy(filtered + out, t, 3 + tl);
@@ -488,9 +526,10 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
                 t += 3 + tl;
             }
             if (stripped && !gRx.arpa++)
-                awdl_log("the peer's host name TLV is left out of what IO80211 "
-                         "is given: its own decompressor overruns a fixed "
-                         "buffer and panics on it");
+                awdl_log("the peer's service and host name TLVs are left out of "
+                         "what IO80211 is given: its own decompressor checks a "
+                         "guard byte that is never set, so the first one it "
+                         "parses panics the machine");
             rtw89_glue_awdl_frame(filtered, out, mgmt->sa,
                                   ieee80211_frequency_to_channel(status->freq),
                                   status->signal);
