@@ -123,11 +123,23 @@ extern "C" void rtw89_vif_push_packet(void *virtualInterface, mbuf_t m)
  * from reportDataPathEvents(), monitorTimeline() and logAWStart():
  *
  *   +0x00  the window number, as a word
+ *   +0x04  the driver's synchronisation state
  *   +0x08  a six byte address, compared against the peer manager's own
- *   +0x0e  a second six byte address, compared against another of its own
+ *   +0x0e  the master's address, which the peer manager adopts as its top
+ *          master (reportDataPathEvents copies it to peerManager + 0x27fb and
+ *          calls topMasterChanged() whenever it differs)
  *   +0x14  a word read big-endian and logged
  *   +0x18  a timestamp, kept as-is
  *   +0x20  a word, kept as-is
+ *
+ * The field at +0x04 is the one that decides whether anything we hand up is
+ * looked at. reportDataPathEvents() stores it at peerManager + 0xcd4, and
+ * actionFrameProcessInput() throws away every frame while that word is zero.
+ * It was never filled in, so a zeroed buffer told the family we were not
+ * synchronised on every single window: awdl0 came up, peers were discovered
+ * over BLE, AirDrop opened, and not one action frame was ever processed. One
+ * is the synchronised value the family's own code compares against
+ * (setAwdlSyncState, logAWStart, updatePrimaryPayloadMI all test for 1).
  *
  * Every one of those is a scalar or an array read out of the buffer we pass
  * and none is a pointer followed, so a field misread here is a wrong value
@@ -749,18 +761,14 @@ void AirPortRTW89Front::awdlEnableThread(thread_call_param_t p0, thread_call_par
     }
 
     /*
-     * And the sync state, which is the last thing standing between a frame
-     * from a peer and the family looking at it. Asking for state 1 is what
-     * userspace asks for when it is the one driving this.
+     * The sync state is not set from here. It is the driver's own answer and
+     * the family wants it in the availability window report, which is where
+     * opAwdlWindow() now puts it: reportDataPathEvents() takes it out of the
+     * event and stores it. setAwdlSyncState() reaches the same word, but it
+     * is a full reconfigure on the way -- it clears the receive gate bit,
+     * resets the election and lands on sync off -- so calling it per enable
+     * undid the thing it was called for.
      */
-    if (!*reinterpret_cast<const unsigned int *>(pm + 0xcd4)) {
-        struct rtw89_awdl_sync_state want = { APPLE80211_VERSION, 1 };
-        int e = rtw89_awdl_set_sync_state(const_cast<uint8_t *>(pm), &want);
-
-        LOG("    after setAwdlSyncState(1): %d, sync state %u, state flags 0x%x", e,
-            *reinterpret_cast<const unsigned int *>(pm + 0xcd4),
-            *reinterpret_cast<const unsigned int *>(pm + 0x8528));
-    }
     OSDecrementAtomic(&self->_awdlEnableBusy);
 }
 
@@ -1190,7 +1198,7 @@ memcpy(hdr, peer, 6);
             const void *pmIface = *reinterpret_cast<const void *const *>(pm + 0xb8);
             const void *ifCtrl = *reinterpret_cast<const void *const *>(vraw + 0xc8);
 
-            LOG("    link state %d, AWDL enabled %u, state flags 0x%x -> frame %s",
+            LOG("    link state %d, sync state %u, state flags 0x%x -> frame %s",
                 *reinterpret_cast<const int *>(vraw + 0xfc),
                 *reinterpret_cast<const unsigned int *>(pm + 0xcd4),
                 *reinterpret_cast<const unsigned int *>(pm + 0x8528),
@@ -1290,8 +1298,17 @@ void AirPortRTW89Front::opAwdlWindow(void *ctx, uint32_t aw_seq,
         return;
 
     *reinterpret_cast<uint32_t *>(payload) = aw_seq;
+    /* synchronised: the clock is running and this window is one of its own */
+    *reinterpret_cast<uint32_t *>(payload + 0x04) = 1;
     memcpy(payload + 0x08, master, 6);
-    memcpy(payload + 0x0e, self->_mac.bytes, 6);
+    /*
+     * The master, not us. Our own address went here while a real device was
+     * the master, so every window overwrote the peer manager's top master
+     * with this machine and fired topMasterChanged() against the election's
+     * own choice. When we keep our own time the compat side passes our
+     * address as the master anyway, so this is right either way.
+     */
+    memcpy(payload + 0x0e, master, 6);
     *reinterpret_cast<uint32_t *>(payload + 0x14) = OSSwapHostToBigInt32(aw_seq);
     *reinterpret_cast<uint64_t *>(payload + 0x18) = mach_absolute_time();
     *reinterpret_cast<uint32_t *>(payload + 0x20) = 16;   /* the window, in TU */

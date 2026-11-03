@@ -2540,50 +2540,28 @@ void AirPort_RTW89::awdlClockUpdate()
         channel = isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
                                     : awdlSocialChannel();
     /*
-     * The master's own channel outranks all of that once one is being
-     * followed. Its sync frames say which channel it keeps its windows on,
-     * and until now we sat wherever the boot-arg or the association put us:
-     * the log read "following the AWDL master .. on channel 6" while this
-     * card sat on 149, so we were keeping its time perfectly on a channel it
-     * was not listening to. It is heard on 149 because it passes through;
-     * being heard back means being where it dwells.
+     * The master's own channel is logged, not followed.
+     *
+     * It was followed for a while, and that was worse than ignoring it. The
+     * radio sits where the association put it; nothing here can move it, and
+     * there is no off-channel path on this driver yet. Taking the master's
+     * channel only changed what our sync frames *claimed*: the card
+     * transmitted on 36 while every frame said "master channel 6, next window
+     * on 6", which is a channel the frame never reached and which no peer
+     * could act on. Advertising the channel we are really on is at least
+     * true, and it lines up the moment the association is on a social
+     * channel.
      */
     {
         uint8_t mchan = rtw89_glue_awdl_master_channel();
 
-        if (mchan && mchan != channel) {
-            if (_ns->awdlMasterChannel != mchan)
-                LOG("awdl: the master keeps its windows on channel %u, so that "
-                    "is where we sit rather than %u",
-                    (unsigned int)mchan, (unsigned int)channel);
+        if (mchan && mchan != channel && _ns->awdlMasterChannel != mchan)
+            LOG("awdl: the master keeps its windows on channel %u while this "
+                "card sits on %u; one radio cannot hold both, so join a "
+                "network on a social channel (6, 44 or 149) for a transfer",
+                (unsigned int)mchan, (unsigned int)channel);
+        if (mchan)
             _ns->awdlMasterChannel = mchan;
-            channel = mchan;
-        } else if (mchan) {
-            _ns->awdlMasterChannel = mchan;
-        }
-    }
-    /*
-     * The master's own channel outranks all of that once one is being
-     * followed. Its sync frames say which channel it keeps its windows on,
-     * and until now we sat wherever the boot-arg or the association put us:
-     * the log read "following the AWDL master .. on channel 6" while this
-     * card sat on 149, so we were keeping its time perfectly on a channel it
-     * was not listening to. It is heard on 149 because it passes through;
-     * being heard back means being where it dwells.
-     */
-    {
-        uint8_t mchan = rtw89_glue_awdl_master_channel();
-
-        if (mchan && mchan != channel) {
-            if (_ns->awdlMasterChannel != mchan)
-                LOG("awdl: the master keeps its windows on channel %u, so that "
-                    "is where we sit rather than %u",
-                    (unsigned int)mchan, (unsigned int)channel);
-            _ns->awdlMasterChannel = mchan;
-            channel = mchan;
-        } else if (mchan) {
-            _ns->awdlMasterChannel = mchan;
-        }
     }
     /*
      * A frame goes out on whatever channel the radio is on, and its own sync

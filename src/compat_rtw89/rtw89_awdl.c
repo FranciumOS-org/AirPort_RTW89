@@ -1042,13 +1042,17 @@ void rtw89_awdl_tick(u32 now_us)
      * can keep its own timeline. Reported once per action frame window rather
      * than once per window: it is the progression the family tracks, and
      * eight a second is enough of it.
+     *
+     * Reported whether or not a master is being followed. It used to be sent
+     * only while one was, and the family's synchronisation state is what that
+     * report carries: with no master heard -- which is every run that starts
+     * before a peer does -- the state stayed zero and the family threw away
+     * every action frame that arrived, so no peer could ever become the
+     * master that would have started the reports. Our own address is the
+     * master's when we are keeping our own time, which is what the frames we
+     * send already say.
      */
-    {
-        u8 maddr[ETH_ALEN];
-
-        if (rtw89_awdl_master_timeline(maddr, NULL, NULL, NULL))
-            rtw89_glue_awdl_window(sched.aw_seq, maddr);
-    }
+    rtw89_glue_awdl_window(sched.aw_seq, sched.master);
 
     err = rtw89_mlme_tx_awdl(frame, len);
     if (err) {
