@@ -1001,7 +1001,16 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
      * run, and it has nothing to choose a social channel from while the answer
      * is "unsupported", so it never gets as far as setting anything.
      */
+    /*
+     * CHANNELS_INFO is the richer channel list, and it was refused eight times
+     * in one boot before wifip2pd gave up on building its AWDL interface --
+     * the same shape of failure SUPPORTED_CHANNELS above caused, for the same
+     * reason. HT and VHT capability are the card's too.
+     */
     case APPLE80211_IOC_SUPPORTED_CHANNELS:
+    case APPLE80211_IOC_CHANNELS_INFO:
+    case APPLE80211_IOC_HT_CAPABILITY:
+    case APPLE80211_IOC_VHT_CAPABILITY:
     case APPLE80211_IOC_POWER:
         return isSet ? EOPNOTSUPP : nativeRequest(false, number, data);
 
@@ -1054,6 +1063,10 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
     case APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE:
     case APPLE80211_IOC_AWDL_PRESENCE_MODE:
     case APPLE80211_IOC_AWDL_EXTENSION_STATE_MACHINE_PARAMETERS:
+    /* Asked for four times and refused in the boot where wifip2pd failed;
+     * there is no out-of-band request path here to drive, so it is taken and
+     * logged like the rest of the sequence above. */
+    case APPLE80211_IOC_AWDL_OOB_AUTO_REQUEST:
     case APPLE80211_IOC_AWDL_SYNC_STATE:
         if (!isSet)
             return EOPNOTSUPP;
