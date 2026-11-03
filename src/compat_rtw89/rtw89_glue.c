@@ -2244,6 +2244,11 @@ static void glue_awdl_chan_work(struct work_struct *work)
         return;
     if (freq == glue.awdl_chan_held)
         return;
+    /* Not in the middle of a scan: the firmware is hopping, and taking a
+     * channel context under it is what the join path refuses to do too. The
+     * request stands and is tried again on the next one. */
+    if (glue.scanning)
+        return;
     wiphy_lock(hw->wiphy);
     if (!freq) {
         rtw89_mlme_awdl_release_channel();
@@ -2267,9 +2272,12 @@ void rtw89_glue_awdl_hold_channel(uint16_t freq)
 {
     if (!glue.active)
         return;
-    if (glue.awdl_chan_freq == freq)
-        return;
     glue.awdl_chan_freq = freq;
+    /* Queued whenever what is wanted and what is held disagree, not only when
+     * the request changes: the work declines during a scan, and this is what
+     * tries it again afterwards. */
+    if (freq == glue.awdl_chan_held)
+        return;
     if (glue.rejoin_wq)
         queue_work(glue.rejoin_wq, &glue.awdl_chan_work);
 }

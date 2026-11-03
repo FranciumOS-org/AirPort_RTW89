@@ -99,7 +99,7 @@ private:
      * changed: it runs only while awdl0 is up, macOS has asked for sync and
      * the family has given us a template to send. */
     void awdlClockUpdate();
-    void awdlChannelHold();
+    void awdlChannelHold(const struct rtw89_glue_link &link);
     void awdlClockUpdateAndHold();
     bool transmit(mbuf_t m);
 

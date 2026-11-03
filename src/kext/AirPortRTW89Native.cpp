@@ -70,6 +70,7 @@ struct AirPort_RTW89::NativeState {
     unsigned int awdlScanHeld = 0;  /* scans answered from the cache for it */
     uint8_t awdlMasterChannel = 0;  /* the followed master's own channel */
     uint16_t awdlHeldFreq = 0;      /* the frequency asked for with nothing joined */
+    uint8_t awdlHoldWhy = 0xff;     /* why it is not being held; see awdlChannelHold() */
     uint64_t lastAwdlScan = 0;      /* when the last full scan ran under it */
     /* The sync frame the family builds for us to put on air. Broadcom's
      * setAWDL_SYNC_FRAME_TEMPLATE allocates 0x724 bytes for it, so that is the
@@ -1611,6 +1612,10 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
     struct rtw89_glue_link link;
 
     rtw89_glue_link(&link);
+    /* The radio is only AWDL's while nothing else wants it, and that is a
+     * state the machine settles into quietly rather than announces. Looked at
+     * here, where macOS gives us many chances a second. */
+    awdlChannelHold(link);
 
     switch (number) {
     case APPLE80211_IOC_SSID: {
@@ -2508,8 +2513,11 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
  */
 void AirPort_RTW89::awdlClockUpdateAndHold()
 {
+    struct rtw89_glue_link link;
+
     awdlClockUpdate();
-    awdlChannelHold();
+    rtw89_glue_link(&link);
+    awdlChannelHold(link);
 }
 
 void AirPort_RTW89::awdlClockUpdate()
@@ -2620,24 +2628,45 @@ void AirPort_RTW89::awdlClockUpdate()
  * Asked for, not taken: the request is carried out on a work thread and a
  * join always wins, so this never stands between the user and a network.
  */
-void AirPort_RTW89::awdlChannelHold()
+void AirPort_RTW89::awdlChannelHold(const struct rtw89_glue_link &link)
 {
-    struct rtw89_glue_link link;
     uint16_t freq = 0;
+    uint8_t why;
 
     if (!_ns)
         return;
-    rtw89_glue_link(&link);
-    if (_ns->awdlClockOn && !isConnected(link) && !isJoining(link))
+    /*
+     * Why, not just whether. The first version of this only ran on a link
+     * event and said nothing when it declined, and it never engaged once:
+     * at link-down the glue state still reads "joining" while the mlme is
+     * mid-teardown, so the one call that mattered was refused, and nothing
+     * looked again after the machine had really settled into being idle.
+     * It is asked on every request from macOS now -- which is many a second
+     * -- and the reason is logged whenever it changes.
+     */
+    if (!_ns->awdlClockOn)
+        why = 1;
+    else if (isConnected(link))
+        why = 2;
+    else if (isJoining(link))
+        why = 3;
+    else {
+        why = 0;
         freq = (uint16_t)freqOfChannel(_ns->awdlClockChannel, 0);
-    if (freq != _ns->awdlHeldFreq) {
+    }
+
+    if (freq != _ns->awdlHeldFreq || why != _ns->awdlHoldWhy) {
         if (freq)
             LOG("awdl: nothing is joined, so the radio is asked to sit on "
                 "channel %u for the availability windows",
                 (unsigned int)_ns->awdlClockChannel);
-        else if (_ns->awdlHeldFreq)
-            LOG("awdl: the radio is wanted elsewhere; the schedule follows it");
+        else
+            LOG("awdl: the radio is not held for AWDL: %s",
+                why == 1 ? "no schedule is running" :
+                why == 2 ? "a network is joined, and its channel is the one "
+                           "AWDL runs on" : "a network is being joined");
         _ns->awdlHeldFreq = freq;
+        _ns->awdlHoldWhy = why;
     }
     rtw89_glue_awdl_hold_channel(freq);
 }
