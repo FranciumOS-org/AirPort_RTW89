@@ -604,7 +604,7 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
              * a capture yet. */
             if (type == AWDL_TLV_CHANSEQ || type == AWDL_TLV_ELECTION_V1 ||
                 type == AWDL_TLV_HT || type == 17 || type == 33 ||
-                type == AWDL_TLV_ARPA)
+                type == AWDL_TLV_ARPA || type == AWDL_TLV_SERVICE_RESPONSE)
                 awdl_log_hex("its contents", tlv + 3, tlen);
         }
         tlv += 3 + tlen;
@@ -980,13 +980,18 @@ size_t rtw89_awdl_compose_tlvs(u8 *out, size_t size, const u8 *sync_params,
  * The host name our services name, as it goes past in our own mDNS: a DNS label
  * of 36 characters shaped like a UUID, which wifip2pd makes up and the driver is
  * told no other way. Returns true and fills @out (36 bytes) when there is one.
+ *
+ * Only as the target of an SRV record. The same shape turns up in questions
+ * about other hosts, which is how a peer's name came to go out as ours. The
+ * record's type is 16 bytes before the target: type, class, TTL, rdata length,
+ * priority, weight, port.
  */
 bool rtw89_awdl_find_host(const u8 *data, size_t len, u8 *out)
 {
     size_t off, i;
 
-    for (off = 0; off + 37 <= len; off++) {
-        if (data[off] != 36)
+    for (off = 16; off + 37 <= len; off++) {
+        if (data[off] != 36 || data[off - 16] != 0 || data[off - 15] != 33)
             continue;
         for (i = 0; i < 36; i++) {
             u8 c = data[off + 1 + i];
