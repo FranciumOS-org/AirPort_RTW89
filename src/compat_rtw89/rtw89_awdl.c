@@ -171,7 +171,8 @@ static void awdl_log_hex(const char *what, const u8 *v, size_t len)
 }
 
 /* What has come back the other way; see rtw89_awdl_rx(). */
-static struct { u32 data_seen; u32 offered; u32 matched; u32 apple; u32 arpa; } gRx;
+static struct { u32 data_seen; u32 offered; u32 matched; u32 apple; u32 arpa;
+                u32 to_us; u32 to_us_retry; } gRx;
 
 /*
  * Whether handing this TLV to IO80211 would panic the machine.
@@ -389,6 +390,36 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
                  mgmt->bssid[0], mgmt->bssid[1], mgmt->bssid[2],
                  mgmt->bssid[3], mgmt->bssid[4], mgmt->bssid[5],
                  (unsigned int)le16_to_cpu(mgmt->frame_control));
+    /*
+     * Frames addressed to our AWDL address, which is not the chip's own. A
+     * peer that gets no acknowledgement sends the same frame again with the
+     * retry bit set, so these say whether it is trying and whether it hears
+     * an answer. Looked at before the BSSID, to see them whatever they carry.
+     */
+    {
+        const u8 *mine = NULL;
+
+        if (rtw89_awdl_get_template(NULL, &mine) && mine &&
+            ether_addr_equal(mgmt->da, mine)) {
+            bool retry = ieee80211_has_retry(mgmt->frame_control);
+
+            gRx.to_us++;
+            if (retry)
+                gRx.to_us_retry++;
+            if (gRx.to_us <= 16 || !(gRx.to_us % 64))
+                awdl_log("unicast to our AWDL address, %u so far, %u of them "
+                         "retries: fc 0x%04x, %u bytes, %u MHz, from "
+                         "%02x:%02x:%02x:%02x:%02x:%02x, bssid "
+                         "%02x:%02x:%02x:%02x:%02x:%02x",
+                         gRx.to_us, gRx.to_us_retry,
+                         (unsigned int)le16_to_cpu(mgmt->frame_control),
+                         (unsigned int)len, (unsigned int)status->freq,
+                         mgmt->sa[0], mgmt->sa[1], mgmt->sa[2],
+                         mgmt->sa[3], mgmt->sa[4], mgmt->sa[5],
+                         mgmt->bssid[0], mgmt->bssid[1], mgmt->bssid[2],
+                         mgmt->bssid[3], mgmt->bssid[4], mgmt->bssid[5]);
+        }
+    }
     if (!ether_addr_equal(mgmt->bssid, kAwdlBssid))
         return false;
     gRx.matched++;
@@ -1446,6 +1477,15 @@ int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
     }
 
     awdl_mdns_note_frame(eth, eth_len);
+    /* And whether this machine ever tries the other way. */
+    if (!(eth[0] & 1)) {
+        static u32 unicast_out;
+
+        if (++unicast_out <= 16 || !(unicast_out % 64))
+            awdl_log("unicast from awdl0, %u so far: %u bytes, to "
+                     "%02x:%02x:%02x:%02x:%02x:%02x", unicast_out,
+                     (unsigned int)eth_len, eth[0], eth[1], eth[2], eth[3], eth[4], eth[5]);
+    }
     {
         u8 host[sizeof(gHost)];
 
