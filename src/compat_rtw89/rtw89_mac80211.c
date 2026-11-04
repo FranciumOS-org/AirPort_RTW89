@@ -11,6 +11,7 @@
  * requests. What is not implemented yet is listed at the end of the file.
  */
 #include "rtw89_net80211.h"
+#include "rtw89_awdl.h"
 
 /* ------------------------------------------------------------------ */
 /*  hw allocation / registration                                        */
@@ -512,6 +513,8 @@ void ieee80211_tx_status_skb(struct ieee80211_hw *hw, struct sk_buff *skb)
 {
     struct rtw89_m80211_local *local = hw_to_local(hw);
 
+    rtw89_awdl_tx_status(skb->data, skb->len,
+                         !!(IEEE80211_SKB_CB(skb)->flags & IEEE80211_TX_STAT_ACK));
     if (local->glue && local->glue->tx_status)
         local->glue->tx_status(local->glue_ctx, skb);
     else

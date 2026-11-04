@@ -1899,6 +1899,31 @@ int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
     return awdl_data_send(frame, len);
 }
 
+/*
+ * Whether a peer's radio answered. Every frame's status comes back from the chip,
+ * and a unicast one is acknowledged by the receiving hardware before anything
+ * decides whether to take it. So this tells "not heard" from "heard and ignored",
+ * which nothing on the iPhone or in the traffic above can.
+ */
+void rtw89_awdl_tx_status(const u8 *frame, size_t len, bool acked)
+{
+    static u32 acks, misses;
+    const struct ieee80211_hdr_3addr *hdr = (const void *)frame;
+
+    if (len < sizeof(*hdr) || is_multicast_ether_addr(hdr->addr1) ||
+        !ether_addr_equal(hdr->addr3, kAwdlBssid))
+        return;
+    if (acked)
+        acks++;
+    else
+        misses++;
+    if (acks + misses <= 16 || !((acks + misses) % 64))
+        awdl_log("unicast to %02x:%02x:%02x:%02x:%02x:%02x %s: %u acknowledged, %u not",
+                 hdr->addr1[0], hdr->addr1[1], hdr->addr1[2],
+                 hdr->addr1[3], hdr->addr1[4], hdr->addr1[5],
+                 acked ? "acknowledged" : "not acknowledged", acks, misses);
+}
+
 void rtw89_awdl_data_counts(u32 *sent, u32 *failed)
 {
     if (sent)

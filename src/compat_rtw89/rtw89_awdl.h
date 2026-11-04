@@ -167,6 +167,8 @@ bool rtw89_awdl_master_election(u8 out[20]);
 size_t rtw89_awdl_build_data_frame(u8 *buf, size_t size, const u8 *src,
                                    const u8 *eth, size_t eth_len, u16 seq);
 int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len);
+/* The chip's report on a frame of ours; see rtw89_mac80211.c. */
+void rtw89_awdl_tx_status(const u8 *frame, size_t len, bool acked);
 void rtw89_awdl_data_counts(u32 *sent, u32 *failed);
 
 #endif /* RTW89_AWDL_H */
