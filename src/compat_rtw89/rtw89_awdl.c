@@ -265,6 +265,12 @@ static struct {
     u8   tlv19[AWDL_TLV_HDR_LEN + 16];
     u8   tlv33_len;
     u8   tlv33[AWDL_TLV_HDR_LEN + 32];
+    /* Its service parameters TLV, whole, and from its data path state TLV the
+     * flags, country and social channels (0..6) and infra channel (13..14). */
+    u8   tlv6_len;
+    u8   tlv6[AWDL_TLV_HDR_LEN + 32];
+    bool have_path;
+    u8   path[15];
 } gMaster;
 
 static u64 awdl_now_us(void)
@@ -553,6 +559,16 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
                          gMaster.have && ether_addr_equal(gMaster.addr, mgmt->sa)) {
                     memcpy(gMaster.ht, t + 3, tl);
                     gMaster.ht_len = (u8)tl;
+                }
+                else if (t[0] == 6 && tl <= sizeof(gMaster.tlv6) - AWDL_TLV_HDR_LEN &&
+                         gMaster.have && ether_addr_equal(gMaster.addr, mgmt->sa)) {
+                    memcpy(gMaster.tlv6, t, AWDL_TLV_HDR_LEN + tl);
+                    gMaster.tlv6_len = (u8)(AWDL_TLV_HDR_LEN + tl);
+                }
+                else if (t[0] == 12 && tl >= sizeof(gMaster.path) &&
+                         gMaster.have && ether_addr_equal(gMaster.addr, mgmt->sa)) {
+                    memcpy(gMaster.path, t + 3, sizeof(gMaster.path));
+                    gMaster.have_path = true;
                 }
                 else if (t[0] == 19 && tl <= sizeof(gMaster.tlv19) - AWDL_TLV_HDR_LEN &&
                          gMaster.have && ether_addr_equal(gMaster.addr, mgmt->sa)) {
@@ -1095,6 +1111,37 @@ static size_t awdl_insert_before_version(u8 *tlvs, size_t len, size_t size,
 }
 
 /*
+ * The family's service parameters are all zeros and its data path state says
+ * country ZZ, channel 6 only and no infra channel, where the iPhone says
+ * otherwise. Use the master's values for both; our address in TLV 12 stays.
+ */
+static size_t awdl_use_master_params(u8 *tlvs, size_t len, size_t size)
+{
+    size_t off = 0;
+
+    while (off + AWDL_TLV_HDR_LEN <= len) {
+        size_t whole = AWDL_TLV_HDR_LEN + (size_t)(tlvs[off + 1] | (tlvs[off + 2] << 8));
+
+        if (off + whole > len)
+            break;
+        if (tlvs[off] == 12 && gMaster.have_path &&
+            whole >= AWDL_TLV_HDR_LEN + sizeof(gMaster.path)) {
+            memcpy(tlvs + off + AWDL_TLV_HDR_LEN, gMaster.path, 7);
+            memcpy(tlvs + off + AWDL_TLV_HDR_LEN + 13, gMaster.path + 13, 2);
+        }
+        else if (tlvs[off] == 6 && gMaster.tlv6_len &&
+                 len - whole + gMaster.tlv6_len <= size) {
+            memmove(tlvs + off + gMaster.tlv6_len, tlvs + off + whole, len - off - whole);
+            memcpy(tlvs + off, gMaster.tlv6, gMaster.tlv6_len);
+            len = len - whole + gMaster.tlv6_len;
+            whole = gMaster.tlv6_len;
+        }
+        off += whole;
+    }
+    return len;
+}
+
+/*
  * The host name our services name, as it goes past in our own mDNS: a DNS label
  * of 36 characters shaped like a UUID, which wifip2pd makes up and the driver is
  * told no other way. Returns true and fills @out (36 bytes) when there is one.
@@ -1398,6 +1445,7 @@ void rtw89_awdl_tick(u32 now_us)
             static u32 composed_psf, composed_mif;
             u32 *count = p.subtype == AWDL_SUBTYPE_MIF ? &composed_mif : &composed_psf;
 
+            composed = awdl_use_master_params(tlv_out, composed, sizeof(tlv_out));
             composed = awdl_insert_before_version(tlv_out, composed, sizeof(tlv_out),
                                                   gMaster.tlv19, gMaster.tlv19_len);
             composed = awdl_insert_before_version(tlv_out, composed, sizeof(tlv_out),
