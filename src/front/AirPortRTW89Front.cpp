@@ -229,8 +229,9 @@ OSDefineMetaClassAndStructors(IO80211P2PDaemonUserClient, IOUserClient)
  * The framework's event ring, from Apple80211EventMonitoringHelper. ringState
  * holds the read offset at +0 and the write offset at +4. A record is a header
  * then payload then padding, with magic 0x57 at +0, payload length (u16) at
- * +0x18, padding (u16) at +0x1a and the APPLE80211_M_ code at +0x1c. The header
- * never wraps: a word of 0x50 is skipped by the reader, and so is the tail of
+ * +0x18, padding (u16) at +0x1a, the APPLE80211_M_ code at +0x1c and the interface
+ * name at +0x20. _eventRead() compares those 16 bytes with the name its handle was
+ * bound to and drops the event in silence if they differ. The header never wraps: a word of 0x50 is skipped by the reader, and so is the tail of
  * the ring when a header no longer fits. The payload may wrap.
  */
 #define AWDL_RING_HDR_LEN   0x30
@@ -239,7 +240,8 @@ OSDefineMetaClassAndStructors(IO80211P2PDaemonUserClient, IOUserClient)
 static IOSimpleLock *gEventLock;
 static IO80211P2PDaemonUserClient *gEventClient;
 
-void IO80211P2PDaemonUserClient::postEvent(unsigned int msg, const void *data, size_t len)
+void IO80211P2PDaemonUserClient::postEvent(const char *ifname, unsigned int msg,
+                                           const void *data, size_t len)
 {
     UInt8 *ring;
     volatile UInt32 *state;
@@ -277,6 +279,8 @@ void IO80211P2PDaemonUserClient::postEvent(unsigned int msg, const void *data, s
             memcpy(hdr + 0x18, &l, 2);
             memcpy(hdr + 0x1a, &p, 2);
             memcpy(hdr + 0x1c, &code, 4);
+            if (ifname)
+                strlcpy(reinterpret_cast<char *>(hdr + 0x20), ifname, 16);
             memcpy(ring + wr, hdr, sizeof(hdr));
             wr = (wr + AWDL_RING_HDR_LEN) % size;
             tail = size - wr;
@@ -350,7 +354,7 @@ static void rtw89_awdl_post_event(void *vif, unsigned int msg, void *data, size_
             hex[3 * n] = 0;
             LOG("awdl: peer presence, %u bytes: %s", (unsigned int)len, hex);
         }
-        uc->postEvent(msg, data, len);
+        uc->postEvent(static_cast<IO80211VirtualInterface *>(vif)->getBSDName(), msg, data, len);
         uc->wake();
     }
     uc->release();

@@ -63,6 +63,8 @@ def on_event(frame, bp_loc, extra, internal_dict):
     if handle not in handles:
         handles.add(handle)
         state = process.ReadMemory(handle + 0x14, 0x21, err) or bytes(0x21)
+        print("handle bound to %r, event names %r" %
+              (process.ReadMemory(handle + 4, 16, err), process.ReadMemory(meta + 0x20, 16, err)))
         # Raw P2P monitoring sets +0x33 and +0x34 and takes every event; otherwise
         # the mask at +0x14 decides, bit (code - 1). Event 48 is bit 7 of byte 5.
         print("handle 0x%x: raw %d, all events %d, event 48 in mask %d, mask %s" %

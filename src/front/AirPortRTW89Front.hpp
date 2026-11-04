@@ -78,7 +78,7 @@ private:
     IOBufferMemoryDescriptor *region(IOBufferMemoryDescriptor **slot);
 public:
     /* Put one of the family's events in the ring and wake the framework. */
-    void postEvent(unsigned int msg, const void *data, size_t len);
+    void postEvent(const char *ifname, unsigned int msg, const void *data, size_t len);
     void wake();
     IOService *eventProvider() { return getProvider(); }
 private:
