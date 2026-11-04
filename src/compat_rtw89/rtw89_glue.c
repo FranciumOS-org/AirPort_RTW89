@@ -2222,6 +2222,11 @@ bool rtw89_glue_awdl_master_phase(uint64_t *next_aw_us, uint16_t *aw_period_tu)
 }
 
 /* The channel the master says it keeps its own windows on, or 0. */
+uint8_t rtw89_glue_awdl_follow_channel(uint8_t current, uint8_t fallback)
+{
+    return rtw89_awdl_follow_channel(current, fallback);
+}
+
 uint8_t rtw89_glue_awdl_master_channel(void)
 {
     return rtw89_awdl_master_channel();

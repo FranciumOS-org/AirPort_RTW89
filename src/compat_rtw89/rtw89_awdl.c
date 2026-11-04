@@ -1267,6 +1267,51 @@ static struct {
 static u8 gHost[36];
 static bool gHaveHost;
 
+/*
+ * Which channel to be on with nothing joined.
+ *
+ * An iPhone was heard moving to 149 in 15 slots of 16 and 6 in the other, with
+ * none on the 44 we sat on, and in a minute we heard 2 frames from it. Most
+ * slots wins, so we are where it is most often; it comes back to 6 once a
+ * sequence, which is why that is where to wait for it. Each move restarts the
+ * schedule, so moves are at least AWDL_FOLLOW_DWELL_US apart.
+ */
+#define AWDL_FOLLOW_DWELL_US    5000000ULL
+
+u8 rtw89_awdl_follow_channel(u8 current, u8 fallback)
+{
+    static const u8 social[] = { 6, 44, 149 };
+    static u64 last_move;
+    u64 now = awdl_now_us();
+    unsigned int i, s, best_slots = 0;
+    u8 want = fallback;
+
+    if (gMaster.have_slots && now - gMaster.seen_us <= AWDL_MASTER_STALE_US) {
+        for (i = 0; i < ARRAY_SIZE(social); i++) {
+            unsigned int slots = 0;
+
+            for (s = 0; s < 16; s++)
+                if (gMaster.slots[2 * s + 1] == awdl_slot_channel(social[i]))
+                    slots++;
+            /* the one we are on wins a tie: a move costs the schedule */
+            if (slots > best_slots || (slots && slots == best_slots && social[i] == current)) {
+                best_slots = slots;
+                want = social[i];
+            }
+        }
+    }
+    if (!current)
+        return want;
+    if (want == current)
+        return current;
+    if (last_move && now - last_move < AWDL_FOLLOW_DWELL_US)
+        return current;
+    last_move = now;
+    awdl_log("following the master: %u slots on channel %u, moving from %u",
+             best_slots, (unsigned int)want, (unsigned int)current);
+    return want;
+}
+
 void rtw89_awdl_tx_start(u8 channel)
 {
     if (gTx.on)
@@ -1275,6 +1320,9 @@ void rtw89_awdl_tx_start(u8 channel)
     gTx.on = true;
     gTx.channel = channel;
     gOurSlot = awdl_slot_channel(channel);
+    /* What was heard on another channel says nothing about this one. */
+    gMaster.hits = 0;
+    gMaster.misses = 0;
     if (!gDataLock.lock)
         spin_lock_init(&gDataLock);
     gDataHead = gDataCount = 0;

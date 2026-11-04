@@ -148,6 +148,9 @@ bool rtw89_awdl_master_timeline(u8 addr[6], u64 *next_aw_us, u16 *aw_seq,
 
 /* The channel that master keeps its windows on, or 0 if none is followed. */
 u8 rtw89_awdl_master_channel(void);
+/* The channel to be on with nothing joined: where the master spends most slots,
+ * or @fallback with no master heard. @current is 0 when no schedule is running. */
+u8 rtw89_awdl_follow_channel(u8 current, u8 fallback);
 
 /*
  * The master half of the followed master's election parameters v2 TLV: its

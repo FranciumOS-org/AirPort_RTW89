@@ -2563,11 +2563,14 @@ void AirPort_RTW89::awdlClockUpdate()
      */
     if (awdlChannelAsked())
         channel = awdlSocialChannel();
+    else if (isConnected(link))
+        channel = (uint8_t)channelOfFreq(link.freq);
     else
-        channel = isConnected(link) ? (uint8_t)channelOfFreq(link.freq)
-                                    : awdlSocialChannel();
+        channel = rtw89_glue_awdl_follow_channel(_ns->awdlClockOn ? _ns->awdlClockChannel : 0,
+                                                 awdlSocialChannel());
     /*
-     * The master's own channel is logged, not followed.
+     * With a network joined, the master's own channel is logged, not followed.
+     * With none, the radio is ours to move and the line above follows it.
      *
      * It was followed for a while, and that was worse than ignoring it. The
      * radio sits where the association put it; nothing here can move it, and
@@ -2647,6 +2650,9 @@ void AirPort_RTW89::awdlChannelHold(const struct rtw89_glue_link &link)
 
     if (!_ns)
         return;
+    /* The master moves without telling us, and this runs often enough to see it. */
+    if (_ns->awdlClockOn && !awdlChannelAsked() && !isConnected(link) && !isJoining(link))
+        awdlClockUpdate();
     /*
      * Why, not just whether. The first version of this only ran on a link
      * event and said nothing when it declined, and it never engaged once:

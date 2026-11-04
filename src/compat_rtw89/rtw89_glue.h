@@ -387,6 +387,7 @@ bool rtw89_glue_rx_local_us(uint64_t mactime, uint64_t *local_us);
  * channel it is not listening to.
  */
 uint8_t rtw89_glue_awdl_master_channel(void);
+uint8_t rtw89_glue_awdl_follow_channel(uint8_t current, uint8_t fallback);
 
 /*
  * Ask for the radio to be held on @freq for AWDL while no network is joined,
