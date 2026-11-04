@@ -24,9 +24,10 @@
 #include <linux/ieee80211.h>
 #include <linux/skbuff.h>
 #include <net/mac80211.h>
-#include "rtw89_awdl_mdns.h"
 
 #define awdl_log(fmt, ...) IOLog("[rtw89 awdl] " fmt "\n", ##__VA_ARGS__)
+
+#include "rtw89_awdl_mdns.h"
 
 /* 00:25:00:ff:94:73, the address every AWDL frame is addressed to */
 static const u8 kAwdlBssid[ETH_ALEN] = { 0x00, 0x25, 0x00, 0xff, 0x94, 0x73 };
@@ -271,7 +272,23 @@ static struct {
     u8   tlv6[AWDL_TLV_HDR_LEN + 32];
     bool have_path;
     u8   path[15];
+    /*
+     * Its channel sequence: 16 slots of two bytes, one slot lasting step
+     * windows, so the slot of window n is (n / step) % 16. Whether that reading
+     * is right is measured, not assumed: the radio stays on one channel, so a
+     * frame of its we hear should fall in a slot naming that channel. hits and
+     * misses count that, and see awdl_gate_open() for what they decide.
+     */
+    bool have_slots;
+    u8   step;
+    u8   slots[32];
+    u32  hits;
+    u32  misses;
+    u32  heard[16];
 } gMaster;
+
+/* Our one channel as a slot names it; set when the schedule starts. */
+static u8 gOurSlot;
 
 static u64 awdl_now_us(void)
 {
@@ -318,6 +335,32 @@ static void awdl_note_master(const u8 *sa, const u8 *v, size_t len, u64 rx_us)
     gMaster.aw_seq = (u16)((v[29] | ((u16)v[30] << 8)) + 1);
     gMaster.seen_us = awdl_now_us();
     gMaster.frames++;
+
+    /* The sequence, in the one encoding we have seen, and the frame's own slot.
+     * The window it was sent in is the number it carries. */
+    if (len >= 71 && v[33] == 15 && v[34] == 1 && v[36] < 16) {
+        unsigned int slot;
+
+        gMaster.step = (u8)(v[36] + 1);
+        if (!gMaster.have_slots || memcmp(gMaster.slots, v + 39, sizeof(gMaster.slots))) {
+            memcpy(gMaster.slots, v + 39, sizeof(gMaster.slots));
+            gMaster.have_slots = true;
+            awdl_log_hex("the master's channel sequence", gMaster.slots, sizeof(gMaster.slots));
+        }
+        slot = (((unsigned int)v[29] | ((unsigned int)v[30] << 8)) / gMaster.step) % 16;
+        gMaster.heard[slot]++;
+        if (gOurSlot) {
+            if (gMaster.slots[2 * slot + 1] == gOurSlot)
+                gMaster.hits++;
+            else
+                gMaster.misses++;
+            /* Recent frames should decide, since the sequence changes. */
+            if (gMaster.hits + gMaster.misses >= 1024) {
+                gMaster.hits /= 2;
+                gMaster.misses /= 2;
+            }
+        }
+    }
 }
 
 bool rtw89_awdl_master_election(u8 out[20])
@@ -1188,6 +1231,20 @@ bool rtw89_awdl_find_host(const u8 *data, size_t len, u8 *out)
 /* 802.11 sequence numbers are 12 bits. */
 #define AWDL_SEQ_MASK       0x0fff
 
+/* See the comment on the gate below. */
+#define AWDL_GATE_MIN_FRAMES    32
+#define AWDL_GATE_MIN_PERCENT   80
+#define AWDL_DATA_QUEUE         16
+#define AWDL_DATA_FRAME_MAX     (sizeof(struct ieee80211_hdr_3addr) + 2048)
+
+static spinlock_t gDataLock;      /* made once, in rtw89_awdl_tx_start() */
+static struct {
+    u16 len;
+    u8  frame[AWDL_DATA_FRAME_MAX];
+} gDataQueue[AWDL_DATA_QUEUE];
+static unsigned int gDataHead, gDataCount;
+static u32 gDataHeld, gDataOverflow;
+
 static struct {
     bool on;
     u8   channel;
@@ -1217,6 +1274,10 @@ void rtw89_awdl_tx_start(u8 channel)
     memset(&gTx, 0, sizeof(gTx));
     gTx.on = true;
     gTx.channel = channel;
+    gOurSlot = awdl_slot_channel(channel);
+    if (!gDataLock.lock)
+        spin_lock_init(&gDataLock);
+    gDataHead = gDataCount = 0;
     awdl_log("transmitting on channel %u, a sync frame every %u windows",
              (unsigned int)channel, (unsigned int)AWDL_AW_PER_AF);
 }
@@ -1247,6 +1308,123 @@ void rtw89_awdl_tx_counts(u32 *sent, u32 *failed)
         *failed = gTx.failed;
 }
 
+/*
+ * Data frames wait for the master to be on our channel.
+ *
+ * The radio stays on one channel and an iPhone does not: it was on channel 44 in
+ * six slots of its 16, each 64 TU, and elsewhere or nowhere in the rest. A frame
+ * sent as soon as it was handed down was sent to nobody most of the time, and a
+ * multicast one gets no retry. So they queue here and the window tick sends them.
+ *
+ * This holds back traffic on a reading of the sequence that only captures
+ * support, so it has to earn it: until enough of the master's frames have landed
+ * in the slots that reading predicts, and whenever the master has gone or names
+ * none of our channel, frames go straight out as they did before.
+ */
+static bool awdl_gate_trusted(void)
+{
+    u32 total = gMaster.hits + gMaster.misses;
+
+    return total >= AWDL_GATE_MIN_FRAMES &&
+           gMaster.hits * 100 >= total * AWDL_GATE_MIN_PERCENT;
+}
+
+/* False only when it is known that the master is on another channel right now. */
+static bool awdl_gate_open(void)
+{
+    u64 next_aw, now, period_us;
+    u16 seq, period;
+    unsigned int i, slot;
+    bool ours = false;
+
+    if (!gMaster.have_slots || !gMaster.step || !gOurSlot || !awdl_gate_trusted())
+        return true;
+    if (!rtw89_awdl_master_timeline(NULL, &next_aw, &seq, &period) || !period)
+        return true;
+    for (i = 0; i < 16; i++)
+        if (gMaster.slots[2 * i + 1] == gOurSlot)
+            ours = true;
+    if (!ours)
+        return true;
+    now = awdl_now_us();
+    period_us = (u64)period * 1024;
+    if (now >= next_aw)
+        seq = (u16)(seq + (now - next_aw) / period_us);
+    else
+        seq = (u16)(seq - 1);
+    slot = ((unsigned int)seq / gMaster.step) % 16;
+    return gMaster.slots[2 * slot + 1] == gOurSlot;
+}
+
+static int awdl_data_send(const u8 *frame, size_t len)
+{
+    int err = rtw89_mlme_tx_awdl(frame, len);
+
+    if (err) {
+        /* The reason, not just the errno: ENETDOWN here is three different
+         * conditions, and the one it is decides what to fix. */
+        if (!gTx.data_failed++ || !(gTx.data_failed % 64)) {
+            int why = rtw89_mlme_awdl_tx_why();
+
+            awdl_log("a data frame could not be sent: %d (%s%s); %u sent, %u not",
+                     err,
+                     why == RTW89_AWDL_TX_NO_INTERFACE ? "there is no interface" :
+                     why == RTW89_AWDL_TX_NO_CHANNEL ? "no channel is set" :
+                     why == RTW89_AWDL_TX_NO_LINK ? "the driver has no link to send on" :
+                     "the radio took it and the send itself failed",
+                     rtw89_glue_scanning() ? ", and a scan is running" : "",
+                     (unsigned int)gTx.data_sent, (unsigned int)gTx.data_failed);
+        }
+    } else {
+        gTx.data_sent++;
+    }
+    return err;
+}
+
+/* The tick is the only caller, so the one buffer is safe. */
+static void awdl_data_flush(void)
+{
+    static u8 frame[AWDL_DATA_FRAME_MAX];
+    unsigned long flags;
+
+    for (;;) {
+        size_t len;
+
+        spin_lock_irqsave(&gDataLock, flags);
+        if (!gDataCount) {
+            spin_unlock_irqrestore(&gDataLock, flags);
+            return;
+        }
+        len = gDataQueue[gDataHead].len;
+        memcpy(frame, gDataQueue[gDataHead].frame, len);
+        gDataHead = (gDataHead + 1) % AWDL_DATA_QUEUE;
+        gDataCount--;
+        spin_unlock_irqrestore(&gDataLock, flags);
+        awdl_data_send(frame, len);
+    }
+}
+
+/* What the gate has seen, thinly: a line about every 26 s. */
+static void awdl_gate_report(void)
+{
+    static u32 ticks;
+
+    if (++ticks % 1600)
+        return;
+    awdl_log("master's frames in the slots predicted for us: %u, outside them: %u, "
+             "gate %s; data frames held %u, overflowed %u",
+             gMaster.hits, gMaster.misses, awdl_gate_trusted() ? "in use" : "not trusted",
+             gDataHeld, gDataOverflow);
+    {
+        u8 heard[16];
+        unsigned int i;
+
+        for (i = 0; i < 16; i++)
+            heard[i] = gMaster.heard[i] > 255 ? 255 : (u8)gMaster.heard[i];
+        awdl_log_hex("frames heard per slot", heard, sizeof(heard));
+    }
+}
+
 void rtw89_awdl_tick(u32 now_us)
 {
     u8 sync_params[RTW89_AWDL_SYNC_PARAMS_LEN];
@@ -1262,6 +1440,9 @@ void rtw89_awdl_tick(u32 now_us)
 
     if (!gTx.on)
         return;
+    awdl_gate_report();
+    if (gDataCount && awdl_gate_open())
+        awdl_data_flush();
     /*
      * The window number counts every window, whether or not we send in it --
      * including the ones spent waiting for the radio, so the timeline does
@@ -1460,6 +1641,8 @@ void rtw89_awdl_tick(u32 now_us)
                          gMaster.tlv19_len, gMaster.tlv33_len);
                 awdl_log_hex(p.subtype == AWDL_SUBTYPE_MIF ? "our MIF's TLVs" : "our PSF's TLVs",
                              tlv_out, composed);
+                if (p.subtype == AWDL_SUBTYPE_MIF)
+                    awdl_svc_log_all();
             }
         }
         if (composed && p.subtype == AWDL_SUBTYPE_MIF)
@@ -1576,10 +1759,9 @@ size_t rtw89_awdl_build_data_frame(u8 *buf, size_t size, const u8 *src,
 
 int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
 {
-    u8 frame[sizeof(struct ieee80211_hdr_3addr) + 2048];
+    u8 frame[AWDL_DATA_FRAME_MAX];
     const u8 *mac = NULL;
     size_t len;
-    int err;
 
     /*
      * Every refusal counts as a failure and says why once.
@@ -1645,26 +1827,28 @@ int rtw89_awdl_data_tx(const u8 *eth, size_t eth_len)
                  (unsigned int)((eth[12] << 8) | eth[13]));
         awdl_log_hex("as the family built it", eth, eth_len < 48 ? eth_len : 48);
     }
-    err = rtw89_mlme_tx_awdl(frame, len);
-    if (err) {
-        /* The reason, not just the errno: ENETDOWN here is three different
-         * conditions, and the one it is decides what to fix. */
-        if (!gTx.data_failed++ || !(gTx.data_failed % 64)) {
-            int why = rtw89_mlme_awdl_tx_why();
+    if (!awdl_gate_open() || gDataCount) {
+        unsigned long flags;
+        bool queued = false;
 
-            awdl_log("a data frame could not be sent: %d (%s%s); %u sent, %u not",
-                     err,
-                     why == RTW89_AWDL_TX_NO_INTERFACE ? "there is no interface" :
-                     why == RTW89_AWDL_TX_NO_CHANNEL ? "no channel is set" :
-                     why == RTW89_AWDL_TX_NO_LINK ? "the driver has no link to send on" :
-                     "the radio took it and the send itself failed",
-                     rtw89_glue_scanning() ? ", and a scan is running" : "",
-                     (unsigned int)gTx.data_sent, (unsigned int)gTx.data_failed);
+        spin_lock_irqsave(&gDataLock, flags);
+        if (gDataCount < AWDL_DATA_QUEUE) {
+            unsigned int at = (gDataHead + gDataCount) % AWDL_DATA_QUEUE;
+
+            memcpy(gDataQueue[at].frame, frame, len);
+            gDataQueue[at].len = (u16)len;
+            gDataCount++;
+            queued = true;
         }
-    } else {
-        gTx.data_sent++;
+        spin_unlock_irqrestore(&gDataLock, flags);
+        if (queued) {
+            gDataHeld++;
+            return 0;
+        }
+        /* Full: late and out of order beats not at all. */
+        gDataOverflow++;
     }
-    return err;
+    return awdl_data_send(frame, len);
 }
 
 void rtw89_awdl_data_counts(u32 *sent, u32 *failed)

@@ -18,7 +18,7 @@
 #ifndef RTW89_AWDL_MDNS_H
 #define RTW89_AWDL_MDNS_H
 
-#define AWDL_SVC_MAX        16
+#define AWDL_SVC_MAX        32
 #define AWDL_SVC_TLV_MAX    255
 #define AWDL_SVC_BUDGET     900     /* bytes of them in one frame */
 #define AWDL_MDNS_NAME_MAX  256
@@ -28,11 +28,49 @@
 
 struct awdl_svc {
     u16 len;                        /* of tlv, 0 for a free slot */
+    u32 stamp;                      /* when last announced, on gSvcStamp */
     u8  tlv[AWDL_SVC_TLV_MAX];
 };
 
 static struct awdl_svc gSvc[AWDL_SVC_MAX];
 static unsigned int gSvcNext;
+static u32 gSvcStamp;
+
+/* A record's key for the log: length bytes and anything odd come out as dots. */
+static void awdl_svc_key(const u8 *tlv, char *out, size_t size)
+{
+    size_t klen = (size_t)(tlv[3] | (tlv[4] << 8)), i, at = 0;
+
+    for (i = 1; i + 3 <= klen && at + 1 < size; i++) {
+        u8 c = tlv[5 + i];
+
+        out[at++] = c >= 0x20 && c < 0x7f ? (char)c : '.';
+    }
+    out[at] = 0;
+}
+
+static void awdl_svc_log(const char *what, const u8 *tlv, size_t len)
+{
+    char key[80];
+
+    awdl_svc_key(tlv, key, sizeof(key));
+    awdl_log("    service record %s: %s, type %u, %u bytes", what, key,
+             (unsigned int)tlv[5 + (tlv[3] | (tlv[4] << 8)) - 1], (unsigned int)len);
+}
+
+/* What the MIFs are carrying, whole, so that a record never sent can be told
+ * from one sent and ignored. */
+static void awdl_svc_log_all(void)
+{
+    unsigned int i, used = 0;
+
+    for (i = 0; i < AWDL_SVC_MAX; i++)
+        if (gSvc[i].len) {
+            used++;
+            awdl_svc_log("carried", gSvc[i].tlv, gSvc[i].len);
+        }
+    awdl_log("    %u service record(s) carried, of %u", used, (unsigned int)AWDL_SVC_MAX);
+}
 
 /* A name, with its pointers followed, as uncompressed labels and the final 0.
  * Returns its length, or 0 if it is not one. *next is what follows it. */
@@ -92,7 +130,8 @@ static bool awdl_mdns_suffix(const u8 *name, size_t len, const u8 *suffix, size_
 
 static void awdl_svc_store(const u8 *tlv, size_t len, size_t key_end, bool gone)
 {
-    unsigned int i, free_slot = AWDL_SVC_MAX;
+    unsigned int i, free_slot = AWDL_SVC_MAX, oldest = 0;
+    bool known = false;
 
     for (i = 0; i < AWDL_SVC_MAX; i++) {
         struct awdl_svc *s = &gSvc[i];
@@ -102,22 +141,41 @@ static void awdl_svc_store(const u8 *tlv, size_t len, size_t key_end, bool gone)
                 free_slot = i;
             continue;
         }
+        if ((s32)(s->stamp - gSvc[oldest].stamp) < 0 || !gSvc[oldest].len)
+            oldest = i;
         /* The same key and type is the same record. */
         if (s->len > key_end && !memcmp(s->tlv + 3, tlv + 3, key_end - 3)) {
             s->len = 0;
-            if (gone)
+            if (gone) {
+                awdl_svc_log("withdrawn", tlv, len);
                 return;
+            }
+            known = true;
             free_slot = i;
             break;
         }
     }
-    if (gone || free_slot == AWDL_SVC_MAX)
+    if (gone)
         return;
+    /*
+     * Full: the one announced longest ago makes room. Nothing ages out by
+     * itself, and the AirDrop instance name changes every time it is published
+     * with the old one not always withdrawn, so refusing here would in time
+     * keep the current name off the air in favour of dead ones.
+     */
+    if (free_slot == AWDL_SVC_MAX) {
+        awdl_svc_log("replaced", gSvc[oldest].tlv, gSvc[oldest].len);
+        gSvc[oldest].len = 0;
+        free_slot = oldest;
+    }
     /* The tick reads these on another thread with no lock. The length goes in
      * last, and a frame with a half-written record costs nothing a peer does
      * not already have to survive. */
     memcpy(gSvc[free_slot].tlv, tlv, len);
+    gSvc[free_slot].stamp = ++gSvcStamp;
     gSvc[free_slot].len = (u16)len;
+    if (!known)
+        awdl_svc_log("added", tlv, len);
 }
 
 static void awdl_mdns_record(const u8 *m, size_t mlen, const u8 *owner, size_t olen,
