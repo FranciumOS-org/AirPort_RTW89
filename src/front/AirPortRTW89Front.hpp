@@ -14,6 +14,7 @@
 #include <IOKit/80211/IO80211WorkLoop.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOLocks.h>
+#include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IOUserClient.h>
 #include <IOKit/pci/IOPCIDevice.h>
 
@@ -75,6 +76,12 @@ private:
     /* Allocates a region on first use and keeps it, so the same type always
      * maps the same memory. */
     IOBufferMemoryDescriptor *region(IOBufferMemoryDescriptor **slot);
+public:
+    /* Put one of the family's events in the ring and wake the framework. */
+    void postEvent(unsigned int msg, const void *data, size_t len);
+    void wake();
+    IOService *eventProvider() { return getProvider(); }
+private:
     /* The two regions the framework maps, by the memory types it asks for. */
     IOBufferMemoryDescriptor *_ringBuffer = nullptr;   /* type 1 */
     IOBufferMemoryDescriptor *_ringState = nullptr;    /* type 2 */
@@ -82,6 +89,8 @@ private:
      * post an event; released in clientClose(). */
     mach_port_t _wakePort = MACH_PORT_NULL;
     bool _armed = false;
+    OSAsyncReference64 _asyncRef;
+    bool _haveAsyncRef = false;
     /* Whether the task held the event entitlement; recorded, not required,
      * which is what the family does with it too. */
     bool _entitled = false;

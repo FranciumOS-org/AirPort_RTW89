@@ -226,6 +226,115 @@ UInt32 AirPortRTW89AwdlInterface::outputPacket(mbuf_t m, void *param)
 OSDefineMetaClassAndStructors(IO80211P2PDaemonUserClient, IOUserClient)
 
 /*
+ * The framework's event ring, from Apple80211EventMonitoringHelper. ringState
+ * holds the read offset at +0 and the write offset at +4. A record is a header
+ * then payload then padding, with magic 0x57 at +0, payload length (u16) at
+ * +0x18, padding (u16) at +0x1a and the APPLE80211_M_ code at +0x1c. The header
+ * never wraps: a word of 0x50 is skipped by the reader, and so is the tail of
+ * the ring when a header no longer fits. The payload may wrap.
+ */
+#define AWDL_RING_HDR_LEN   0x30
+#define AWDL_RING_MAX_EVENT 0x1000
+
+static IOSimpleLock *gEventLock;
+static IO80211P2PDaemonUserClient *gEventClient;
+
+void IO80211P2PDaemonUserClient::postEvent(unsigned int msg, const void *data, size_t len)
+{
+    UInt8 *ring;
+    volatile UInt32 *state;
+    size_t size, wr, rd, used, pad, tail;
+    IOInterruptState is;
+
+    if (!_ringBuffer || !_ringState || len > AWDL_RING_MAX_EVENT || (len && !data))
+        return;
+    ring = static_cast<UInt8 *>(_ringBuffer->getBytesNoCopy());
+    state = static_cast<volatile UInt32 *>(_ringState->getBytesNoCopy());
+    size = _ringBuffer->getCapacity();
+    pad = (4 - (len & 3)) & 3;
+
+    is = IOSimpleLockLockDisableInterrupt(gEventLock);
+    rd = state[0];
+    wr = state[1];
+    if (rd < size && wr < size && !(wr & 3)) {
+        used = (wr + size - rd) % size;
+        tail = size - wr;
+        /* one word kept free, or a full ring would read as empty */
+        if (used + (tail < AWDL_RING_HDR_LEN ? tail : 0) + AWDL_RING_HDR_LEN + len + pad + 4 < size) {
+            UInt8 hdr[AWDL_RING_HDR_LEN];
+            UInt32 magic = 0x57, code = msg;
+            UInt16 l = (UInt16)len, p = (UInt16)pad;
+
+            if (tail < AWDL_RING_HDR_LEN) {
+                UInt32 skip = 0x50;
+
+                for (size_t i = 0; i < tail; i += 4)
+                    memcpy(ring + wr + i, &skip, 4);
+                wr = 0;
+            }
+            bzero(hdr, sizeof(hdr));
+            memcpy(hdr, &magic, 4);
+            memcpy(hdr + 0x18, &l, 2);
+            memcpy(hdr + 0x1a, &p, 2);
+            memcpy(hdr + 0x1c, &code, 4);
+            memcpy(ring + wr, hdr, sizeof(hdr));
+            wr = (wr + AWDL_RING_HDR_LEN) % size;
+            tail = size - wr;
+            if (len <= tail) {
+                memcpy(ring + wr, data, len);
+            } else {
+                memcpy(ring + wr, data, tail);
+                memcpy(ring, static_cast<const UInt8 *>(data) + tail, len - tail);
+            }
+            wr = (wr + len + pad) % size;
+            OSSynchronizeIO();
+            state[1] = (UInt32)wr;
+        }
+    }
+    IOSimpleLockUnlockEnableInterrupt(gEventLock, is);
+}
+
+void IO80211P2PDaemonUserClient::wake()
+{
+    if (_haveAsyncRef)
+        sendAsyncResult64(_asyncRef, kIOReturnSuccess, nullptr, 0);
+}
+
+/*
+ * What BroadTek's route of IO80211VirtualInterface::IO80211InterfacePostMessage
+ * calls. The family gives its events to the client at +0xa0, which stays null
+ * (see below), and on AWDL routeEventViaBSD() is false, so without this they
+ * reach nobody. It finds this function through the platform expert's
+ * "rtw89-awdl-post" property, so the driver needs no Lilu.
+ */
+static void rtw89_awdl_post_event(void *vif, unsigned int msg, void *data, size_t len)
+{
+    static UInt32 logged[8];
+    IO80211P2PDaemonUserClient *uc;
+    IOInterruptState is;
+
+    if (!gEventLock)
+        return;
+    is = IOSimpleLockLockDisableInterrupt(gEventLock);
+    uc = gEventClient;
+    if (uc)
+        uc->retain();
+    IOSimpleLockUnlockEnableInterrupt(gEventLock, is);
+    if (!uc)
+        return;
+    if (uc->eventProvider() == vif) {
+        if (msg < 256 && !(logged[msg / 32] & (1u << (msg % 32)))) {
+            logged[msg / 32] |= 1u << (msg % 32);
+            LOG("awdl: the family's first event %u, %u bytes, goes to the ring",
+                msg, (unsigned int)len);
+        }
+        uc->postEvent(msg, data, len);
+        uc->wake();
+    }
+    uc->release();
+}
+
+/*
  * The selectors the framework calls, decoded in HANDOFF.md. Named here so the
  * switch below reads as the protocol rather than as numbers.
  */
@@ -352,6 +461,13 @@ void IO80211P2PDaemonUserClient::free()
 
 IOReturn IO80211P2PDaemonUserClient::clientClose()
 {
+    if (gEventLock) {
+        IOInterruptState is = IOSimpleLockLockDisableInterrupt(gEventLock);
+
+        if (gEventClient == this)
+            gEventClient = nullptr;
+        IOSimpleLockUnlockEnableInterrupt(gEventLock, is);
+    }
     if (_wakePort != MACH_PORT_NULL) {
         /* Balances the port registerNotificationPort() was given. */
         IOUserClient::releaseNotificationPort(_wakePort);
@@ -447,6 +563,16 @@ IOReturn IO80211P2PDaemonUserClient::externalMethod(uint32_t selector,
          */
         if (args->asyncWakePort != MACH_PORT_NULL)
             _wakePort = args->asyncWakePort;
+        if (args->asyncReference && gEventLock) {
+            IOInterruptState is;
+
+            bcopy(args->asyncReference, _asyncRef, sizeof(_asyncRef));
+            _haveAsyncRef = true;
+            is = IOSimpleLockLockDisableInterrupt(gEventLock);
+            if (!gEventClient)
+                gEventClient = this;
+            IOSimpleLockUnlockEnableInterrupt(gEventLock, is);
+        }
         LOG("awdl: wifip2pd is listening for events%s",
             _armed ? "" : " (before the arm, which is unexpected)");
         return kIOReturnSuccess;
@@ -599,6 +725,17 @@ bool AirPortRTW89Front::start(IOService *provider)
         return false;
     bufout[RTW89_BUFOUT_GUARD_1] = 0xaa;
     bufout[RTW89_BUFOUT_GUARD_2] = 0xaa;
+    if (!gEventLock)
+        gEventLock = IOSimpleLockAlloc();
+    {
+        void *post = reinterpret_cast<void *>(rtw89_awdl_post_event);
+        OSData *d = OSData::withBytes(&post, sizeof(post));
+        IORegistryEntry *platform = IOService::getPlatform();
+
+        if (d && platform)
+            platform->setProperty("rtw89-awdl-post", d);
+        OSSafeReleaseNULL(d);
+    }
     _backLock = IOLockAlloc();
     if (!_backLock)
         return false;
