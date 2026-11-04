@@ -310,6 +310,7 @@ void IO80211P2PDaemonUserClient::wake()
 static void rtw89_awdl_post_event(void *vif, unsigned int msg, void *data, size_t len)
 {
     static UInt32 logged[8];
+    static UInt32 counts[256], total, presence;
     IO80211P2PDaemonUserClient *uc;
     IOInterruptState is;
 
@@ -327,6 +328,27 @@ static void rtw89_awdl_post_event(void *vif, unsigned int msg, void *data, size_
             logged[msg / 32] |= 1u << (msg % 32);
             LOG("awdl: the family's first event %u, %u bytes, goes to the ring",
                 msg, (unsigned int)len);
+        }
+        if (msg < 256)
+            counts[msg]++;
+        if (++total % 32 == 0) {
+            char line[160];
+            int at = 0;
+
+            for (unsigned int i = 0; i < 256 && at < (int)sizeof(line) - 16; i++)
+                if (counts[i])
+                    at += snprintf(line + at, sizeof(line) - at, " %u:%u", i, counts[i]);
+            line[at] = 0;
+            LOG("awdl: %u family events, by code:%s", total, line);
+        }
+        if (msg == 47 && presence++ < 64) {
+            char hex[100];
+            size_t n = len < 32 ? len : 32;
+
+            for (size_t i = 0; i < n; i++)
+                snprintf(hex + 3 * i, sizeof(hex) - 3 * i, "%02x ", static_cast<UInt8 *>(data)[i]);
+            hex[3 * n] = 0;
+            LOG("awdl: peer presence, %u bytes: %s", (unsigned int)len, hex);
         }
         uc->postEvent(msg, data, len);
         uc->wake();
