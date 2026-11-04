@@ -7,7 +7,8 @@ set -u
 [ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
 here="$(cd "$(dirname "$0")" && pwd)"
 
-/usr/sbin/tcpdump -i awdl0 -n -l -tttt not port 5353 &
+# -p: no promiscuous mode. Turning it on is a change to awdl0 that the test does not need.
+/usr/sbin/tcpdump -p -i awdl0 -n -l -tttt not port 5353 &
 dump_pid=$!
 sleep 60
 kill "$dump_pid" 2>/dev/null
