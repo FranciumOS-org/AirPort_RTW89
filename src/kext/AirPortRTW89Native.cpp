@@ -2711,8 +2711,19 @@ int AirPort_RTW89::nativeVirtualIfCreate(void *data)
         return kIOReturnUnsupported;
     }
     if (_ns->vifUp) {
-        LOG("refused: %s is already up", _ns->vifName);
-        return EBUSY;
+        /*
+         * A relaunched wifip2pd. It does not delete awdl0 when it exits and,
+         * finding it again, still asks for one before it will use it. Refusing
+         * left it with "No AWDL interface found" until the next restart.
+         */
+        if (!_ns->vifName[0]) {
+            LOG("refused: the virtual interface is up with no BSD name");
+            return EBUSY;
+        }
+        LOG("%s is already up, handing it over again", _ns->vifName);
+        bzero(d->bsd_name, sizeof(d->bsd_name));
+        memcpy(d->bsd_name, _ns->vifName, strnlen(_ns->vifName, sizeof(d->bsd_name)));
+        return kIOReturnSuccess;
     }
 
     err = _ns->front.create_vif(_ns->front.ctx, d->mac, d->role, name);
