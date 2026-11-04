@@ -487,6 +487,28 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
         return false;
     gRx.matched++;
     /*
+     * Who a peer addresses its frames to. Ours say the AWDL address as receiver
+     * as well as BSSID, which nothing has checked against a real frame, and a
+     * receiver filters on it. Said whenever it changes, and every so often since
+     * the log ring is short.
+     */
+    {
+        static u8 last_da[ETH_ALEN];
+        static u32 said;
+
+        if (!ether_addr_equal(last_da, mgmt->da) || !(gRx.matched % 256)) {
+            memcpy(last_da, mgmt->da, ETH_ALEN);
+            if (said++ < 512)
+                awdl_log("a peer's frame: fc 0x%04x, receiver %02x:%02x:%02x:%02x:%02x:%02x, "
+                         "from %02x:%02x:%02x:%02x:%02x:%02x",
+                         (unsigned int)le16_to_cpu(mgmt->frame_control),
+                         mgmt->da[0], mgmt->da[1], mgmt->da[2],
+                         mgmt->da[3], mgmt->da[4], mgmt->da[5],
+                         mgmt->sa[0], mgmt->sa[1], mgmt->sa[2],
+                         mgmt->sa[3], mgmt->sa[4], mgmt->sa[5]);
+        }
+    }
+    /*
      * A data frame on the AWDL BSSID, which is what a transfer is made of.
      * Only action frames were recognised here before, so these fell through
      * to mac80211, which has no station for this BSSID and dropped them:
@@ -1910,9 +1932,21 @@ void rtw89_awdl_tx_status(const u8 *frame, size_t len, bool acked)
     static u32 acks, misses;
     const struct ieee80211_hdr_3addr *hdr = (const void *)frame;
 
-    if (len < sizeof(*hdr) || is_multicast_ether_addr(hdr->addr1) ||
-        !ether_addr_equal(hdr->addr3, kAwdlBssid))
+    if (len < sizeof(*hdr) || !ether_addr_equal(hdr->addr3, kAwdlBssid) ||
+        is_multicast_ether_addr(hdr->addr1))
         return;
+    /* Sync frames, with no one at that address to answer: only their tally. */
+    if (ether_addr_equal(hdr->addr1, kAwdlBssid)) {
+        static u32 sync_acks, sync_misses;
+
+        if (acked)
+            sync_acks++;
+        else
+            sync_misses++;
+        if (!((sync_acks + sync_misses) % 256))
+            awdl_log("sync frames: %u acknowledged, %u not", sync_acks, sync_misses);
+        return;
+    }
     if (acked)
         acks++;
     else
