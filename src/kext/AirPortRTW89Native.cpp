@@ -11,6 +11,7 @@
  */
 #include "AirPortRTW89.hpp"
 #include "rtw89_chips.h"
+#include "rtw89_scan_ioctl.hpp"
 
 #include <IOKit/80211/apple80211_ioctl.h>
 #include <IOKit/80211/apple80211_var.h>
@@ -1316,13 +1317,30 @@ int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
  * requests itself; the exceptions are the ones whose layout differs on newer
  * systems or which it does not pass on (AirPort_RTW88's apple80211_ioctl()).
  */
+int AirPort_RTW89::nativeScanHostPayload(unsigned int number, const void *payload,
+                                         uint32_t length, const char *entry)
+{
+    Scratch decoded(sizeof(apple80211_scan_data));
+    if (!decoded.p)
+        return ENOMEM;
+    auto &scan = *static_cast<apple80211_scan_data *>(decoded.p);
+    if (!rtw89DecodeHostScan(number, payload, length, scan)) {
+        LOG("native scan bridge rejected: %s, type %u, wire size %u", entry, number, length);
+        return EINVAL;
+    }
+    LOG("native scan bridge: %s, type %u, wire size %u, target length %u, channels %u",
+        entry, number, length, scan.ssid_len, scan.num_channels);
+    return errnoOf(nativeRequest(true, APPLE80211_IOC_SCAN_REQ, &scan));
+}
+
 int AirPort_RTW89::backIoctl(void *ctx, void *interface, void *vif, void *ifnet, unsigned long cmd,
                              void *data, bool *handled)
 {
     AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
     struct rtw89_front_ops *front = &me->_ns->front;
     struct apple80211req *req = static_cast<struct apple80211req *>(data);
-    bool isGet = cmd == SIOCGA80211, isSet = cmd == SIOCSA80211;
+    bool isGet = cmd == SIOCGA80211 || (req && rtw89ScanGet40(cmd, (unsigned int)req->req_type));
+    bool isSet = cmd == SIOCSA80211 || (req && rtw89ScanSet40(cmd, (unsigned int)req->req_type));
 
     /* requests can arrive while the front is still attaching the interface,
      * before it has handed over its functions: those are the family's */
@@ -1468,7 +1486,9 @@ int AirPort_RTW89::backIoctl(void *ctx, void *interface, void *vif, void *ifnet,
     if (!payload)
         return ENOMEM;
     int e = copyin(reqData, payload, len);
-    if (!e)
+    if (!e && rtw89HostScanLayout(reqType, len))
+        e = me->nativeScanHostPayload(reqType, payload, len, "bsd");
+    else if (!e)
         e = errnoOf(me->nativeRequest(true, reqType, payload));
     IOFree(payload, len);
     return e;
@@ -1491,6 +1511,25 @@ int AirPort_RTW89::backIoctlSet(void *ctx, void *interface, void *vif, void *sky
     *handled = true;
     if (data && interface == front->interface && !vif) {
         struct apple80211req *req = static_cast<struct apple80211req *>(data);
+
+        /* This SET entry has no ioctl command word. Handle the known host
+         * layouts before the legacy family reads its sixteen-slot structure. */
+        if (version_major >= 23 && rtw89HostScanLayout((unsigned int)req->req_type, req->req_len)) {
+            if (!req->req_data)
+                return EFAULT;
+            Scratch payload(req->req_len);
+            if (!payload.p)
+                return ENOMEM;
+            int error = copyin((user_addr_t)req->req_data, payload.p, req->req_len);
+            if (!error)
+                return me->nativeScanHostPayload((unsigned int)req->req_type,
+                                                 payload.p, req->req_len, "split-set");
+            // An internal family request may already own a kernel buffer.
+            // Do not dereference it speculatively; retain the original parser.
+            LOG("native scan bridge deferred: split-set copyin error %d", error);
+            *handled = false;
+            return 0;
+        }
 
         if (req->req_type == APPLE80211_IOC_POWERSAVE && req->req_len == 0 &&
             req->req_val >= APPLE80211_POWERSAVE_MODE_DISABLED &&
@@ -1839,7 +1878,7 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
     case APPLE80211_IOC_SCAN_REQ:
     case APPLE80211_IOC_SCAN_REQ_MULTIPLE: {
         uint8_t wantSsid[APPLE80211_MAX_SSID_LEN];
-        uint16_t wantFreqs[16];
+        uint16_t wantFreqs[APPLE80211_MAX_CHANNELS];
         size_t wantSsidLen = 0, nWantFreqs = 0;
         int ret;
 

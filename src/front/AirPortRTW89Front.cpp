@@ -6,6 +6,7 @@
 
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/IOLib.h>
+#include <libkern/version.h>
 #include <IOKit/network/IOBasicOutputQueue.h>
 #include <IOKit/network/IONetworkMedium.h>
 #include <sys/errno.h>
@@ -1588,6 +1589,55 @@ SInt32 AirPortRTW89Front::apple80211_ioctl_set(IO80211Interface *interface,
         ret = _back.ioctl_set(_back.ctx, interface, vif, skywalk, data, &handled);
     backLeave();
     return handled ? ret : super::apple80211_ioctl_set(interface, vif, skywalk, data);
+}
+
+/* The legacy family has separate virtual slots for Skywalk. Its two-argument
+ * SET wrapper jumps straight to its own parser, bypassing our legacy-interface
+ * override. Bridge only scans addressed to this station; preserve all other
+ * Skywalk requests on the original family path. */
+static bool stationScan(IO80211Interface *interface, const void *data)
+{
+    if (version_major < 23 || !interface || !data)
+        return false;
+    const auto *req = static_cast<const apple80211req *>(data);
+    if (req->req_type != APPLE80211_IOC_SCAN_REQ &&
+        req->req_type != APPLE80211_IOC_SCAN_REQ_MULTIPLE)
+        return false;
+    char name[IFNAMSIZ] = {};
+    const char *prefix = interface->getNamePrefix();
+    if (!prefix)
+        return false;
+    snprintf(name, sizeof(name), "%s%u", prefix, interface->getUnitNumber());
+    return !strncmp(name, req->req_if_name, sizeof(name));
+}
+
+SInt32 AirPortRTW89Front::apple80211_ioctl(IO80211SkywalkInterface *skywalk,
+                                           unsigned long cmd, void *data)
+{
+    if (cmd == SIOCSA80211 || cmd == 0x802869c8UL) {
+        bool handled = false;
+        SInt32 ret = 0;
+        const bool there = backEnter();
+        if (there && stationScan(_netif, data) && _back.ioctl)
+            ret = _back.ioctl(_back.ctx, _netif, nullptr, nullptr, cmd, data, &handled);
+        backLeave();
+        if (handled && ret != EFAULT)
+            return ret;
+    }
+    return super::apple80211_ioctl(skywalk, cmd, data);
+}
+
+SInt32 AirPortRTW89Front::apple80211_ioctl_set(IO80211SkywalkInterface *skywalk, void *data)
+{
+    bool handled = false;
+    SInt32 ret = 0;
+    const bool there = backEnter();
+    if (there && stationScan(_netif, data) && _back.ioctl_set)
+        ret = _back.ioctl_set(_back.ctx, _netif, nullptr, skywalk, data, &handled);
+    backLeave();
+    if (handled && ret != EFAULT)
+        return ret;
+    return super::apple80211_ioctl_set(skywalk, data);
 }
 
 SInt32 AirPortRTW89Front::apple80211Request(unsigned int type, int number,
