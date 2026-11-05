@@ -373,6 +373,8 @@ bundle: kext front
 	@f=$$(/usr/libexec/PlistBuddy -c 'Print :IOKitPersonalities:RTW89:IOProbeScore' $(BUNDLE)/Contents/PlugIns/AirPortRTW89Front.kext/Contents/Info.plist 2>/dev/null || echo 0); \
 	 d=$$(/usr/libexec/PlistBuddy -c 'Print :IOKitPersonalities:RTW89:IOProbeScore' $(BUNDLE)/Contents/Info.plist 2>/dev/null || echo 0); \
 	 [ "$$f" -gt "$$d" ] || { echo "  the front's IOProbeScore ($$f) must be above the driver's ($$d)"; exit 1; }
+	@codesign --force --sign - $(BUNDLE)
+	@codesign --verify --deep --strict $(BUNDLE)
 	@echo "  BUNDLE $(BUNDLE) (the front in Contents/PlugIns)"
 
 # The downloads: AirPort_RTW89-<version>.zip, the kext and next to it the
