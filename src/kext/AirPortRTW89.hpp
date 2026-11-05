@@ -115,6 +115,8 @@ private:
     int nativeVirtualIfCreate(void *data);
     int nativeVirtualIfDelete(void *data);
     int nativeAssociate(void *data);
+    int nativeScanHostPayload(unsigned int number, const void *payload, uint32_t length,
+                              const char *entry);
     bool joinAfterScan(const uint8_t *ssid, uint32_t ssidLen);
     static void scanDone(void *ctx, bool aborted);
     static void backGetMac(void *ctx, uint8_t mac[6]);
