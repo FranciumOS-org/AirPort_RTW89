@@ -65,6 +65,9 @@ public:
     bool useAppleRSNSupplicant(IO80211Interface *) override;
     SInt32 apple80211_ioctl(IO80211Interface *interface, IO80211VirtualInterface *vif,
                             ifnet_t net, unsigned long cmd, void *data) override;
+    SInt32 apple80211_ioctl(IO80211SkywalkInterface *skywalk, unsigned long cmd,
+                            void *data) override;
+    SInt32 apple80211_ioctl_set(IO80211SkywalkInterface *skywalk, void *data) override;
     SInt32 apple80211_ioctl_set(IO80211Interface *interface, IO80211VirtualInterface *vif,
                                 IO80211SkywalkInterface *skywalk, void *data) override;
     SInt32 apple80211Request(unsigned int type, int number, IO80211Interface *interface,
