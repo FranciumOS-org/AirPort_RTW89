@@ -1293,6 +1293,9 @@ static struct {
     bool ready_said;
     int  last_why;              /* the last refusal from the radio, see tick() */
     u8   master[ETH_ALEN];      /* the master we follow, when we follow one */
+    u32  due;                   /* windows a frame has been waiting for a slot */
+    u32  slotted;               /* frames sent in a slot the master is in */
+    u32  unslotted;             /* frames sent without waiting any longer */
 } gTx;
 
 /* Outlives a schedule: it is wifip2pd's name, and awdl0 going up and down does
@@ -1493,9 +1496,10 @@ static void awdl_gate_report(void)
     if (++ticks % 1600)
         return;
     awdl_log("master's frames in the slots predicted for us: %u, outside them: %u, "
-             "gate %s; data frames held %u, overflowed %u",
+             "gate %s; data frames held %u, overflowed %u; sync frames %u in a "
+             "slot of the master's, %u after waiting for one",
              gMaster.hits, gMaster.misses, awdl_gate_trusted() ? "in use" : "not trusted",
-             gDataHeld, gDataOverflow);
+             gDataHeld, gDataOverflow, gTx.slotted, gTx.unslotted);
     {
         u8 heard[16];
         unsigned int i;
@@ -1530,8 +1534,36 @@ void rtw89_awdl_tick(u32 now_us)
      * not shift once it is ready.
      */
     gTx.aw_seq++;
-    if (gTx.windows++ % AWDL_AW_PER_AF)
+    /*
+     * A frame comes due every AWDL_AW_PER_AF windows, and then waits for a
+     * window the master spends on our channel.
+     *
+     * The cadence alone was not enough. The master is on our channel in only
+     * some of its sixteen slots -- measured with an iPhone on 44, six of them,
+     * the rest on 149 and 6 -- and a frame sent in one of the other ten goes
+     * out while the only device that matters is tuned elsewhere. The gate that
+     * already holds data frames for those slots says which window is which, so
+     * the same question is asked here.
+     *
+     * Asked, not insisted on: the gate answers true whenever it does not know
+     * (no master, no slots, too few frames heard to trust the map), and after
+     * a whole further AF period of waiting the frame goes out anyway. Other
+     * peers may be listening on our channel in windows the master is not, and
+     * a frame they could have heard is not worth dropping for a tidier rule.
+     */
+    if (gTx.windows++ % AWDL_AW_PER_AF == 0)
+        gTx.due = 1;
+    if (!gTx.due)
         return;
+    if (!awdl_gate_open() && gTx.due <= AWDL_AW_PER_AF) {
+        gTx.due++;
+        return;
+    }
+    if (gTx.due > AWDL_AW_PER_AF)
+        gTx.unslotted++;
+    else
+        gTx.slotted++;
+    gTx.due = 0;
     /*
      * Only the windows that would have carried a frame count as waiting, and
      * the window number advances through the wait either way, so the timeline
