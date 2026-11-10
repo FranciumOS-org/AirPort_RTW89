@@ -328,6 +328,21 @@ static unsigned int channelOfFreq(unsigned int freq)
 enum { kChannelFlag6GHz = 0x2000 };
 
 /*
+ * The joined access point's last beacon, as a whole frame after its length:
+ * not in the SDK either. The family's getBeaconInfo asks for it with a
+ * 0x404-byte buffer, and CoreWLAN's networkHiddenOrBroadcast, which airportd
+ * runs after every join, looks for the SSID element in it from byte 0x28 (4 of
+ * length, 24 of header, 12 of fixed fields). No answer, or no such element,
+ * and the network is remembered as a hidden one.
+ */
+enum { kIocBeaconInfo = 346 };
+struct BeaconInfo {
+    uint32_t len;
+    uint8_t frame[1024];
+} __attribute__((packed));
+static_assert(sizeof(BeaconInfo) == 0x404, "beacon info is not the family's size");
+
+/*
  * The other way, for the channels macOS names in a scan request.  Its own
  * flags say which band, since channel numbers repeat across them; 0 for a
  * channel this driver would not scan anyway.
@@ -2042,6 +2057,50 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
                        true);
         return kIOReturnSuccess;
     }
+    case kIocBeaconInfo: {
+        BeaconInfo *d = static_cast<BeaconInfo *>(data);
+        struct rtw89_glue_bss bss = {};
+        Scratch iesBuf(1024);
+        uint8_t *ies = iesBuf.bytes();
+        uint16_t beaconInt = 100;
+        size_t len = 0, at = 36, n = 0;
+
+        if (isSet || !d)
+            return kIOReturnUnsupported;
+        if (!isConnected(link))
+            return kIOReturnNotReady;
+        bzero(d, sizeof(*d));
+        if (!ies || !rtw89_glue_find_bss(link.bssid, &bss, ies, 1024, &len, &beaconInt))
+            len = 0;
+        else
+            /* whole elements only, as many as fit */
+            while (n + 2 <= len && n + 2 + ies[n + 1] <= len &&
+                   at + n + 2 + ies[n + 1] <= sizeof(d->frame))
+                n += 2 + ies[n + 1];
+        /* Not in the list any more, or nothing kept of it: the name the
+         * connection knows, which is what the check compares with. */
+        if (!n) {
+            size_t ssidLen = strnlen(link.ssid, 32);
+
+            d->frame[at] = 0;
+            d->frame[at + 1] = (uint8_t)ssidLen;
+            memcpy(d->frame + at + 2, link.ssid, ssidLen);
+            at += 2 + ssidLen;
+        } else {
+            memcpy(d->frame + at, ies, n);
+            at += n;
+        }
+        d->frame[0] = 0x80;                     /* beacon */
+        memset(d->frame + 4, 0xff, 6);          /* broadcast */
+        memcpy(d->frame + 10, link.bssid, 6);
+        memcpy(d->frame + 16, link.bssid, 6);
+        d->frame[32] = (uint8_t)beaconInt;
+        d->frame[33] = (uint8_t)(beaconInt >> 8);
+        d->frame[34] = (uint8_t)bss.capability;
+        d->frame[35] = (uint8_t)(bss.capability >> 8);
+        d->len = (uint32_t)at;
+        return kIOReturnSuccess;
+    }
 
     case APPLE80211_IOC_STATE: {
         struct apple80211_state_data *d = static_cast<struct apple80211_state_data *>(data);
@@ -2211,11 +2270,13 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
             return kIOReturnUnsupported;
         bzero(d, sizeof(*d));
         d->version = APPLE80211_VERSION;
+        /* every rtw89 chip does 802.11ax. The list ends there: an 802.11be
+         * link is reported as 802.11ax, the family has no bit for it. */
         d->phy_mode = APPLE80211_MODE_11A | APPLE80211_MODE_11B | APPLE80211_MODE_11G |
-                      APPLE80211_MODE_11N | APPLE80211_MODE_11AC;
-        /* Ventura's list ends at 802.11ac: an 802.11ax link is reported as that */
+                      APPLE80211_MODE_11N | APPLE80211_MODE_11AC | APPLE80211_MODE_11AX;
         d->active_phy_mode = link.state == RTW89_GLUE_LINK_DOWN ? APPLE80211_MODE_AUTO :
-                             link.mode >= 2 ? APPLE80211_MODE_11AC :
+                             link.mode >= 3 ? APPLE80211_MODE_11AX :
+                             link.mode == 2 ? APPLE80211_MODE_11AC :
                              link.mode == 1 ? APPLE80211_MODE_11N :
                              link.freq > 3000 ? APPLE80211_MODE_11A : APPLE80211_MODE_11G;
         return kIOReturnSuccess;
