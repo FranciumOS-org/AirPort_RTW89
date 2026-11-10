@@ -180,6 +180,7 @@ static bool advertiseWPA3()
 }
 
 extern "C" bool rtw89_awdl_strip_tlvs;
+extern "C" bool rtw89_awdl_own_mac;
 
 /*
  * Whether the AWDL groundwork is live (boot-arg -rtw89awdl): macOS may create
@@ -195,6 +196,7 @@ static bool awdlEnabled()
 
         state = PE_parse_boot_argn("-rtw89awdl", &dummy, sizeof(dummy)) ? 1 : 2;
         rtw89_awdl_strip_tlvs = PE_parse_boot_argn("-rtw89awdlstrip", &dummy, sizeof(dummy));
+        rtw89_awdl_own_mac = PE_parse_boot_argn("-rtw89awdlmac", &dummy, sizeof(dummy));
     }
     return state == 1;
 }
@@ -2842,6 +2844,10 @@ int AirPort_RTW89::nativeVirtualIfCreate(void *data)
     _ns->vifUp = true;
     memcpy(_ns->vifMac, d->mac, sizeof(_ns->vifMac));
     strlcpy(_ns->vifName, name, sizeof(_ns->vifName));
+    /* The address a peer will address its frames to, which the chip has to
+     * answer to for any of them to get through; see
+     * rtw89_compat_set_self_addr(). */
+    rtw89_glue_awdl_set_mac(_ns->vifMac);
     /* There is somewhere to put received AWDL frames now -- but the filter
      * goes on only once the schedule is running where peers can hear us; see
      * awdlDeliverUpdate(). */
@@ -2864,6 +2870,7 @@ int AirPort_RTW89::nativeVirtualIfDelete(void *data)
     _ns->vifUp = false;
     awdlClockUpdateAndHold();
     awdlDeliverUpdate();
+    rtw89_glue_awdl_set_mac(nullptr);
     _ns->front.destroy_vif(_ns->front.ctx);
     bzero(_ns->vifName, sizeof(_ns->vifName));
     return kIOReturnSuccess;

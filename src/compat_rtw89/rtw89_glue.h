@@ -388,6 +388,9 @@ bool rtw89_glue_rx_local_us(uint64_t mactime, uint64_t *local_us);
  */
 uint8_t rtw89_glue_awdl_master_channel(void);
 uint8_t rtw89_glue_awdl_follow_channel(uint8_t current, uint8_t fallback);
+/* awdl0's own address, so the chip can be told to answer to it; NULL when it
+ * goes away. See rtw89_compat_set_self_addr(). */
+void rtw89_glue_awdl_set_mac(const uint8_t *mac);
 
 /*
  * Ask for the radio to be held on @freq for AWDL while no network is joined,

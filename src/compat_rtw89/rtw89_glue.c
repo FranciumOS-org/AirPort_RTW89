@@ -19,6 +19,8 @@ extern void (*rtw88_napi_post_poll)(int done);
 bool rtw88_queue_datapath_delayed_work(struct delayed_work *dwork, unsigned long delay);
 /* rtw89_core_wrap.c */
 unsigned int rtw89_compat_flush_ppdu_rx(struct rtw89_dev *rtwdev);
+/* The address the chip answers to; see rtw89_core_wrap.c. */
+int rtw89_compat_set_self_addr(struct ieee80211_vif *vif, const u8 *addr);
 
 /* ------------------------------------------------------------------ */
 /*  State                                                               */
@@ -118,6 +120,8 @@ static struct {
     struct work_struct awdl_chan_work;
     u16 awdl_chan_freq;
     u16 awdl_chan_held;
+    u8 awdl_mac[ETH_ALEN];              /* awdl0's own address, when it is up */
+    bool have_awdl_mac;
 
     /* the rate of the last frame the AP sent to us alone, see glue_rx_rate() */
     u32 rx_rate;
@@ -2264,6 +2268,36 @@ static void glue_awdl_chan_work(struct work_struct *work)
         if (!ret)
             glue.awdl_chan_held = freq;
     }
+    /*
+     * And the address the chip answers to, which follows the same condition:
+     * the hold is only ever taken with no network joined, and that is exactly
+     * when the station address carries nothing and awdl0's can take its place.
+     * A peer addresses its frames to awdl0's address and gets no
+     * acknowledgement from a chip that has never heard of it; see
+     * rtw89_compat_set_self_addr(). Behind -rtw89awdlmac, because one address
+     * at a time is all this does and getting it wrong costs the association.
+     */
+    if (rtw89_awdl_own_mac && glue.have_awdl_mac) {
+        bool want = glue.awdl_chan_held != 0;
+        const u8 *sta = glue.have_mac ? glue.mac : hw->wiphy->perm_addr;
+        const u8 *addr = want ? glue.awdl_mac : sta;
+        /* Asked every time rather than tracked: a join puts the station's
+         * address back on its own thread (mlme_connect()), so anything
+         * remembered here would be wrong by the next hold, and asking for the
+         * address the chip already has costs nothing. */
+        int aret = rtw89_compat_set_self_addr(glue.vif, addr);
+
+        if (aret == 1)
+            IOLog("[rtw89 awdl] the chip now answers to "
+                  "%02x:%02x:%02x:%02x:%02x:%02x, %s\n",
+                  addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
+                  want ? "awdl0's own address, so a peer's unicast is "
+                         "acknowledged" : "the station's address again");
+        else if (aret < 0 && aret != -ENETDOWN)
+            IOLog("[rtw89 awdl] the chip would not answer to "
+                  "%02x:%02x:%02x:%02x:%02x:%02x: %d\n",
+                  addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], aret);
+    }
     wiphy_unlock(hw->wiphy);
     /* -EBUSY is the ordinary answer while a network has the radio, and the
      * association's channel is then what AWDL runs on; anything else is
@@ -2271,6 +2305,17 @@ static void glue_awdl_chan_work(struct work_struct *work)
     if (ret && ret != -EBUSY)
         IOLog("[rtw89 awdl] the radio could not be held on %u MHz: %d\n",
               (unsigned int)freq, ret);
+}
+
+/* awdl0's own address, so the chip can be told to answer to it. */
+void rtw89_glue_awdl_set_mac(const uint8_t *mac)
+{
+    if (!mac) {
+        glue.have_awdl_mac = false;
+        return;
+    }
+    memcpy(glue.awdl_mac, mac, ETH_ALEN);
+    glue.have_awdl_mac = true;
 }
 
 void rtw89_glue_awdl_hold_channel(uint16_t freq)

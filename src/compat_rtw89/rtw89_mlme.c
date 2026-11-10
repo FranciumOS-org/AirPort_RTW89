@@ -24,6 +24,9 @@
 #include "rtw89_crypto.h"
 #include "rtw89_sae.h"
 
+/* The address the chip answers to; see rtw89_core_wrap.c. */
+int rtw89_compat_set_self_addr(struct ieee80211_vif *vif, const u8 *addr);
+
 #define MLME_AUTH_TIMEOUT   (HZ / 2)
 #define MLME_ASSOC_TIMEOUT  (HZ / 2)
 #define MLME_MAX_TRIES      3
@@ -4118,6 +4121,18 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk,
         mlme_release_chanctx();
         mlme.chan = NULL;
         mlme.sband = NULL;
+        /*
+         * And the station's address back, here rather than on the work that
+         * follows the hold: an association is acknowledged with the address in
+         * the port's CAM, so a join that started while the chip was answering
+         * to awdl0's would get no acknowledgement from the AP and fail. The
+         * join is the one thing AWDL must never cost.
+         *
+         * vif->addr is the station's: only the link's copy is ever changed,
+         * and the helper does nothing when the two already agree.
+         */
+        if (rtw89_compat_set_self_addr(mlme.vif, mlme.vif->addr))
+            mlme_info("the station's address could not be put back");
     }
 
     mlme.bss = *bss;

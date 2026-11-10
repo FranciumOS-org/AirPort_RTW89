@@ -63,3 +63,55 @@ unsigned int rtw89_compat_flush_ppdu_rx(struct rtw89_dev *rtwdev)
         rtw89_core_flush_ppdu_rx_queue(rtwdev, &desc_info);
     return n;
 }
+
+/*
+ * Change the address the chip answers to, so it acknowledges AWDL.
+ *
+ * An iPhone that has decided to talk to us addresses its frames to awdl0's own
+ * MAC, which is not the station's. The chip receives them -- receive is
+ * promiscuous while AWDL runs -- but nothing acknowledges them, because A1
+ * matching and the hardware's acknowledgement both come from the self address
+ * in the port's address CAM (rtw89_cam_fill_addr_cam_info() takes it from
+ * rtwvif_link->mac_addr). Measured: 1216 frames from the phone addressed to
+ * our AWDL address, 1155 of them retries, while everything we sent it was
+ * acknowledged. It hears us, it wants us, and it never gets an answer.
+ *
+ * The driver already reprograms that address for a scan with a random MAC --
+ * rtw89_core_scan_start() copies the new one in and sends the CAM update --
+ * so this is the same two steps without the scan's own business (RF
+ * calibration, coexistence, EDCCA), which has nothing to do with an address.
+ *
+ * One address at a time, which is why this is only safe with no network
+ * joined: an association needs the station address to be the one acknowledged.
+ * Holding both at once needs a second port, and this is the experiment that
+ * says whether that work is worth doing.
+ *
+ * Returns 1 when the address was changed, 0 when it was already that one, or a
+ * negative errno. The caller keeps no state of its own: asking again costs
+ * nothing, which is what makes a join putting the station's address back
+ * behind the glue's back harmless.
+ */
+int rtw89_compat_set_self_addr(struct ieee80211_vif *vif, const u8 *addr);
+int rtw89_compat_set_self_addr(struct ieee80211_vif *vif, const u8 *addr)
+{
+    struct rtw89_vif_link *rtwvif_link;
+    struct rtw89_vif *rtwvif;
+    struct rtw89_dev *rtwdev;
+    int ret;
+
+    if (!vif || !addr)
+        return -EINVAL;
+    if (!rtw89_compat_vif_can_tx(vif))
+        return -ENETDOWN;
+    rtwvif = vif_to_rtwvif(vif);
+    rtwdev = rtwvif->rtwdev;
+    rtwvif_link = rtw89_get_designated_link(rtwvif);
+    if (!rtwdev || !rtwvif_link)
+        return -ENETDOWN;
+    if (ether_addr_equal(rtwvif_link->mac_addr, addr))
+        return 0;               /* already there: nothing was changed */
+    ether_addr_copy(rtwvif_link->mac_addr, addr);
+    ret = rtw89_fw_h2c_cam(rtwdev, rtwvif_link, NULL, addr,
+                           RTW89_ROLE_INFO_CHANGE);
+    return ret ? ret : 1;       /* 1: it was changed, so a caller can say so */
+}

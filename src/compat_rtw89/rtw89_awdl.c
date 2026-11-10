@@ -263,6 +263,7 @@ static struct { u32 data_seen; u32 offered; u32 matched; u32 apple; u32 arpa;
  * goes through untouched.
  */
 bool rtw89_awdl_strip_tlvs;
+bool rtw89_awdl_own_mac;
 
 static bool awdl_tlv_breaks_io80211(u8 type)
 {
