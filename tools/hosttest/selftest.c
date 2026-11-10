@@ -964,9 +964,10 @@ static void test_awdl_build(void)
     len = rtw89_awdl_build_sync_frame(buf, sizeof(buf), &p);
     CHECK(len == want);
 
-    /* the header: addressed to AWDL's address, from us, that address again */
+    /* the header: broadcast, from us, AWDL's address as the BSSID -- which is
+     * how a peer's own frames are addressed; see rtw89_awdl_build_sync_frame() */
     CHECK(buf[0] == 0xd0 && buf[1] == 0x00);        /* action frame */
-    CHECK(memcmp(buf + 4, "\x00\x25\x00\xff\x94\x73", ETH_ALEN) == 0);
+    CHECK(memcmp(buf + 4, "\xff\xff\xff\xff\xff\xff", ETH_ALEN) == 0);
     CHECK(memcmp(buf + 10, src, ETH_ALEN) == 0);
     CHECK(memcmp(buf + 16, "\x00\x25\x00\xff\x94\x73", ETH_ALEN) == 0);
     CHECK(buf[22] == 0x30 && buf[23] == 0x12);      /* sequence 0x123 << 4 */

@@ -902,14 +902,25 @@ size_t rtw89_awdl_build_sync_frame(u8 *buf, size_t size,
     memset(buf, 0, need);
 
     /*
-     * Every AWDL frame is addressed to Apple's AWDL address, as both the
-     * receiver and the BSSID; the sender is the AWDL interface's own address,
-     * which is not the station's.
+     * Broadcast, from the AWDL interface's own address, with Apple's AWDL
+     * address as the BSSID.
+     *
+     * The receiver used to be that same AWDL address, on the reasoning that
+     * every AWDL frame carries it. It carries it as the BSSID -- addr3 -- and
+     * a peer's own frames say so: an iPhone's action frames come in with
+     * receiver ff:ff:ff:ff:ff:ff and its data frames with the multicast group
+     * they are going to, never 00:25:00:ff:94:73 in addr1. Putting it there
+     * made every frame a unicast to a station that does not exist, which cost
+     * twice: the chip waited for an acknowledgement that could never come and
+     * retried each frame (measured: 0 of 768 acknowledged), and a peer's
+     * receive filter -- own address, broadcast, multicast -- threw ours away
+     * unseen. That is why this machine heard every peer and no peer ever
+     * listed it.
      */
     hdr = (struct ieee80211_hdr_3addr *)buf;
     hdr->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_ACTION);
     hdr->duration_id = 0;
-    memcpy(hdr->addr1, kAwdlBssid, ETH_ALEN);
+    eth_broadcast_addr(hdr->addr1);
     memcpy(hdr->addr2, p->src, ETH_ALEN);
     memcpy(hdr->addr3, kAwdlBssid, ETH_ALEN);
     hdr->seq_ctrl = cpu_to_le16((u16)(p->seq << 4));
@@ -1932,19 +1943,24 @@ void rtw89_awdl_tx_status(const u8 *frame, size_t len, bool acked)
     static u32 acks, misses;
     const struct ieee80211_hdr_3addr *hdr = (const void *)frame;
 
-    if (len < sizeof(*hdr) || !ether_addr_equal(hdr->addr3, kAwdlBssid) ||
-        is_multicast_ether_addr(hdr->addr1))
+    if (len < sizeof(*hdr) || !ether_addr_equal(hdr->addr3, kAwdlBssid))
         return;
-    /* Sync frames, with no one at that address to answer: only their tally. */
-    if (ether_addr_equal(hdr->addr1, kAwdlBssid)) {
-        static u32 sync_acks, sync_misses;
+    /*
+     * Broadcast and multicast -- our sync frames and the mDNS a transfer
+     * starts with -- are not acknowledged by anyone, so there is nothing here
+     * to tell "not heard" from "heard and ignored". The status still says
+     * whether the chip got the frame out, which is worth a tally of its own.
+     */
+    if (is_multicast_ether_addr(hdr->addr1)) {
+        static u32 group_sent, group_failed;
 
         if (acked)
-            sync_acks++;
+            group_sent++;
         else
-            sync_misses++;
-        if (!((sync_acks + sync_misses) % 256))
-            awdl_log("sync frames: %u acknowledged, %u not", sync_acks, sync_misses);
+            group_failed++;
+        if (!((group_sent + group_failed) % 256))
+            awdl_log("broadcast and multicast frames: %u transmitted, %u not "
+                     "(no acknowledgement is expected)", group_sent, group_failed);
         return;
     }
     if (acked)
