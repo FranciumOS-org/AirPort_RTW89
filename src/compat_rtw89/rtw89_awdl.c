@@ -58,6 +58,7 @@ static const u8 kAwdlSnap[] = { 0xaa, 0xaa, 0x03, 0x00, 0x17, 0xf2, 0x08, 0x00 }
  * be shut.
  */
 #define AWDL_TLV_SERVICE_RESPONSE 0x02
+#define AWDL_TLV_SERVICE_PARAMS   0x06
 #define AWDL_TLV_ARPA             0x10
 
 /* category + OUI + type + version + subtype + reserved + the two timestamps */
@@ -128,6 +129,63 @@ struct awdl_sync_params {
     u8  max_ext_af;
     u8  master_addr[ETH_ALEN];
 } __packed;
+
+/*
+ * The service parameters TLV, type 6, as Wireshark's AWDL dissector reads it:
+ *
+ *   u8 unknown[3], u16 sui, u32 bitmask, then one byte per set bit of it
+ *
+ * Lengths are little endian, so the whole TLV is 9 + popcount(bitmask) bytes.
+ * Each set bit i of the bitmask has a byte of its own, in ascending order, and
+ * each set bit k of that byte names the service value k + 8 * i. The sui is a
+ * counter a device bumps whenever what it offers changes, which tells a
+ * receiver to forget what it cached.
+ *
+ * Worth decoding rather than dumping, because the set is what matters and it
+ * cannot be read off the hex: an iPhone offering AirDrop said
+ * { 32, 45, 138, 159 } while this machine said nothing at all, with its TLV 2
+ * records listing three services all the same.
+ */
+static void awdl_log_service_params(const char *whose, const u8 *v, size_t len)
+{
+    char list[160];
+    size_t at = 0;
+    u32 mask;
+    u16 sui;
+    unsigned int i, k, byte = 0, found = 0;
+
+    if (len < 9) {
+        awdl_log("    %s services: %u bytes, too short to be a service "
+                 "parameters TLV", whose, (unsigned int)len);
+        return;
+    }
+    sui = (u16)(v[3] | ((u16)v[4] << 8));
+    mask = (u32)v[5] | ((u32)v[6] << 8) | ((u32)v[7] << 16) | ((u32)v[8] << 24);
+    list[0] = 0;
+    for (i = 0; i < 32; i++) {
+        u8 value;
+
+        if (!((mask >> i) & 1))
+            continue;
+        if (9 + byte >= len) {
+            at += (size_t)snprintf(list + at, sizeof(list) - at, "%s(truncated)",
+                                   at ? ", " : "");
+            break;
+        }
+        value = v[9 + byte++];
+        for (k = 0; k < 8; k++) {
+            if (!((value >> k) & 1))
+                continue;
+            found++;
+            if (at < sizeof(list) - 8)
+                at += (size_t)snprintf(list + at, sizeof(list) - at, "%s%u",
+                                       at ? ", " : "", k + 8 * i);
+        }
+    }
+    awdl_log("    %s services: announcement %u, bitmask 0x%08x, %u value(s): %s",
+             whose, (unsigned int)sui, mask, found, found ? list : "none -- "
+             "nothing is offered, whatever the service records say");
+}
 
 static void awdl_log_sync_params(const u8 *v, size_t len)
 {
@@ -775,6 +833,10 @@ bool rtw89_awdl_rx(struct sk_buff *skb, size_t len)
             awdl_log_sync_params(tlv + 3, tlen);
             awdl_log_hex("sync params", tlv + 3, tlen);
         }
+        else if (type == AWDL_TLV_SERVICE_PARAMS) {
+            awdl_log("    TLV type %u, %u bytes", (unsigned int)type, (unsigned int)tlen);
+            awdl_log_service_params("the peer's", tlv + 3, tlen);
+        }
         else {
             awdl_log("    TLV type %u, %u bytes", (unsigned int)type, (unsigned int)tlen);
             /* The ones we have to send, or may have to, and do not know from
@@ -1205,7 +1267,7 @@ static size_t awdl_use_master_params(u8 *tlvs, size_t len, size_t size)
             memcpy(tlvs + off + AWDL_TLV_HDR_LEN, gMaster.path, 7);
             memcpy(tlvs + off + AWDL_TLV_HDR_LEN + 13, gMaster.path + 13, 2);
         }
-        else if (tlvs[off] == 6 && gMaster.tlv6_len &&
+        else if (tlvs[off] == AWDL_TLV_SERVICE_PARAMS && gMaster.tlv6_len &&
                  len - whole + gMaster.tlv6_len <= size) {
             memmove(tlvs + off + gMaster.tlv6_len, tlvs + off + whole, len - off - whole);
             memcpy(tlvs + off, gMaster.tlv6, gMaster.tlv6_len);
@@ -1754,6 +1816,22 @@ void rtw89_awdl_tick(u32 now_us)
                          gMaster.tlv19_len, gMaster.tlv33_len);
                 awdl_log_hex(p.subtype == AWDL_SUBTYPE_MIF ? "our MIF's TLVs" : "our PSF's TLVs",
                              tlv_out, composed);
+                /* Decoded as well as dumped: what we offer is a bitmask deep
+                 * inside it and is the one thing a peer deciding whether to
+                 * list us has to read. */
+                {
+                    size_t w = 0;
+
+                    while (w + AWDL_TLV_HDR_LEN <= composed) {
+                        size_t tl = (size_t)(tlv_out[w + 1] | (tlv_out[w + 2] << 8));
+
+                        if (w + AWDL_TLV_HDR_LEN + tl > composed)
+                            break;
+                        if (tlv_out[w] == AWDL_TLV_SERVICE_PARAMS)
+                            awdl_log_service_params("our", tlv_out + w + AWDL_TLV_HDR_LEN, tl);
+                        w += AWDL_TLV_HDR_LEN + tl;
+                    }
+                }
                 if (p.subtype == AWDL_SUBTYPE_MIF)
                     awdl_svc_log_all();
             }
