@@ -101,6 +101,7 @@ private:
     void awdlClockUpdate();
     void awdlChannelHold(const struct rtw89_glue_link &link);
     void awdlClockUpdateAndHold();
+    void awdlDeliverUpdate();
     bool transmit(mbuf_t m);
 
     /* Native Wi-Fi (AirPortRTW89Native.cpp): connected to AirPortRTW89Front

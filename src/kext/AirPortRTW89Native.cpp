@@ -72,6 +72,9 @@ struct AirPort_RTW89::NativeState {
     uint16_t awdlHeldFreq = 0;      /* the frequency asked for with nothing joined */
     uint8_t awdlHoldWhy = 0xff;     /* why it is not being held; see awdlChannelHold() */
     uint64_t lastAwdlScan = 0;      /* when the last full scan ran under it */
+    bool awdlJoinedOnce = false;    /* a network has been joined since we started */
+    bool awdlDeliverOn = false;     /* whether promiscuous receive is on for AWDL */
+    bool awdlWaitedForJoin = false; /* the wait for a first join has been logged */
     /* The sync frame the family builds for us to put on air. Broadcom's
      * setAWDL_SYNC_FRAME_TEMPLATE allocates 0x724 bytes for it, so that is the
      * size the family expects to be able to hand over. */
@@ -192,6 +195,36 @@ static bool awdlEnabled()
 
         state = PE_parse_boot_argn("-rtw89awdl", &dummy, sizeof(dummy)) ? 1 : 2;
         rtw89_awdl_strip_tlvs = PE_parse_boot_argn("-rtw89awdlstrip", &dummy, sizeof(dummy));
+    }
+    return state == 1;
+}
+
+/*
+ * Whether AWDL may cost something while nothing wants it (-rtw89awdlalways).
+ *
+ * The groundwork used to engage the moment macOS created awdl0, which it does
+ * early in every boot whether or not AirDrop is ever opened. Two things then
+ * ran for the rest of the session: promiscuous receive, which hands the host
+ * every frame on the channel from every BSS, and the window schedule with the
+ * channel hold under it, which asks for a social channel in exactly the state
+ * the machine is in before its first association. Measured on this machine
+ * that cost the first join and the throughput after it, which is a bad trade
+ * for a feature nobody asked for yet, so both are gated now:
+ * awdlClockUpdate() waits for a network to have been joined once, and
+ * awdlDeliverUpdate() keeps promiscuous receive off unless the schedule is
+ * really running where peers can hear it.
+ *
+ * This boot-arg puts back the old unconditional behaviour, for comparing the
+ * two or for a machine that never joins anything.
+ */
+static bool awdlAlways()
+{
+    static int state;   /* 0: not read yet, 1: on, 2: off */
+
+    if (!state) {
+        int dummy;
+
+        state = PE_parse_boot_argn("-rtw89awdlalways", &dummy, sizeof(dummy)) ? 1 : 2;
     }
     return state == 1;
 }
@@ -769,6 +802,8 @@ void AirPort_RTW89::nativeLink(const struct rtw89_glue_link &link)
                         link.mode == 1 ? (link.width >= 40 ? 300 : 144) : 54;
 
         _ns->linkUp = true;
+        /* The schedule waits for this, once: see awdlClockUpdate(). */
+        _ns->awdlJoinedOnce = true;
         _ns->front.set_link(_ns->front.ctx, true, mbit * 1000000ULL, 0);
         /* the radio has a channel and a vif now: the schedule follows it, and
          * frames stop being refused with ENETDOWN as they were before this */
@@ -2549,6 +2584,24 @@ void AirPort_RTW89::awdlClockUpdate()
      * An explicit "sync off" still stops it.
      */
     want = _ns->vifUp && _ns->awdlTemplateLen > 0 && !_ns->awdlSyncOff;
+    /*
+     * And not before a network has been joined once.
+     *
+     * Everything above is true a second or two into every boot, because macOS
+     * creates awdl0 and configures it without being asked to, and the clock
+     * then parked the radio on a social channel through the whole window in
+     * which the first association is being made. A boot-arg that names a
+     * channel is an explicit request for AWDL to outrank the association, so
+     * it does not wait; see awdlAlways().
+     */
+    if (want && !_ns->awdlJoinedOnce && !awdlAlways() && !awdlChannelAsked()) {
+        if (!_ns->awdlClockOn && !_ns->awdlWaitedForJoin) {
+            _ns->awdlWaitedForJoin = true;
+            LOG("awdl: the schedule waits for a network to be joined once; "
+                "-rtw89awdlalways starts it without one");
+        }
+        want = false;
+    }
     rtw89_glue_link(&link);
     /*
      * The association's channel, unless a channel was asked for at boot.
@@ -2613,6 +2666,7 @@ void AirPort_RTW89::awdlClockUpdate()
     _ns->awdlClockOn = want;
     if (!want) {
         rtw89_awdl_clock_stop();
+        awdlDeliverUpdate();
         return;
     }
     _ns->awdlClockChannel = channel;
@@ -2628,6 +2682,49 @@ void AirPort_RTW89::awdlClockUpdate()
         LOG("awdl: channel %u is not a social channel (6, 44, 149): peers will "
             "not hear us until the card sits on one", (unsigned int)channel);
     rtw89_awdl_clock_start(channel);
+    awdlDeliverUpdate();
+}
+
+/*
+ * Turn promiscuous receive on only while it is of use.
+ *
+ * Receiving AWDL means receiving frames addressed to someone else, so the
+ * receive filter has to let through other BSSs, broadcast and multicast --
+ * see rtw89_glue_awdl_deliver(), which is also what hands those frames to
+ * IO80211. That is every frame on the channel from every network in range,
+ * delivered to the host, and it used to go on when awdl0 was created and stay
+ * on until it went away, which on this machine is from a second into the boot
+ * until shutdown.
+ *
+ * It is worth that only when a frame of ours could also be heard, which means
+ * the schedule is running and the card sits on a social channel: peers listen
+ * on 6, 44 and 149 and nowhere else. Associated on channel 36 there is no one
+ * to hear and no one to hear us, and awdlClockUpdate() already says so in the
+ * log; the filter now follows that rather than paying for it anyway.
+ */
+void AirPort_RTW89::awdlDeliverUpdate()
+{
+    uint8_t channel;
+    bool want;
+
+    if (!_ns)
+        return;
+    channel = _ns->awdlClockChannel;
+    want = _ns->vifUp &&
+           (awdlAlways() ||
+            (_ns->awdlClockOn && (channel == 6 || channel == 44 || channel == 149)));
+    if (want == _ns->awdlDeliverOn)
+        return;
+    _ns->awdlDeliverOn = want;
+    if (want)
+        LOG("awdl: the schedule is running on channel %u, so AWDL frames are "
+            "received and handed on", (unsigned int)channel);
+    else
+        LOG("awdl: AWDL frames are not received: %s",
+            !_ns->vifUp            ? "awdl0 is gone" :
+            !_ns->awdlClockOn      ? "no schedule is running" :
+                                     "the card is not on a social channel");
+    rtw89_glue_awdl_deliver(want);
 }
 
 /*
@@ -2745,9 +2842,11 @@ int AirPort_RTW89::nativeVirtualIfCreate(void *data)
     _ns->vifUp = true;
     memcpy(_ns->vifMac, d->mac, sizeof(_ns->vifMac));
     strlcpy(_ns->vifName, name, sizeof(_ns->vifName));
-    /* There is somewhere to put received AWDL frames now. */
-    rtw89_glue_awdl_deliver(true);
+    /* There is somewhere to put received AWDL frames now -- but the filter
+     * goes on only once the schedule is running where peers can hear us; see
+     * awdlDeliverUpdate(). */
     awdlClockUpdateAndHold();
+    awdlDeliverUpdate();
     LOG("virtual interface %s is up", _ns->vifName);
     bzero(d->bsd_name, sizeof(d->bsd_name));
     memcpy(d->bsd_name, name, strnlen(name, sizeof(d->bsd_name)));
@@ -2762,9 +2861,9 @@ int AirPort_RTW89::nativeVirtualIfDelete(void *data)
     LOG("virtual interface %.*s asked to go", (int)sizeof(d->bsd_name), (const char *)d->bsd_name);
     if (!_ns->vifUp || !_ns->front.destroy_vif)
         return kIOReturnUnsupported;
-    rtw89_glue_awdl_deliver(false);
     _ns->vifUp = false;
     awdlClockUpdateAndHold();
+    awdlDeliverUpdate();
     _ns->front.destroy_vif(_ns->front.ctx);
     bzero(_ns->vifName, sizeof(_ns->vifName));
     return kIOReturnSuccess;
