@@ -122,6 +122,8 @@ static struct {
     u16 awdl_chan_held;
     u8 awdl_mac[ETH_ALEN];              /* awdl0's own address, when it is up */
     bool have_awdl_mac;
+    u8 awdl_mac_asked[ETH_ALEN];        /* the self address last asked for */
+    int awdl_mac_last;                  /* and what came back, so a change is logged */
 
     /* the rate of the last frame the AP sent to us alone, see glue_rx_rate() */
     u32 rx_rate;
@@ -2251,15 +2253,18 @@ static void glue_awdl_chan_work(struct work_struct *work)
 
     if (!glue.active || !hw)
         return;
-    if (freq == glue.awdl_chan_held)
-        return;
     /* Not in the middle of a scan: the firmware is hopping, and taking a
      * channel context under it is what the join path refuses to do too. The
      * request stands and is tried again on the next one. */
     if (glue.scanning)
         return;
     wiphy_lock(hw->wiphy);
-    if (!freq) {
+    /* The channel only when it is not already where it should be; the address
+     * below is looked at either way, because the first version of this
+     * returned here and so never reached it once the hold had settled. */
+    if (freq == glue.awdl_chan_held) {
+        ret = 0;
+    } else if (!freq) {
         rtw89_mlme_awdl_release_channel();
         glue.awdl_chan_held = 0;
         ret = 0;
@@ -2278,25 +2283,44 @@ static void glue_awdl_chan_work(struct work_struct *work)
      * at a time is all this does and getting it wrong costs the association.
      */
     if (rtw89_awdl_own_mac && glue.have_awdl_mac) {
-        bool want = glue.awdl_chan_held != 0;
+        /*
+         * Which address the chip should answer to.
+         *
+         * awdl0's while the channel is held, which is only ever with no
+         * network joined, and that is exactly when the station's address
+         * carries nothing. A peer addresses its frames to awdl0's address and
+         * gets no acknowledgement from a chip that has never heard of it; see
+         * rtw89_compat_set_self_addr().
+         *
+         * What is remembered is what was *asked for*, not what the chip has:
+         * the join path puts the station's address back on its own thread, and
+         * freq is 0 by then, so the two agree again without this having to
+         * hear about it. Every outcome is logged while it changes, including a
+         * refusal -- the first version of this swallowed -ENETDOWN and left no
+         * way to tell "it did not run" from "it was refused".
+         */
+        bool want = freq != 0 && glue.awdl_chan_held != 0;
         const u8 *sta = glue.have_mac ? glue.mac : hw->wiphy->perm_addr;
         const u8 *addr = want ? glue.awdl_mac : sta;
-        /* Asked every time rather than tracked: a join puts the station's
-         * address back on its own thread (mlme_connect()), so anything
-         * remembered here would be wrong by the next hold, and asking for the
-         * address the chip already has costs nothing. */
-        int aret = rtw89_compat_set_self_addr(glue.vif, addr);
 
-        if (aret == 1)
-            IOLog("[rtw89 awdl] the chip now answers to "
-                  "%02x:%02x:%02x:%02x:%02x:%02x, %s\n",
-                  addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
-                  want ? "awdl0's own address, so a peer's unicast is "
-                         "acknowledged" : "the station's address again");
-        else if (aret < 0 && aret != -ENETDOWN)
-            IOLog("[rtw89 awdl] the chip would not answer to "
-                  "%02x:%02x:%02x:%02x:%02x:%02x: %d\n",
-                  addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], aret);
+        if (!ether_addr_equal(glue.awdl_mac_asked, addr)) {
+            int aret = rtw89_compat_set_self_addr(glue.vif, addr);
+
+            if (aret >= 0)
+                ether_addr_copy(glue.awdl_mac_asked, addr);
+            if (aret >= 0 || aret != glue.awdl_mac_last)
+                IOLog("[rtw89 awdl] the chip and %02x:%02x:%02x:%02x:%02x:%02x "
+                      "(%s): %s\n",
+                      addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
+                      want ? "awdl0's own" : "the station's",
+                      aret == 1 ? "it answers to it now, so a peer's unicast is "
+                                  "acknowledged" :
+                      aret == 0 ? "it already did" : "refused");
+            if (aret < 0)
+                IOLog("[rtw89 awdl] the refusal was %d%s\n", aret,
+                      aret == -ENETDOWN ? " (no link to put it on yet)" : "");
+            glue.awdl_mac_last = aret;
+        }
     }
     wiphy_unlock(hw->wiphy);
     /* -EBUSY is the ordinary answer while a network has the radio, and the
@@ -2305,6 +2329,22 @@ static void glue_awdl_chan_work(struct work_struct *work)
     if (ret && ret != -EBUSY)
         IOLog("[rtw89 awdl] the radio could not be held on %u MHz: %d\n",
               (unsigned int)freq, ret);
+}
+
+/*
+ * Whether the self address still disagrees with what @freq asks for, so that
+ * the work is queued for the address alone once the channel has settled.
+ */
+static bool glue_awdl_addr_pending(u16 freq)
+{
+    struct ieee80211_hw *hw = glue_hw();
+    const u8 *sta, *addr;
+
+    if (!rtw89_awdl_own_mac || !glue.have_awdl_mac || !hw)
+        return false;
+    sta = glue.have_mac ? glue.mac : hw->wiphy->perm_addr;
+    addr = freq && glue.awdl_chan_held ? glue.awdl_mac : sta;
+    return !ether_addr_equal(glue.awdl_mac_asked, addr);
 }
 
 /* awdl0's own address, so the chip can be told to answer to it. */
@@ -2326,7 +2366,7 @@ void rtw89_glue_awdl_hold_channel(uint16_t freq)
     /* Queued whenever what is wanted and what is held disagree, not only when
      * the request changes: the work declines during a scan, and this is what
      * tries it again afterwards. */
-    if (freq == glue.awdl_chan_held)
+    if (freq == glue.awdl_chan_held && !glue_awdl_addr_pending(freq))
         return;
     if (glue.rejoin_wq)
         queue_work(glue.rejoin_wq, &glue.awdl_chan_work);
