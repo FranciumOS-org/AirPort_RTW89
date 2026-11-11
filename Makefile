@@ -270,7 +270,7 @@ scanrequesttest:
 	    tools/hosttest/scan_request_test.cpp -o $(BUILD_DIR)/out/scan_request_test
 	@$(BUILD_DIR)/out/scan_request_test
 
-hosttest: link scanrequesttest
+hosttest-build: link scanrequesttest
 	@cc -c -O1 -g -Wall -o $(BUILD_DIR)/out/host_kernel.o tools/hosttest/host_kernel.c
 	@cc -c -O1 -g -Wall -I$(COMPAT89_DIR) -o $(BUILD_DIR)/out/host_main.o tools/hosttest/host_main.c
 	@$(CC) $(DRIVER_CFLAGS) -MF /dev/null -c tools/hosttest/selftest.c -o $(BUILD_DIR)/out/selftest.o 2> $(BUILD_DIR)/log/hosttest_selftest.log \
@@ -283,6 +283,7 @@ hosttest: link scanrequesttest
 	@cc -c -O1 -g -w $(filter-out -DMBEDTLS%,$(SAE_INC)) tools/hosttest/sae_test.c -o $(BUILD_DIR)/out/sae_test_main.o
 	@cc $(ARCH) -o $(SAETEST)_kernel $(BUILD_DIR)/out/sae_test_main.o $(SAE_KOBJS) \
 	    $(BUILD_DIR)/fw/rtw89_crypto.o $(BUILD_DIR)/out/host_kernel.o
+hosttest: hosttest-build
 	@#
 	@# Every run below at once. They are separate processes over separate
 	@# emulated chips and share no state, and almost all of their time is
@@ -326,6 +327,10 @@ hosttest: link scanrequesttest
 	done
 	@if ls $(BUILD_DIR)/log/*.failed >/dev/null 2>&1; then \
 	    cat $(BUILD_DIR)/log/*.failed; rm -f $(BUILD_DIR)/log/*.failed; exit 1; fi
+
+.PHONY: hosttest-build selectiontest
+selectiontest: hosttest-build
+	$(call hostrun,$(HOSTTEST)_fakechip,00 selection,hosttest_selection)
 
 # ------------------------------------------------------------------ #
 # Kext bundle                                                          #

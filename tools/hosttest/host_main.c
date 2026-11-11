@@ -37,6 +37,7 @@ void rtw89_glue_test_rx(const uint8_t *frame, size_t len, uint16_t freq, int8_t 
                         bool decrypted);
 /* ... left waiting for the chip's status report, as the driver leaves data frames */
 void rtw89_glue_test_scan_done(void);
+void rtw89_glue_test_scan_aborted(void);
 void rtw89_glue_test_emulate_chanctx(void);
 void rtw89_glue_test_fake_eht(void);
 void rtw89_glue_test_beacon_loss(void);
@@ -1081,6 +1082,7 @@ static void dual_beacon(const char *ssid, uint8_t last, const uint8_t *ies, size
 }
 
 /* Which frequency a join of @ssid goes to; @last asks for that access point. */
+static uint8_t dual_selected_last;
 static uint16_t dual_join(const char *ssid, int last)
 {
     static const uint8_t pmk[32] = { 1 };
@@ -1089,13 +1091,77 @@ static uint16_t dual_join(const char *ssid, int last)
 
     memcpy(bssid, ap_mac, 5);
     bssid[5] = (uint8_t)last;
+    dual_selected_last = 0;
     if (rtw89_glue_join_pmk((const uint8_t *)ssid, 8, last >= 0 ? bssid : NULL, pmk))
         return 0;
     rtw89_glue_link(&link);
+    dual_selected_last = link.bssid[5];
     rtw89_glue_leave();
     if (last >= 0 && link.bssid[5] != last && memcmp(link.asked_bssid, bssid, 6))
         return 1;   /* another one joined, and not noted as macOS's choice */
     return link.freq;
+}
+
+static int selection_scan(const uint8_t *ssid, size_t len, uint16_t freq)
+{
+    return rtw89_glue_scan_directed(ssid, len, &freq, 1);
+}
+
+/* Replay the native recurrence: a completed directed scan exposes a weaker
+ * new radio while the old stronger same-name radio remains in the raw cache.
+ * Fake hardware may reject scan submission (-EAGAIN); inject the real success
+ * callback explicitly after supplying the observations, not elapsed wall time. */
+static int test_join_freshness(void)
+{
+    struct rtw89_glue_bss rows[128];
+    unsigned int n, i, cached;
+    int ret, failures = 0;
+#define EXPECT(cond) do { if (!(cond)) { failures++; printf("== FAIL %s\n", #cond); } } while (0)
+    rtw89_glue_set_rejoin(false);
+    dual_beacon("reopen5g", 0xe1, ap5_ies, sizeof(ap5_ies), 5180, -25);
+    ret = selection_scan((const uint8_t *)"reopen5g", 8, 5180);
+    EXPECT(ret == 0 || ret == -11);
+    dual_beacon("reopen5g", 0xe2, ap5_ies, sizeof(ap5_ies), 5180, -45);
+    rtw89_glue_test_scan_done();
+    n = rtw89_glue_scan_results(rows, 128);
+    for (i = cached = 0; i < n; ++i)
+        if (!strcmp(rows[i].ssid, "reopen5g")) ++cached;
+    EXPECT(cached == 2); /* keep raw cache/ABI, constrain actual selection */
+    EXPECT(dual_join("reopen5g", -1) == 5180 && dual_selected_last == 0xe2);
+    EXPECT(dual_join("reopen5g", 0xe1) == 0); /* no silent BSSID substitution */
+
+    /* The second selection pass must not resurrect an unseen 5 GHz radio
+     * via its band bonus, even when the directed scan covered only 2.4 GHz. */
+    dual_beacon("reopen2g", 0xf5, ap5_ies, sizeof(ap5_ies), 5180, -37);
+    ret = selection_scan((const uint8_t *)"reopen2g", 8, 2437);
+    EXPECT(ret == 0 || ret == -11);
+    dual_beacon("reopen2g", 0xf1, ap_ies, sizeof(ap_ies), 2437, -30);
+    rtw89_glue_test_scan_done();
+    EXPECT(dual_join("reopen2g", -1) == 2437 && dual_selected_last == 0xf1);
+
+    /* A newly observed old radio becomes usable again. Aborting a later
+     * directed scan does not invalidate it. Unrelated scans leave it alone. */
+    dual_beacon("reopen5g", 0xe1, ap5_ies, sizeof(ap5_ies), 5180, -25);
+    ret = selection_scan((const uint8_t *)"reopen5g", 8, 5180);
+    EXPECT(ret == 0 || ret == -11);
+    rtw89_glue_test_scan_aborted();
+    ret = selection_scan((const uint8_t *)"another1", 8, 5180);
+    EXPECT(ret == 0 || ret == -11);
+    rtw89_glue_test_scan_done();
+    ret = rtw89_glue_scan(); /* wildcard completion also leaves eligibility alone */
+    EXPECT(ret == 0 || ret == -11);
+    rtw89_glue_test_scan_done();
+    EXPECT(dual_join("reopen5g", 0xe1) == 5180 && dual_selected_last == 0xe1);
+
+    /* If a full directed scan sees none of the target, do not authenticate
+     * an old cached radio just because it is still present in cache readers. */
+    ret = selection_scan((const uint8_t *)"reopen5g", 8, 5180);
+    EXPECT(ret == 0 || ret == -11);
+    rtw89_glue_test_scan_done();
+    EXPECT(dual_join("reopen5g", -1) == 0);
+    printf("== actual join freshness: %d failure(s)\n", failures);
+#undef EXPECT
+    return failures;
 }
 
 /* The station is trying to get back: let its scan end if it started one, then
@@ -2111,6 +2177,7 @@ static int test_join(void)
 
 /* ---- 6 GHz and 802.11be, on a chip that has them: hosttest_fakechip 00 wide <id> ---- */
 
+static int selection_mode;
 static int wide_mode;           /* only test_wide() runs after the radio is up */
 static int wide_eht;            /* the chip does 802.11be (RTL8922AE/DE) */
 
@@ -2292,7 +2359,13 @@ static int test_probed_device(void)
      * no firmware answers. What matters is that nothing crashes or leaks. */
     ret = rtw89_glue_up();
     printf("== radio up returned %d\n", ret);
-    if (wide_mode) {
+    if (selection_mode) {
+        EXPECT(ret == 0);
+        if (!ret) {
+            failures += test_join_freshness();
+            rtw89_glue_down();
+        }
+    } else if (wide_mode) {
         /* the whole point of this run: a radio that does not start fails it */
         EXPECT(ret == 0);
         if (!ret) {
@@ -2300,6 +2373,7 @@ static int test_probed_device(void)
             rtw89_glue_down();
         }
     } else if (!ret) {
+        failures += test_join_freshness();
         ret = rtw89_glue_scan();
         printf("== scan returned %d\n", ret);
         failures += test_join();
@@ -2411,10 +2485,11 @@ int main(int argc, char **argv)
     struct rtw89_glue_info info;
     void *mmio;
     int ret, round, rounds = 2;
-    int expect_ok = argc > 2 && (!strcmp(argv[2], "ok") || !strcmp(argv[2], "wide"));
+    int expect_ok = argc > 2 && (!strcmp(argv[2], "ok") || !strcmp(argv[2], "wide") || !strcmp(argv[2], "selection"));
     pthread_t fake_device;
     int failed = 0;
 
+    selection_mode = argc > 2 && !strcmp(argv[2], "selection");
     rtw88_kfree_min_addr = 0;
 
     if (posix_memalign(&mmio, 4096, MMIO_LEN))
