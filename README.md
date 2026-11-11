@@ -115,6 +115,21 @@ make fetch-firmware   # once: Realtek's firmware, from linux-firmware
 make release          # build/release/AirPort_RTW89-<version>.zip and the tools zip
 ```
 
+All driver, tool and host-test outputs target x86_64, including builds on Apple
+Silicon. If the host's `kmutil` cannot inspect the x86_64 target, use local target
+files for an offline export check:
+
+```sh
+RTW89_KDK='/path/to/target/System/Library' make bundle
+```
+
+That directory must contain `Kernels/kernel` and the declared IOKit dependencies
+under `Extensions/`, including the copies of injected families used by the target
+EFI. This checks symbol availability, not KPI version compatibility or vtable
+patching; those still need validation on the target machine. Without `RTW89_KDK`,
+the existing `kmutil` check is used. For builds from an extracted source archive,
+pass `SOURCE_COMMIT=<source commit>` so the bundle records its source without Git.
+
 The build runs the driver's tests in userspace first (`make hosttest`). To
 install a build on this machine: `sudo efi/install.sh` (see
 [efi/README.md](efi/README.md)).
