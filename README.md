@@ -18,7 +18,7 @@ Mac's own.
 | RTL8922DE | `892D`, `882D`, `895D` | 7 | works (tester); 6 GHz and Wi-Fi 7 untested |
 | RTL8852BTE | `B520` | 6 | untested |
 | RTL8851BE | `B851` | 6 | untested |
-| RTL8852CE | `C852` | 6E | untested |
+| RTL8852CE | `C852` | 6E | works (tester) |
 | RTL8922AE | `8922`, `892B` | 7 | untested |
 
 USB versions of these cards are not supported.
