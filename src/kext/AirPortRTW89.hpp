@@ -119,7 +119,7 @@ private:
     /* macOS asks again whether the radio is on */
     void nativePowerChanged();
     static bool frontExpected();
-    int nativeRequest(bool isSet, int number, void *data);
+    int nativeRequest(bool isSet, int number, void *data, bool hostScan = false);
     int nativeVirtualRequest(bool isSet, int number, void *data);
     int nativeVirtualIfCreate(void *data);
     int nativeVirtualIfDelete(void *data);

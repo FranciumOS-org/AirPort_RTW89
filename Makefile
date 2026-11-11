@@ -401,7 +401,8 @@ else
 HOSTTEST_STAMP := $(BUILD_DIR)/out/hosttest.passed
 endif
 $(HOSTTEST_STAMP): $(ALL_OBJS) $(wildcard tools/hosttest/*.c tools/hosttest/*.cpp) $(SAE_SRCS) \
-                   $(COMPAT89_DIR)/rtw89_crypto.c $(KEXT_SRC)/rtw89_scan_ioctl.hpp Makefile
+                   $(COMPAT89_DIR)/rtw89_crypto.c $(KEXT_SRC)/rtw89_scan_ioctl.hpp \
+                   $(KEXT_SRC)/rtw89_scan_target.hpp $(KEXT_SRC)/rtw89_scan_freshness.hpp Makefile
 	@rm -f $@
 	@$(MAKE) --no-print-directory hosttest
 	@touch $@

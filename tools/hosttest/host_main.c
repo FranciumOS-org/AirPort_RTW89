@@ -20,6 +20,7 @@
 
 #include "rtw89_crypto.h"
 #include "rtw89_glue.h"
+#include "../../src/kext/rtw89_scan_freshness.hpp"
 #include "rtw89_sae.h"
 
 #define MMIO_LEN (1u << 20)
@@ -1119,14 +1120,31 @@ static int test_join_freshness(void)
 #define EXPECT(cond) do { if (!(cond)) { failures++; printf("== FAIL %s\n", #cond); } } while (0)
     rtw89_glue_set_rejoin(false);
     dual_beacon("reopen5g", 0xe1, ap5_ies, sizeof(ap5_ies), 5180, -25);
-    ret = selection_scan((const uint8_t *)"reopen5g", 8, 5180);
+    uint16_t target_freq = 5180;
+    uint32_t requested_generation = 0;
+    ret = rtw89_glue_scan_directed_generation((const uint8_t *)"reopen5g", 8,
+                                              &target_freq, 1, &requested_generation);
     EXPECT(ret == 0 || ret == -11);
+    EXPECT(requested_generation != 0);
     dual_beacon("reopen5g", 0xe2, ap5_ies, sizeof(ap5_ies), 5180, -45);
     rtw89_glue_test_scan_done();
     n = rtw89_glue_scan_results(rows, 128);
     for (i = cached = 0; i < n; ++i)
         if (!strcmp(rows[i].ssid, "reopen5g")) ++cached;
     EXPECT(cached == 2); /* keep raw cache/ABI, constrain actual selection */
+    unsigned int fresh = 0;
+    for (i = 0; i < n; ++i) {
+        if (strcmp(rows[i].ssid, "reopen5g")) continue;
+        uint32_t observed_generation = 0;
+        EXPECT(rtw89_glue_find_bss_observed(rows[i].bssid, NULL, NULL, 0, NULL,
+                                            NULL, &observed_generation));
+        if (rtw89ScanObservedSince(observed_generation, requested_generation)) {
+            ++fresh;
+            EXPECT(rows[i].bssid[5] == 0xe2);
+        } else EXPECT(rows[i].bssid[5] == 0xe1);
+    }
+    EXPECT(fresh == 1);
+    printf("== directed result BSSID lookup excludes earlier observations\n");
     EXPECT(dual_join("reopen5g", -1) == 5180 && dual_selected_last == 0xe2);
     EXPECT(dual_join("reopen5g", 0xe1) == 0); /* no silent BSSID substitution */
 

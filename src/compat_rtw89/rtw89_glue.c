@@ -1562,7 +1562,7 @@ bool rtw89_glue_scanning(void)
 }
 
 static int glue_scan_locked(const u8 *name, size_t name_len,
-                            const u16 *want_freqs, size_t n_want);
+                            const u16 *want_freqs, size_t n_want, uint32_t *generation);
 
 int rtw89_glue_scan(void)
 {
@@ -1571,7 +1571,7 @@ int rtw89_glue_scan(void)
     if (!glue.active)
         return -ENETDOWN;
     mutex_lock(&glue.cmd_lock);
-    ret = glue_scan_locked(NULL, 0, NULL, 0);
+    ret = glue_scan_locked(NULL, 0, NULL, 0, NULL);
     mutex_unlock(&glue.cmd_lock);
     return ret;
 }
@@ -1585,7 +1585,7 @@ int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len)
     if (!ssid_len || ssid_len > IEEE80211_MAX_SSID_LEN)
         return -EINVAL;
     mutex_lock(&glue.cmd_lock);
-    ret = glue_scan_locked(ssid, ssid_len, NULL, 0);
+    ret = glue_scan_locked(ssid, ssid_len, NULL, 0, NULL);
     mutex_unlock(&glue.cmd_lock);
     return ret;
 }
@@ -1598,20 +1598,30 @@ int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len)
 int rtw89_glue_scan_directed(const uint8_t *ssid, size_t ssid_len,
                              const uint16_t *freqs, size_t n_freqs)
 {
+    return rtw89_glue_scan_directed_generation(ssid, ssid_len, freqs, n_freqs, NULL);
+}
+
+int rtw89_glue_scan_directed_generation(const uint8_t *ssid, size_t ssid_len,
+                                       const uint16_t *freqs, size_t n_freqs,
+                                       uint32_t *generation)
+{
     int ret;
+
+    if (generation)
+        *generation = 0;
 
     if (!glue.active)
         return -ENETDOWN;
     if (ssid_len > IEEE80211_MAX_SSID_LEN)
         return -EINVAL;
     mutex_lock(&glue.cmd_lock);
-    ret = glue_scan_locked(ssid_len ? ssid : NULL, ssid_len, freqs, n_freqs);
+    ret = glue_scan_locked(ssid_len ? ssid : NULL, ssid_len, freqs, n_freqs, generation);
     mutex_unlock(&glue.cmd_lock);
     return ret;
 }
 
 static int glue_scan_locked(const u8 *name, size_t name_len,
-                            const u16 *want_freqs, size_t n_want)
+                            const u16 *want_freqs, size_t n_want, uint32_t *generation)
 {
     struct rtw89_m80211_local *local;
     struct ieee80211_scan_request *sreq;
@@ -1728,7 +1738,10 @@ static int glue_scan_locked(const u8 *name, size_t name_len,
     /* Receive/completion may run during submission. Publish the new
      * observation generation before either can see the request. */
     spin_lock(&glue.bss_lock);
-    glue.scan_gen++;
+    if (++glue.scan_gen == 0)
+        ++glue.scan_gen;
+    if (generation)
+        *generation = glue.scan_gen;
     spin_unlock(&glue.bss_lock);
     ret = local->ops->hw_scan(hw, glue.vif, sreq);
     if (ret) {
@@ -1802,6 +1815,13 @@ bool rtw89_glue_scan_entry(unsigned int index, struct rtw89_glue_bss *out, uint8
 bool rtw89_glue_find_bss(const uint8_t bssid[6], struct rtw89_glue_bss *out, uint8_t *ies,
                          size_t ies_max, size_t *ies_len, uint16_t *beacon_int)
 {
+    return rtw89_glue_find_bss_observed(bssid, out, ies, ies_max, ies_len, beacon_int, NULL);
+}
+
+bool rtw89_glue_find_bss_observed(const uint8_t bssid[6], struct rtw89_glue_bss *out,
+                                  uint8_t *ies, size_t ies_max, size_t *ies_len,
+                                  uint16_t *beacon_int, uint32_t *generation)
+{
     bool found = false;
     unsigned int i;
 
@@ -1811,6 +1831,8 @@ bool rtw89_glue_find_bss(const uint8_t bssid[6], struct rtw89_glue_bss *out, uin
     for (i = 0; i < glue.n_bss && !found; i++) {
         if (ether_addr_equal(glue.bss[i].pub.bssid, bssid)) {
             glue_copy_entry(&glue.bss[i], out, ies, ies_max, ies_len, beacon_int);
+            if (generation)
+                *generation = glue.bss[i].scan_gen;
             found = true;
         }
     }
@@ -2226,7 +2248,7 @@ static void glue_rejoin_work(struct work_struct *work)
         }
     } else if (!glue.rejoin_scanned) {
         glue.rejoin_scanned = true;
-        if (!glue_scan_locked(NULL, 0, NULL, 0))
+        if (!glue_scan_locked(NULL, 0, NULL, 0, NULL))
             goto out;
         /* no scan to be had: try with what was heard before */
     }

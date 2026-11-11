@@ -5,14 +5,57 @@
 #include <cstdio>
 #include <cstring>
 #include "../../src/kext/rtw89_scan_ioctl.hpp"
+#include "../../src/kext/rtw89_scan_target.hpp"
+#include "../../src/kext/rtw89_scan_freshness.hpp"
 
 static void word(uint8_t *b, size_t offset, uint32_t value)
 {
     for (unsigned i = 0; i < 4; ++i) b[offset+i] = (uint8_t)(value >> (8*i));
 }
 
+static void testCompletion()
+{
+    const uint8_t name[] = {'H', 0, 'S'};
+    const uint16_t channels[] = {2437, 5745};
+    const uint16_t changed[] = {2437, 5180};
+    Rtw89ScanCompletion c;
+    assert(!c.reuseChannels(name, sizeof(name), channels, 2));
+    c.beginChannels(name, sizeof(name), channels, 2, true);
+    c.generation = 8;
+    assert(c.busy() && c.reuseChannels(name, sizeof(name), channels, 2));
+    assert(!c.reuseChannels(name, sizeof(name), channels, 1));
+    assert(!c.reuseChannels(name, sizeof(name), changed, 2));
+    c.finish(false, 1000000000ULL);
+    assert(c.ready && !c.busy());
+    c.resultsConsumed(false); // synchronous family cache fill is not host EOF
+    assert(c.ready && c.generation == 8);
+    assert(c.reuseChannels(name, sizeof(name), channels, 2, 1200000000ULL));
+    c.resultsConsumed(false);
+    assert(c.reuseChannels(name, sizeof(name), channels, 2, 1300000000ULL));
+    c.resultsConsumed(true);
+    assert(!c.pending && c.generation == 0);
+    c.beginChannels(name, sizeof(name), channels, 2, true);
+    c.finish(false, 1000000000ULL);
+    assert(!c.reuseChannels(name, sizeof(name), channels, 2, 3000000000ULL));
+    c.finish(true);
+    assert(!c.pending && !c.hostOwned);
+    c.beginChannels(name, sizeof(name), channels, 2, false);
+    c.finish(false);
+    c.resultsConsumed(false);
+    assert(!c.pending);
+    c.beginChannels(name, sizeof(name), channels, APPLE80211_MAX_CHANNELS + 1, true);
+    assert(!c.pending);
+    assert(rtw89ScanObservedSince(7, 0));
+    assert(!rtw89ScanObservedSince(7, 8));
+    assert(rtw89ScanObservedSince(8, 8) && rtw89ScanObservedSince(9, 8));
+    assert(rtw89ScanObservedSince(1, 0xffffffffU));
+    assert(!rtw89ScanObservedSince(0xffffffffU, 1));
+    puts("== scan completion ownership, channel-list retries and observation freshness: 0 failure(s)");
+}
+
 int main(int argc, char **argv)
 {
+    testCompletion();
     static_assert(sizeof(apple80211req) == 40, "observed user request envelope");
     static_assert(sizeof(apple80211_channel) == 12, "channel record layout");
     assert(rtw89ScanSet40(0x802869c8UL, 10));

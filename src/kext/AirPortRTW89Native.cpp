@@ -12,6 +12,8 @@
 #include "AirPortRTW89.hpp"
 #include "rtw89_chips.h"
 #include "rtw89_scan_ioctl.hpp"
+#include "rtw89_scan_target.hpp"
+#include "rtw89_scan_freshness.hpp"
 
 #include <IOKit/80211/apple80211_ioctl.h>
 #include <IOKit/80211/apple80211_var.h>
@@ -34,6 +36,8 @@ struct AirPort_RTW89::NativeState {
     struct rtw89_front_ops front = {};
     struct apple80211_scan_result scanResult = {};
     unsigned int scanCursor = 0;
+    unsigned int scanStaleSkipped = 0;
+    Rtw89ScanCompletion directedScan;
     /* the list being read, strongest first: addresses, taken when reading
      * starts (scanCursor 0) */
     uint8_t scanOrder[128][6] = {};
@@ -629,7 +633,11 @@ void AirPort_RTW89::nativeEvents()
         UInt32 result = events & kNativeEventScanAborted ? 1 : 0;
 
         _ns->scanInProgress = false;
+        uint64_t now;
+        absolutetime_to_nanoseconds(mach_absolute_time(), &now);
+        _ns->directedScan.finish(result != 0, now);
         _ns->scanCursor = 0;
+        _ns->scanOrderLen = 0;
         nativePost(APPLE80211_M_SCAN_DONE, &result, sizeof(result));
     }
     if (events & kNativeEventLink) {
@@ -1330,7 +1338,7 @@ int AirPort_RTW89::nativeScanHostPayload(unsigned int number, const void *payloa
     }
     LOG("native scan bridge: %s, type %u, wire size %u, target length %u, channels %u",
         entry, number, length, scan.ssid_len, scan.num_channels);
-    return errnoOf(nativeRequest(true, APPLE80211_IOC_SCAN_REQ, &scan));
+    return errnoOf(nativeRequest(true, APPLE80211_IOC_SCAN_REQ, &scan, true));
 }
 
 int AirPort_RTW89::backIoctl(void *ctx, void *interface, void *vif, void *ifnet, unsigned long cmd,
@@ -1463,7 +1471,7 @@ int AirPort_RTW89::backIoctl(void *ctx, void *interface, void *vif, void *ifnet,
 
     if (isGet && reqType == APPLE80211_IOC_SCAN_RESULT) {
         struct apple80211_scan_result *result = nullptr;
-        int e = errnoOf(me->nativeRequest(false, reqType, &result));
+        int e = errnoOf(me->nativeRequest(false, reqType, &result, true));
 
         if (e)
             return e;
@@ -1489,7 +1497,7 @@ int AirPort_RTW89::backIoctl(void *ctx, void *interface, void *vif, void *ifnet,
     if (!e && rtw89HostScanLayout(reqType, len))
         e = me->nativeScanHostPayload(reqType, payload, len, "bsd");
     else if (!e)
-        e = errnoOf(me->nativeRequest(true, reqType, payload));
+        e = errnoOf(me->nativeRequest(true, reqType, payload, true));
     IOFree(payload, len);
     return e;
 }
@@ -1701,7 +1709,7 @@ int AirPort_RTW89::nativeAssociate(void *data)
     return ret ? kIOReturnError : kIOReturnSuccess;
 }
 
-int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
+int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data, bool hostScan)
 {
     struct rtw89_glue_link link;
 
@@ -1884,10 +1892,6 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
 
         if (!isSet)
             return kIOReturnUnsupported;
-        /* a second request while one runs is answered by the same scan */
-        if (_ns->scanInProgress)
-            return kIOReturnSuccess;
-        _ns->scanCursor = 0;
         /*
          * What was actually asked for. Until now the request was thrown away
          * and every scan was a wildcard one: macOS says which network and
@@ -1915,6 +1919,42 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
                     wantFreqs[nWantFreqs++] = freq;
             }
         }
+
+        if (number == APPLE80211_IOC_SCAN_REQ_MULTIPLE) {
+            const uint8_t *target = nullptr;
+            uint32_t targetLen = 0;
+            uint16_t ignoredFreq = 0;
+            if (!rtw89ScanTarget(number, data, target, targetLen, ignoredFreq))
+                return kIOReturnBadArgument;
+            wantSsidLen = targetLen;
+            if (targetLen) memcpy(wantSsid, target, targetLen);
+            const auto *d = static_cast<const apple80211_scan_multiple_data *>(data);
+            for (uint32_t i = 0; i < d->num_channels && nWantFreqs < APPLE80211_MAX_CHANNELS; i++) {
+                uint16_t freq = (uint16_t)freqOfChannel(d->channels[i].channel, d->channels[i].flags);
+                if (freq) wantFreqs[nWantFreqs++] = freq;
+            }
+        }
+        uint64_t scanNow;
+        absolutetime_to_nanoseconds(mach_absolute_time(), &scanNow);
+        if (_ns->directedScan.reuseChannels(wantSsid, (uint32_t)wantSsidLen, wantFreqs,
+                                            (uint32_t)nWantFreqs, scanNow)) {
+            if (hostScan && wantSsidLen) _ns->directedScan.hostOwned = true;
+            _ns->scanCursor = 0;
+            _ns->scanOrderLen = 0;
+            if (_ns->directedScan.ready) {
+                UInt32 result = 0;
+                nativePost(APPLE80211_M_SCAN_DONE, &result, sizeof(result));
+            }
+            return kIOReturnSuccess;
+        }
+        // A different directed request must not inherit a running scan's results.
+        if (_ns->scanInProgress)
+            return wantSsidLen ? kIOReturnBusy : kIOReturnSuccess;
+        if (_ns->directedScan.ready && _ns->directedScan.expiresAt &&
+            scanNow >= _ns->directedScan.expiresAt)
+            _ns->directedScan.consume();
+        _ns->scanCursor = 0;
+        _ns->scanOrderLen = 0;
 
         if (link.state != RTW89_GLUE_LINK_DOWN && !wantSsidLen && !nWantFreqs) {
             /*
@@ -1986,16 +2026,19 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
             }
             _ns->lastAwdlScan = now;
         }
+        _ns->directedScan.beginChannels(wantSsid, (uint32_t)wantSsidLen, wantFreqs,
+                                         (uint32_t)nWantFreqs, hostScan);
         _ns->scanInProgress = true;
         IOLockLock(_commandLock);
         if (wantSsidLen || nWantFreqs)
-            ret = rtw89_glue_scan_directed(wantSsidLen ? wantSsid : nullptr, wantSsidLen,
-                                           nWantFreqs ? wantFreqs : nullptr, nWantFreqs);
+            ret = rtw89_glue_scan_directed_generation(wantSsidLen ? wantSsid : nullptr, wantSsidLen,
+                     nWantFreqs ? wantFreqs : nullptr, nWantFreqs, &_ns->directedScan.generation);
         else
             ret = rtw89_glue_scan();
         IOLockUnlock(_commandLock);
         if (ret) {
             _ns->scanInProgress = false;
+            _ns->directedScan.consume();
             return ret == -16 ? kIOReturnBusy : kIOReturnError;
         }
         return kIOReturnSuccess;
@@ -2018,12 +2061,16 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         if (isSet)
             return kIOReturnUnsupported;
         *out = nullptr;
+        if (_ns->directedScan.busy())
+            return kIOReturnBusy;
+        const uint32_t requestedGeneration = _ns->directedScan.pending ? _ns->directedScan.generation : 0;
         /*
          * Strongest first: the menu shows the networks in the order they
          * come. The order is fixed when reading starts, each network then
          * looked up by its address (it may have gone meanwhile).
          */
         if (_ns->scanCursor == 0) {
+            _ns->scanStaleSkipped = 0;
             Scratch listBuf(128 * sizeof(struct rtw89_glue_bss));
             struct rtw89_glue_bss *list = reinterpret_cast<struct rtw89_glue_bss *>(listBuf.bytes());
             unsigned int n = list ? rtw89_glue_scan_results(list, 128) : 0;
@@ -2042,9 +2089,14 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         }
         /* hidden networks have no name to show */
         while (_ns->scanCursor < _ns->scanOrderLen) {
-            if (!rtw89_glue_find_bss(_ns->scanOrder[_ns->scanCursor++], &bss, ies, 1024, &len,
-                                     &beaconInt) || !bss.ssid_len)
+            uint32_t observedGeneration = 0;
+            if (!rtw89_glue_find_bss_observed(_ns->scanOrder[_ns->scanCursor++], &bss, ies, 1024, &len,
+                                              &beaconInt, &observedGeneration) || !bss.ssid_len)
                 continue;
+            if (!rtw89ScanObservedSince(observedGeneration, requestedGeneration)) {
+                _ns->scanStaleSkipped++;
+                continue;
+            }
             /* all elements: without HT/VHT/HE ones macOS takes every network
              * for 802.11a/g */
             fillScanResult(bss, ies, len, beaconInt, &_ns->scanResult, true);
@@ -2071,6 +2123,15 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
             return kIOReturnBusy;
         }
         _ns->scanCursor = 0;
+        _ns->scanOrderLen = 0;
+        if (requestedGeneration)
+            LOG("directed scan generation %u: excluded %u cached entries",
+                requestedGeneration, _ns->scanStaleSkipped);
+        if (_ns->directedScan.pending)
+            LOG("directed scan results consumed: host %u, owner %u, ready %u",
+                hostScan ? 1U : 0U, _ns->directedScan.hostOwned ? 1U : 0U,
+                _ns->directedScan.ready ? 1U : 0U);
+        _ns->directedScan.resultsConsumed(hostScan);
         return 5;       /* the end of the list */
     }
     case APPLE80211_IOC_CURRENT_NETWORK: {

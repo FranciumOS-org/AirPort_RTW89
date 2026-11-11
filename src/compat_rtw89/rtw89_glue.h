@@ -150,6 +150,10 @@ int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len);
  * Never sliced and never answered from an earlier scan. */
 int rtw89_glue_scan_directed(const uint8_t *ssid, size_t ssid_len,
                              const uint16_t *freqs, size_t n_freqs);
+/* Publish the observation token before hardware can receive/complete. */
+int rtw89_glue_scan_directed_generation(const uint8_t *ssid, size_t ssid_len,
+                                       const uint16_t *freqs, size_t n_freqs,
+                                       uint32_t *generation);
 bool rtw89_glue_scanning(void);
 
 struct rtw89_glue_bss {
@@ -187,6 +191,11 @@ bool rtw89_glue_scan_entry(unsigned int index, struct rtw89_glue_bss *out, uint8
                            size_t ies_max, size_t *ies_len, uint16_t *beacon_int);
 bool rtw89_glue_find_bss(const uint8_t bssid[6], struct rtw89_glue_bss *out, uint8_t *ies,
                          size_t ies_max, size_t *ies_len, uint16_t *beacon_int);
+
+/* Same lookup and public BSS ABI, with its actual observation generation. */
+bool rtw89_glue_find_bss_observed(const uint8_t bssid[6], struct rtw89_glue_bss *out,
+                                  uint8_t *ies, size_t ies_max, size_t *ies_len,
+                                  uint16_t *beacon_int, uint32_t *generation);
 
 /* The channels the card and the regulatory domain allow. */
 struct rtw89_glue_channel {

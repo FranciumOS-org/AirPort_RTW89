@@ -42,3 +42,14 @@ radio and weaker new radio, the cross-band preference, explicit-BSSID rejection,
 empty directed results, aborted/wildcard/unrelated scans and rediscovery, under
 both ordinary and emulated channel contexts. The full host suite includes the
 same regression.
+
+## Local 0.6.0 hotspot integration
+
+Retain directed scan completion until the originating host reader consumes EOF,
+allowing the family's synchronous cache fill without stealing that completion.
+Identical SSID and channel-list requests reuse the running/completed scan; an
+unconsumed completed request expires after two seconds. Keep upstream channel
+lists, AWDL scan throttling and result sorting. Directed result lookup by BSSID
+also carries observation generations, filtering records older than the request.
+Regression tests use actual glue observations and exercise family-before-host
+read order, retry reuse, changed channel lists, cancellation and expiry.
