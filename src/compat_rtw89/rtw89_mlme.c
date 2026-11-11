@@ -282,6 +282,25 @@ static const struct ieee80211_sta_he_cap *mlme_own_he_cap(void)
     return ieee80211_get_he_iftype_cap_vif(mlme.sband, mlme.vif);
 }
 
+/*
+ * Multi-link (802.11be MLO), first step: whether the AP is one link of a
+ * multi-link device, from the Basic Multi-Link element of its beacon (control,
+ * then common information: its length and the device's address). Logged
+ * only; the join stays a single-link one, which such an AP accepts.
+ */
+static void mlme_note_mld(const u8 *ies, size_t len)
+{
+    const u8 *ml;
+    u8 ml_len;
+
+    ml = mlme_ext_elem(WLAN_EID_EXT_EHT_MULTI_LINK, ies, len, 2 + 1 + ETH_ALEN, &ml_len);
+    if (!ml || (get_unaligned_le16(ml) & IEEE80211_ML_CONTROL_TYPE) != IEEE80211_ML_CONTROL_TYPE_BASIC ||
+        ml[2] < 1 + ETH_ALEN || 2 + ml[2] > ml_len)
+        return;
+    mlme_info("the AP is one link of multi-link device %02x:%02x:%02x:%02x:%02x:%02x: "
+              "joining that link alone", ml[3], ml[4], ml[5], ml[6], ml[7], ml[8]);
+}
+
 /* The 802.11be elements; the capabilities checked against @he_cap, the
  * 802.11ax capabilities of the same side (their widths size the rate maps). */
 static const u8 *mlme_eht_cap_ie(const u8 *ies, size_t len, const u8 *he_cap, u8 *cap_len)
@@ -4334,6 +4353,8 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk,
               mlme.akm == AKM_SAE ? ", WPA3 (SAE)" :
               mlme.akm == AKM_PSK_SHA256 ? ", WPA2 (PSK-SHA256)" : ", WPA2",
               mlme.mfp ? ", protected management frames" : "");
+
+    mlme_note_mld(mlme.ies, bss->ies_len);
 
     /* the station entry for the AP, with what is known before association */
     mlme.sta = rtw89_m80211_sta_alloc(mlme.vif, bss->bssid);
