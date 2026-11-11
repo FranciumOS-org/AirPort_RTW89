@@ -22,6 +22,7 @@ MKSDK        := $(PROJ_ROOT)/third_party/MacKernelSDK
 LINUX_INC    := $(PROJ_ROOT)/third_party/linux-include
 FIRMWARE_DIR := $(PROJ_ROOT)/firmware
 BUILD_DIR    := $(PROJ_ROOT)/build
+SOURCE_COMMIT ?= $(shell git rev-parse --short HEAD)
 
 SDK          := $(shell xcrun --show-sdk-path 2>/dev/null)
 ARCH         := -arch x86_64
@@ -258,7 +259,7 @@ $(BUILD_DIR)/sae/%.o: %.c
 # The SAE exchange in userspace, both sides (tools/hosttest/sae_test.c).
 saetest:
 	@mkdir -p $(BUILD_DIR)/out $(BUILD_DIR)/log
-	@cc -O1 -g -w $(SAE_INC) $(SAE_SRCS) $(COMPAT89_DIR)/rtw89_crypto.c tools/hosttest/sae_test.c \
+	@$(CC) $(ARCH) $(MINOS) -O1 -g -w $(SAE_INC) $(SAE_SRCS) $(COMPAT89_DIR)/rtw89_crypto.c tools/hosttest/sae_test.c \
 	    -o $(SAETEST) 2> $(BUILD_DIR)/log/sae_test_build.log \
 	    || { grep -E 'error' $(BUILD_DIR)/log/sae_test_build.log >&2; exit 1; }
 	$(call hostrun,$(SAETEST),,sae_test)
@@ -266,22 +267,22 @@ saetest:
 .PHONY: scanrequesttest
 scanrequesttest:
 	@mkdir -p $(BUILD_DIR)/out
-	@$(CXX) -isysroot $(SDK) -std=c++11 -D__IO80211_TARGET=__MAC_13_0 -idirafter $(MKSDK)/Headers \
+	@$(CXX) $(ARCH) $(MINOS) -isysroot $(SDK) -std=c++11 -D__IO80211_TARGET=__MAC_13_0 -idirafter $(MKSDK)/Headers \
 	    tools/hosttest/scan_request_test.cpp -o $(BUILD_DIR)/out/scan_request_test
 	@$(BUILD_DIR)/out/scan_request_test
 
 hosttest: link scanrequesttest
-	@cc -c -O1 -g -Wall -o $(BUILD_DIR)/out/host_kernel.o tools/hosttest/host_kernel.c
-	@cc -c -O1 -g -Wall -I$(COMPAT89_DIR) -o $(BUILD_DIR)/out/host_main.o tools/hosttest/host_main.c
+	@$(CC) $(ARCH) $(MINOS) -c -O1 -g -Wall -o $(BUILD_DIR)/out/host_kernel.o tools/hosttest/host_kernel.c
+	@$(CC) $(ARCH) $(MINOS) -c -O1 -g -Wall -I$(COMPAT89_DIR) -o $(BUILD_DIR)/out/host_main.o tools/hosttest/host_main.c
 	@$(CC) $(DRIVER_CFLAGS) -MF /dev/null -c tools/hosttest/selftest.c -o $(BUILD_DIR)/out/selftest.o 2> $(BUILD_DIR)/log/hosttest_selftest.log \
 	    || { grep -E 'error' $(BUILD_DIR)/log/hosttest_selftest.log >&2; exit 1; }
 	@$(CC) $(DRIVER_CFLAGS) -MF /dev/null -c tools/hosttest/fakechip_core.c -o $(BUILD_DIR)/out/fakechip_core.o 2> $(BUILD_DIR)/log/hosttest_fakechip_core.log \
 	    || { grep -E 'error' $(BUILD_DIR)/log/hosttest_fakechip_core.log >&2; exit 1; }
-	@cc $(ARCH) -o $(HOSTTEST) $(HOST_OBJS) $(LINKED_OBJ) -lz
-	@cc $(ARCH) -o $(HOSTTEST)_fakechip $(HOST_OBJS) $(BUILD_DIR)/out/fakechip_core.o \
+	@$(CC) $(ARCH) $(MINOS) -o $(HOSTTEST) $(HOST_OBJS) $(LINKED_OBJ) -lz
+	@$(CC) $(ARCH) $(MINOS) -o $(HOSTTEST)_fakechip $(HOST_OBJS) $(BUILD_DIR)/out/fakechip_core.o \
 	    $(filter-out $(BUILD_DIR)/compat_rtw89/rtw89_core_wrap.o,$(ALL_OBJS)) -lz
-	@cc -c -O1 -g -w $(filter-out -DMBEDTLS%,$(SAE_INC)) tools/hosttest/sae_test.c -o $(BUILD_DIR)/out/sae_test_main.o
-	@cc $(ARCH) -o $(SAETEST)_kernel $(BUILD_DIR)/out/sae_test_main.o $(SAE_KOBJS) \
+	@$(CC) $(ARCH) $(MINOS) -c -O1 -g -w $(filter-out -DMBEDTLS%,$(SAE_INC)) tools/hosttest/sae_test.c -o $(BUILD_DIR)/out/sae_test_main.o
+	@$(CC) $(ARCH) $(MINOS) -o $(SAETEST)_kernel $(BUILD_DIR)/out/sae_test_main.o $(SAE_KOBJS) \
 	    $(BUILD_DIR)/fw/rtw89_crypto.o $(BUILD_DIR)/out/host_kernel.o
 	@#
 	@# Every run below at once. They are separate processes over separate
@@ -381,8 +382,12 @@ front:
 	    -o $(FRONT_BUNDLE)/Contents/MacOS/AirPortRTW89Front
 	@codesign --force --sign - $(FRONT_BUNDLE) 2>/dev/null || true
 	@echo "  KEXT $(FRONT_BUNDLE)"
-	@python3 tools/check_imports.py $(FRONT_BUNDLE)/Contents/MacOS/AirPortRTW89Front \
-	    $(BUILD_DIR)/log/front-imports.md --also $(FAMILY_BIN)
+	@if [ -n "$${RTW89_KDK:-}" ]; then \
+	    python3 tools/check_kpi.py $(FRONT_BUNDLE); \
+	 else \
+	    python3 tools/check_imports.py $(FRONT_BUNDLE)/Contents/MacOS/AirPortRTW89Front \
+	        $(BUILD_DIR)/log/front-imports.md --also $(FAMILY_BIN); \
+	 fi
 
 # The smoke test gates the bundle: nothing gets packaged that crashed there.
 # It runs again only when what it tests has changed since it last passed
@@ -426,7 +431,7 @@ kext: $(KEXT_DEPS) $(KEXT_OBJS) $(KEXT_SRC)/Info.plist
 	@codesign --force --sign - $(KEXT_BUNDLE) 2>/dev/null || true
 	@echo "  KEXT $(KEXT_BUNDLE)"
 	@python3 tools/check_kpi.py $(KEXT_BUNDLE)
-	@cc -O2 -Wall -o $(BUILD_DIR)/out/rtw89ctl tools/rtw89ctl.c -framework IOKit -framework CoreFoundation
+	@$(CC) $(ARCH) $(MINOS) -O2 -Wall -o $(BUILD_DIR)/out/rtw89ctl tools/rtw89ctl.c -framework IOKit -framework CoreFoundation
 	@echo "  TOOL $(BUILD_DIR)/out/rtw89ctl"
 
 # Realtek's firmware for each chip, the newest format its driver takes, and
@@ -459,7 +464,7 @@ bundle: kext front
 	@mkdir -p $(BUNDLE)/Contents/PlugIns $(BUNDLE)/Contents/Resources
 	@cp -R $(BUILD_DIR)/out/AirPortRTW89Front.kext $(BUNDLE)/Contents/PlugIns/
 	@cp LICENSE CREDITS.md $(FIRMWARE_DIR)/LICENCE.rtlwifi_firmware.txt $(BUNDLE)/Contents/Resources/
-	@git rev-parse --short HEAD > $(BUNDLE)/Contents/Resources/COMMIT
+	@printf '%s\n' '$(SOURCE_COMMIT)' > $(BUNDLE)/Contents/Resources/COMMIT
 	@# the front must start before the driver on the card (see its Info.plist)
 	@f=$$(/usr/libexec/PlistBuddy -c 'Print :IOKitPersonalities:RTW89:IOProbeScore' $(BUNDLE)/Contents/PlugIns/AirPortRTW89Front.kext/Contents/Info.plist 2>/dev/null || echo 0); \
 	 d=$$(/usr/libexec/PlistBuddy -c 'Print :IOKitPersonalities:RTW89:IOProbeScore' $(BUNDLE)/Contents/Info.plist 2>/dev/null || echo 0); \
