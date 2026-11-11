@@ -30,8 +30,9 @@ USB versions of these cards are not supported.
   prefers a network's 5 GHz side when its signal is good.
 - **6 GHz and Wi-Fi 7** on the cards that have them (new, untested on hardware).
 - Wi-Fi menu, saved networks, scanning, restart and shutdown.
+- Wi-Fi 7 160/320 MHz channels.
 
-**Not yet:** AirDrop/AWDL/Continuity, Wi-Fi 7 multi-link, 160/320 MHz
+**Not yet:** AirDrop/AWDL/Continuity, Wi-Fi 7 multi-link.
 channels. Sleep and wake are untested.
 
 Tested on macOS Sequoia 15 and Tahoe 26.
