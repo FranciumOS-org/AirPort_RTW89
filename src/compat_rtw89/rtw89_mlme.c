@@ -1121,6 +1121,14 @@ static void mlme_eht_puncture(struct cfg80211_chan_def *def)
     }
 }
 
+/* Whether the card does 160 MHz on this band, as 802.11ac says (rtw89 sets
+ * it only on chips that do: RTL8852C, RTL8922A). */
+static bool mlme_own_160(void)
+{
+    return mlme.sband->vht_cap.vht_supported &&
+           (mlme.sband->vht_cap.cap & IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_MASK);
+}
+
 /*
  * A 6 GHz channel (ieee80211_chandef_he_6ghz_oper()): from the 6 GHz
  * Operation Information of the HE operation element, there being no HT or VHT
@@ -1143,21 +1151,28 @@ static unsigned int mlme_chandef_6ghz(struct cfg80211_chan_def *def)
         wide.width = NL80211_CHAN_WIDTH_40;
         break;
     case IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH_80MHZ:
-    case IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH_160MHZ:
-        /* for 160 MHz the first segment is the 80 MHz half with the
-         * primary channel, which is as wide as this goes */
         wide.width = NL80211_CHAN_WIDTH_80;
+        break;
+    case IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH_160MHZ:
+        /* ccfs0 is the 80 MHz half with the primary channel, ccfs1 the
+         * centre of all 160 MHz (80+80 when farther apart: our half) */
+        wide.width = op6->ccfs1 && (op6->ccfs1 > op6->ccfs0 ? op6->ccfs1 - op6->ccfs0 :
+                                    op6->ccfs0 - op6->ccfs1) == 8 ?
+                     NL80211_CHAN_WIDTH_160 : NL80211_CHAN_WIDTH_80;
         break;
     default:
         return 20;
     }
-    wide.center_freq1 = (u32)ieee80211_channel_to_frequency(op6->ccfs0, NL80211_BAND_6GHZ);
+    wide.center_freq1 = (u32)ieee80211_channel_to_frequency(
+        wide.width == NL80211_CHAN_WIDTH_160 ? op6->ccfs1 : op6->ccfs0, NL80211_BAND_6GHZ);
     wide.center_freq2 = 0;
     if (mlme_chandef_valid(&wide))
         *def = wide;
     else
         mlme_info("the AP's 6 GHz channel information is invalid: 20 MHz");
     /* the 802.11ax widths of the card: the 5 GHz bits stand for 6 GHz too */
+    if (widths & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G)
+        return 160;
     return widths & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_80MHZ_IN_5G ? 80 : 20;
 }
 
@@ -1232,19 +1247,24 @@ again:
     }
 
     if (vht_oper) {
-        /* ieee80211_chandef_vht_oper(), for a card without 160 MHz: the first
-         * centre frequency is that of the 80 MHz channel the control channel
-         * is in, whatever wider channel the AP may have on top of it */
-        max = 80;
+        /* ieee80211_chandef_vht_oper(): the first centre frequency is that
+         * of the 80 MHz channel the control channel is in; a second one
+         * eight channels away is the centre of all 160 MHz (farther apart
+         * is 80+80, of which we take our 80) */
+        max = mlme_own_160() ? 160 : 80;
         wide = *def;
         switch (vht_oper->chan_width) {
         case IEEE80211_VHT_CHANWIDTH_USE_HT:
             break;
-        case IEEE80211_VHT_CHANWIDTH_80MHZ:
-            wide.width = NL80211_CHAN_WIDTH_80;
-            wide.center_freq1 = (u32)ieee80211_channel_to_frequency(vht_oper->center_freq_seg0_idx,
+        case IEEE80211_VHT_CHANWIDTH_80MHZ: {
+            u8 seg0 = vht_oper->center_freq_seg0_idx, seg1 = vht_oper->center_freq_seg1_idx;
+            bool is160 = seg1 && (seg1 > seg0 ? seg1 - seg0 : seg0 - seg1) == 8;
+
+            wide.width = is160 ? NL80211_CHAN_WIDTH_160 : NL80211_CHAN_WIDTH_80;
+            wide.center_freq1 = (u32)ieee80211_channel_to_frequency(is160 ? seg1 : seg0,
                                                                    mlme.chan->band);
             break;
+        }
         case IEEE80211_VHT_CHANWIDTH_160MHZ:
             /* deprecated encoding: the centre of all 160 MHz */
             wide.width = NL80211_CHAN_WIDTH_160;
@@ -1295,6 +1315,8 @@ again:
                         IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_IN_2G :
                         IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_80MHZ_IN_5G)))
             max = 20;
+        else if (!(widths & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G))
+            max = min(max, 80u);
     }
 fit:
     mlme.bw_limit = max;
@@ -1428,7 +1450,7 @@ static void mlme_put_he_cap(struct sk_buff *skb, struct ieee80211_he_cap_elem *s
 /*
  * ieee80211_put_eht_cap(): our 802.11be capabilities, the rate maps for the
  * widths the 802.11ax element just sent claims (@he), 320 MHz left out, this
- * driver going to 80 MHz at most.
+ * driver going to 160 MHz at most.
  */
 static void mlme_put_eht_cap(struct sk_buff *skb, const struct ieee80211_he_cap_elem *he)
 {
@@ -1566,7 +1588,13 @@ static void mlme_send_assoc(void)
         u32 cap = mlme.sband->vht_cap.cap;
         struct ieee80211_vht_cap *vht;
 
-        cap &= ~(IEEE80211_VHT_CAP_SHORT_GI_160 | IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_MASK);
+        /* 160 MHz only when this join uses it; never 80+80 */
+        if (mlme.bw_limit < 160)
+            cap &= ~(IEEE80211_VHT_CAP_SHORT_GI_160 | IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_MASK);
+        else if ((cap & IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_MASK) ==
+                 IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_160_80PLUS80MHZ)
+            cap = (cap & ~IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_MASK) |
+                  IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_160MHZ;
         if (!(ap_cap & IEEE80211_VHT_CAP_SU_BEAMFORMER_CAPABLE))
             cap &= ~(IEEE80211_VHT_CAP_SU_BEAMFORMEE_CAPABLE |
                      IEEE80211_VHT_CAP_MU_BEAMFORMEE_CAPABLE);
@@ -1907,12 +1935,13 @@ static void mlme_set_sta_nss_bw(void)
         else if (info & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_80MHZ_IN_5G)
             cap_mhz = 80;
     } else if (link_sta->vht_cap.vht_supported) {
-        cap_mhz = 80;
+        cap_mhz = link_sta->vht_cap.cap & IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_MASK ? 160 : 80;
     } else if (link_sta->ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40) {
         cap_mhz = 40;
     }
     mhz = min(cap_mhz, mlme_chandef_mhz(&mlme.chandef));
-    link_sta->bandwidth = mhz >= 80 ? IEEE80211_STA_RX_BW_80 :
+    link_sta->bandwidth = mhz >= 160 ? IEEE80211_STA_RX_BW_160 :
+                          mhz >= 80 ? IEEE80211_STA_RX_BW_80 :
                           mhz >= 40 ? IEEE80211_STA_RX_BW_40 : IEEE80211_STA_RX_BW_20;
 
     ieee80211_sta_recalc_aggregates(mlme.sta);
