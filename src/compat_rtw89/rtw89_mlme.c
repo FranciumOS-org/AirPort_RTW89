@@ -1018,6 +1018,8 @@ static unsigned int mlme_chandef_mhz(const struct cfg80211_chan_def *def)
         return 80;
     case NL80211_CHAN_WIDTH_160:
         return 160;
+    case NL80211_CHAN_WIDTH_320:
+        return 320;
     default:
         return 20;
     }
@@ -1060,6 +1062,12 @@ static void mlme_chandef_downgrade(struct cfg80211_chan_def *def)
     int tmp;
 
     switch (def->width) {
+    case NL80211_CHAN_WIDTH_320:
+        /* which 160 MHz half the control channel is in */
+        tmp = (150 + (int)def->chan->center_freq - (int)def->center_freq1) / 20 / 8;
+        def->center_freq1 = def->center_freq1 - 80 + 160 * tmp;
+        def->width = NL80211_CHAN_WIDTH_160;
+        break;
     case NL80211_CHAN_WIDTH_160:
         /* which 80 MHz half the control channel is in */
         tmp = (70 + (int)def->chan->center_freq - (int)def->center_freq1) / 20 / 4;
@@ -1130,6 +1138,47 @@ static bool mlme_own_160(void)
 }
 
 /*
+ * 320 MHz, 6 GHz only (ieee80211_chandef_eht_oper()): from the EHT operation
+ * element's information, where ccfs0 is the 160 MHz half with the control
+ * channel and ccfs1 the centre of all 320 MHz. Only when both sides claim it;
+ * then @def becomes that channel.
+ */
+static bool mlme_chandef_6ghz_320(struct cfg80211_chan_def *def)
+{
+    const struct ieee80211_sta_eht_cap *own = mlme_own_eht_cap();
+    const struct ieee80211_eht_operation *oper;
+    const struct ieee80211_eht_operation_info *info;
+    const struct ieee80211_eht_cap_elem_fixed *ap;
+    struct cfg80211_chan_def wide = *def;
+    const u8 *he_cap;
+    u8 cap_len;
+
+    if (!mlme.eht || !own ||
+        !(own->eht_cap_elem.phy_cap_info[0] & IEEE80211_EHT_PHY_CAP0_320MHZ_IN_6GHZ))
+        return false;
+    oper = mlme_eht_oper_ie(mlme.bss.ies, mlme.bss.ies_len);
+    if (!oper || !(oper->params & IEEE80211_EHT_OPER_INFO_PRESENT))
+        return false;
+    he_cap = mlme_ext_elem(WLAN_EID_EXT_HE_CAPABILITY, mlme.bss.ies, mlme.bss.ies_len,
+                           sizeof(struct ieee80211_he_cap_elem), &cap_len);
+    ap = (const void *)mlme_eht_cap_ie(mlme.bss.ies, mlme.bss.ies_len, he_cap, &cap_len);
+    if (!ap || !(ap->phy_cap_info[0] & IEEE80211_EHT_PHY_CAP0_320MHZ_IN_6GHZ))
+        return false;
+    info = ieee80211_eht_oper_info(oper);
+    if ((info->control & IEEE80211_EHT_OPER_CHAN_WIDTH) != IEEE80211_EHT_OPER_CHAN_WIDTH_320MHZ)
+        return false;
+    wide.width = NL80211_CHAN_WIDTH_320;
+    wide.center_freq1 = (u32)ieee80211_channel_to_frequency(info->ccfs1, NL80211_BAND_6GHZ);
+    wide.center_freq2 = 0;
+    if (!mlme_chandef_valid(&wide)) {
+        mlme_info("the AP's 320 MHz channel information is invalid");
+        return false;
+    }
+    *def = wide;
+    return true;
+}
+
+/*
  * A 6 GHz channel (ieee80211_chandef_he_6ghz_oper()): from the 6 GHz
  * Operation Information of the HE operation element, there being no HT or VHT
  * elements on 6 GHz. Returns the widest width the card may use there.
@@ -1171,6 +1220,8 @@ static unsigned int mlme_chandef_6ghz(struct cfg80211_chan_def *def)
     else
         mlme_info("the AP's 6 GHz channel information is invalid: 20 MHz");
     /* the 802.11ax widths of the card: the 5 GHz bits stand for 6 GHz too */
+    if (mlme_chandef_6ghz_320(def))
+        return 320;
     if (widths & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G)
         return 160;
     return widths & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_80MHZ_IN_5G ? 80 : 20;
@@ -1449,8 +1500,8 @@ static void mlme_put_he_cap(struct sk_buff *skb, struct ieee80211_he_cap_elem *s
 
 /*
  * ieee80211_put_eht_cap(): our 802.11be capabilities, the rate maps for the
- * widths the 802.11ax element just sent claims (@he), 320 MHz left out, this
- * driver going to 160 MHz at most.
+ * widths the 802.11ax element just sent claims (@he), and 320 MHz when this
+ * join uses it.
  */
 static void mlme_put_eht_cap(struct sk_buff *skb, const struct ieee80211_he_cap_elem *he)
 {
@@ -1458,7 +1509,8 @@ static void mlme_put_eht_cap(struct sk_buff *skb, const struct ieee80211_he_cap_
     struct ieee80211_eht_cap_elem_fixed elem = own->eht_cap_elem;
     u8 mcs_size, *len;
 
-    elem.phy_cap_info[0] &= ~IEEE80211_EHT_PHY_CAP0_320MHZ_IN_6GHZ;
+    if (mlme.bw_limit < 320)
+        elem.phy_cap_info[0] &= ~IEEE80211_EHT_PHY_CAP0_320MHZ_IN_6GHZ;
     mcs_size = ieee80211_eht_mcs_nss_size(he, &elem, false);
 
     *(u8 *)skb_put(skb, 1) = WLAN_EID_EXTENSION;
@@ -1939,8 +1991,12 @@ static void mlme_set_sta_nss_bw(void)
     } else if (link_sta->ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40) {
         cap_mhz = 40;
     }
+    if (cap_mhz == 160 && mlme.sband->band == NL80211_BAND_6GHZ && link_sta->eht_cap.has_eht &&
+        (link_sta->eht_cap.eht_cap_elem.phy_cap_info[0] & IEEE80211_EHT_PHY_CAP0_320MHZ_IN_6GHZ))
+        cap_mhz = 320;
     mhz = min(cap_mhz, mlme_chandef_mhz(&mlme.chandef));
-    link_sta->bandwidth = mhz >= 160 ? IEEE80211_STA_RX_BW_160 :
+    link_sta->bandwidth = mhz >= 320 ? IEEE80211_STA_RX_BW_320 :
+                          mhz >= 160 ? IEEE80211_STA_RX_BW_160 :
                           mhz >= 80 ? IEEE80211_STA_RX_BW_80 :
                           mhz >= 40 ? IEEE80211_STA_RX_BW_40 : IEEE80211_STA_RX_BW_20;
 
@@ -3970,7 +4026,7 @@ void rtw89_mlme_get_status(struct rtw89_mlme_status *status)
     status->last_error = mlme.last_error;
     status->eapol_rx = mlme.eapol_rx;
     if (status->state != RTW89_MLME_IDLE) {
-        status->width = (u8)mlme_chandef_mhz(&mlme.chandef);
+        status->width = (u16)mlme_chandef_mhz(&mlme.chandef);
         status->center_freq = (u16)mlme.chandef.center_freq1;
         /* once associated, what the AP's answer really gave us */
         if (mlme.sta && status->state >= RTW89_MLME_ASSOCIATED)

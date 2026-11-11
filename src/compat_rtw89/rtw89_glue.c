@@ -678,9 +678,9 @@ static bool glue_rate_info(u32 word, struct rate_info *ri)
 /* A rate for the outside: 802.11 mode, index, streams, width and the bit rate. */
 static void glue_rate_describe(const struct rate_info *ri, struct rtw89_glue_rate *out)
 {
-    static const u8 mhz[] = {
+    static const u16 mhz[] = {
         [RATE_INFO_BW_20] = 20, [RATE_INFO_BW_40] = 40, [RATE_INFO_BW_80] = 80,
-        [RATE_INFO_BW_160] = 160,
+        [RATE_INFO_BW_160] = 160, [RATE_INFO_BW_320] = 320,
     };
 
     memset(out, 0, sizeof(*out));

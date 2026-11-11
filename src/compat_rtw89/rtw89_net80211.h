@@ -229,7 +229,7 @@ struct rtw89_mlme_status {
     int last_error;             /* errno, or -(802.11 status/reason code) - 1000 */
     u32 eapol_rx;               /* EAPOL frames received from the AP */
     u16 tx_ba, rx_ba;           /* TID bits: BlockAck sessions in each direction */
-    u8 width;                   /* MHz */
+    u16 width;                  /* MHz */
     u16 center_freq;            /* MHz, of the whole channel */
     u8 mode;                    /* 0: 802.11a/b/g, 1: n, 2: ac, 3: ax */
     u8 nss;                     /* spatial streams towards the AP */

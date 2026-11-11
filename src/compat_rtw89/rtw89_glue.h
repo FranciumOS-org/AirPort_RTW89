@@ -162,7 +162,7 @@ struct rtw89_glue_bss {
     uint16_t capability;
     uint32_t seen;              /* beacons and probe responses heard */
     uint8_t  mode;              /* 0: 802.11a/b/g, 1: n, 2: ac, 3: ax, 4: be */
-    uint8_t  width;             /* MHz the AP operates on */
+    uint16_t width;             /* MHz the AP operates on */
     uint8_t  security;          /* RTW89_GLUE_SEC_* bits; 0: open */
 };
 
@@ -263,7 +263,7 @@ struct rtw89_glue_rate {
     uint8_t  mode;                  /* 0: 802.11a/b/g, 1: 802.11n, 2: 802.11ac, 3: 802.11ax */
     uint8_t  mcs;                   /* the rate's index within its mode and stream count */
     uint8_t  nss;                   /* spatial streams */
-    uint8_t  width;                 /* MHz */
+    uint16_t width;                 /* MHz */
 };
 
 struct rtw89_glue_link {
@@ -273,7 +273,7 @@ struct rtw89_glue_link {
     char     ssid[33];
     uint16_t freq;
     uint16_t aid;
-    uint8_t  width;                 /* channel width in MHz */
+    uint16_t width;                 /* channel width in MHz */
     uint16_t center_freq;           /* centre of the whole channel, MHz */
     uint8_t  mode;                  /* 0: 802.11a/b/g, 1: 802.11n, 2: 802.11ac, 3: 802.11ax */
     uint8_t  nss;                   /* spatial streams */
