@@ -52,6 +52,7 @@ struct rtw89_glue_bss_entry {
     struct rtw89_glue_bss pub;
     unsigned long last_seen;    /* jiffies of the last frame heard from it */
     u32 scan_gen;               /* the scan it was last heard in */
+    bool join_stale;            /* absent from a completed directed scan */
     u16 beacon_int;
     u16 ies_len;
     u8 ies[RTW89_GLUE_MAX_IES];
@@ -883,6 +884,7 @@ void rtw89_glue_note_bss(const u8 *frame, size_t len, u16 freq, s8 signal)
         if (e->scan_gen != glue.scan_gen || signal > e->pub.signal)
             e->pub.signal = signal;
         e->scan_gen = glue.scan_gen;
+        e->join_stale = false;  /* an actual new observation makes it usable again */
         e->last_seen = jiffies;
         e->pub.seen++;
     }
@@ -1179,8 +1181,59 @@ static void glue_bss_expire(void)
     spin_unlock(&glue.bss_lock);
 }
 
+/* A restarted hotspot can leave an older, stronger radio in the raw cache.
+ * After a directed scan, a join by SSID must use a radio actually heard for
+ * that request, rather than selecting the absent one by signal or band bonus.
+ * Keep cache rows for callers that read them; only joining is constrained.
+ * Apply the target's observation constraint even to radios on other bands:
+ * a scan for the hotspot on channel 6 must not prefer an unseen cached 5 GHz
+ * radio. Any subsequent beacon or probe response makes a radio usable again.
+ * Wildcard, unrelated and aborted scans do not invalidate cached candidates.
+ * Called before publishing scan completion; RX and selection use bss_lock. */
+static void glue_bss_complete_directed_scan(void)
+{
+    const struct cfg80211_scan_request *req = glue.scan_req ? &glue.scan_req->req : NULL;
+    const struct cfg80211_ssid *target = NULL;
+    unsigned int i, excluded = 0;
+
+    if (!req || !req->ssids)
+        return;
+    /* The directed API includes a wildcard alongside its named probe.
+     * Ignore empty slots, but do not treat multiple distinct names as one. */
+    for (i = 0; i < req->n_ssids; i++) {
+        const struct cfg80211_ssid *ssid = &req->ssids[i];
+
+        if (!ssid->ssid_len)
+            continue;
+        if (target && (target->ssid_len != ssid->ssid_len ||
+                       memcmp(target->ssid, ssid->ssid, ssid->ssid_len)))
+            return;
+        target = ssid;
+    }
+    if (!target)
+        return;
+    spin_lock(&glue.bss_lock);
+    for (i = 0; i < glue.n_bss; i++) {
+        struct rtw89_glue_bss_entry *e = &glue.bss[i];
+
+        if (e->pub.ssid_len != target->ssid_len ||
+            memcmp(e->pub.ssid, target->ssid, target->ssid_len))
+            continue;
+        if (e->scan_gen != glue.scan_gen) {
+            e->join_stale = true;
+            excluded++;
+        }
+    }
+    spin_unlock(&glue.bss_lock);
+    if (excluded)
+        IOLog("[rtw89] directed join generation %u: excluded %u old radio(s) from selection\n",
+              glue.scan_gen, excluded);
+}
+
 static void glue_scan_done(void *ctx, bool aborted)
 {
+    if (!aborted)
+        glue_bss_complete_directed_scan();
     glue.scanning = false;
     glue.last_scan_ms = jiffies_to_msecs(jiffies - glue.scan_started);
     if (glue.scan_connected)
@@ -1247,6 +1300,12 @@ void rtw89_glue_test_scan_done(void);
 void rtw89_glue_test_scan_done(void)
 {
     glue_scan_done(NULL, false);
+}
+
+void rtw89_glue_test_scan_aborted(void);
+void rtw89_glue_test_scan_aborted(void)
+{
+    glue_scan_done(NULL, true);
 }
 
 /* ... and never misses a beacon. */
@@ -1503,7 +1562,7 @@ bool rtw89_glue_scanning(void)
 }
 
 static int glue_scan_locked(const u8 *name, size_t name_len,
-                            const u16 *want_freqs, size_t n_want);
+                            const u16 *want_freqs, size_t n_want, uint32_t *generation);
 
 int rtw89_glue_scan(void)
 {
@@ -1512,7 +1571,7 @@ int rtw89_glue_scan(void)
     if (!glue.active)
         return -ENETDOWN;
     mutex_lock(&glue.cmd_lock);
-    ret = glue_scan_locked(NULL, 0, NULL, 0);
+    ret = glue_scan_locked(NULL, 0, NULL, 0, NULL);
     mutex_unlock(&glue.cmd_lock);
     return ret;
 }
@@ -1526,7 +1585,7 @@ int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len)
     if (!ssid_len || ssid_len > IEEE80211_MAX_SSID_LEN)
         return -EINVAL;
     mutex_lock(&glue.cmd_lock);
-    ret = glue_scan_locked(ssid, ssid_len, NULL, 0);
+    ret = glue_scan_locked(ssid, ssid_len, NULL, 0, NULL);
     mutex_unlock(&glue.cmd_lock);
     return ret;
 }
@@ -1539,20 +1598,30 @@ int rtw89_glue_scan_for(const uint8_t *ssid, size_t ssid_len)
 int rtw89_glue_scan_directed(const uint8_t *ssid, size_t ssid_len,
                              const uint16_t *freqs, size_t n_freqs)
 {
+    return rtw89_glue_scan_directed_generation(ssid, ssid_len, freqs, n_freqs, NULL);
+}
+
+int rtw89_glue_scan_directed_generation(const uint8_t *ssid, size_t ssid_len,
+                                       const uint16_t *freqs, size_t n_freqs,
+                                       uint32_t *generation)
+{
     int ret;
+
+    if (generation)
+        *generation = 0;
 
     if (!glue.active)
         return -ENETDOWN;
     if (ssid_len > IEEE80211_MAX_SSID_LEN)
         return -EINVAL;
     mutex_lock(&glue.cmd_lock);
-    ret = glue_scan_locked(ssid_len ? ssid : NULL, ssid_len, freqs, n_freqs);
+    ret = glue_scan_locked(ssid_len ? ssid : NULL, ssid_len, freqs, n_freqs, generation);
     mutex_unlock(&glue.cmd_lock);
     return ret;
 }
 
 static int glue_scan_locked(const u8 *name, size_t name_len,
-                            const u16 *want_freqs, size_t n_want)
+                            const u16 *want_freqs, size_t n_want, uint32_t *generation)
 {
     struct rtw89_m80211_local *local;
     struct ieee80211_scan_request *sreq;
@@ -1666,6 +1735,14 @@ static int glue_scan_locked(const u8 *name, size_t name_len,
     glue.scan_started = jiffies;
     glue.scan_connected = glue.vif->cfg.assoc;
     glue.last_scan_channels = req->n_channels;
+    /* Receive/completion may run during submission. Publish the new
+     * observation generation before either can see the request. */
+    spin_lock(&glue.bss_lock);
+    if (++glue.scan_gen == 0)
+        ++glue.scan_gen;
+    if (generation)
+        *generation = glue.scan_gen;
+    spin_unlock(&glue.bss_lock);
     ret = local->ops->hw_scan(hw, glue.vif, sreq);
     if (ret) {
         glue.scanning = false;
@@ -1679,9 +1756,6 @@ static int glue_scan_locked(const u8 *name, size_t name_len,
          * network on a channel not yet scanned "not found". What was not
          * heard for a while goes when a scan ends (glue_bss_expire()).
          */
-        spin_lock(&glue.bss_lock);
-        glue.scan_gen++;
-        spin_unlock(&glue.bss_lock);
     }
     wiphy_unlock(hw->wiphy);
 
@@ -1741,6 +1815,13 @@ bool rtw89_glue_scan_entry(unsigned int index, struct rtw89_glue_bss *out, uint8
 bool rtw89_glue_find_bss(const uint8_t bssid[6], struct rtw89_glue_bss *out, uint8_t *ies,
                          size_t ies_max, size_t *ies_len, uint16_t *beacon_int)
 {
+    return rtw89_glue_find_bss_observed(bssid, out, ies, ies_max, ies_len, beacon_int, NULL);
+}
+
+bool rtw89_glue_find_bss_observed(const uint8_t bssid[6], struct rtw89_glue_bss *out,
+                                  uint8_t *ies, size_t ies_max, size_t *ies_len,
+                                  uint16_t *beacon_int, uint32_t *generation)
+{
     bool found = false;
     unsigned int i;
 
@@ -1750,6 +1831,8 @@ bool rtw89_glue_find_bss(const uint8_t bssid[6], struct rtw89_glue_bss *out, uin
     for (i = 0; i < glue.n_bss && !found; i++) {
         if (ether_addr_equal(glue.bss[i].pub.bssid, bssid)) {
             glue_copy_entry(&glue.bss[i], out, ies, ies_max, ies_len, beacon_int);
+            if (generation)
+                *generation = glue.bss[i].scan_gen;
             found = true;
         }
     }
@@ -1869,8 +1952,8 @@ static int glue_join_locked(const u8 *ssid, size_t ssid_len, const u8 *bssid, co
     for (i = 0; i < glue.n_bss; i++) {
         struct rtw89_glue_bss_entry *e = &glue.bss[i];
 
-        if (e->pub.ssid_len != ssid_len || memcmp(e->pub.ssid, ssid, ssid_len) ||
-            !e->ies_len)
+        if (e->join_stale || e->pub.ssid_len != ssid_len ||
+            memcmp(e->pub.ssid, ssid, ssid_len) || !e->ies_len)
             continue;
         if (bssid && !ether_addr_equal(e->pub.bssid, bssid))
             continue;
@@ -1901,8 +1984,8 @@ static int glue_join_locked(const u8 *ssid, size_t ssid_len, const u8 *bssid, co
         for (i = 0; i < glue.n_bss; i++) {
             struct rtw89_glue_bss_entry *e = &glue.bss[i];
 
-            if (e->pub.ssid_len != ssid_len || memcmp(e->pub.ssid, ssid, ssid_len) ||
-                !e->ies_len || e->pub.freq < 5000 || e->pub.signal < GLUE_PREFER_5G_MIN ||
+            if (e->join_stale || e->pub.ssid_len != ssid_len ||
+                memcmp(e->pub.ssid, ssid, ssid_len) || !e->ies_len || e->pub.freq < 5000 || e->pub.signal < GLUE_PREFER_5G_MIN ||
                 e->pub.signal + GLUE_PREFER_5G_BONUS <= best->pub.signal ||
                 !glue_same_key(best, e, password_len > 0))
                 continue;
@@ -2165,7 +2248,7 @@ static void glue_rejoin_work(struct work_struct *work)
         }
     } else if (!glue.rejoin_scanned) {
         glue.rejoin_scanned = true;
-        if (!glue_scan_locked(NULL, 0, NULL, 0))
+        if (!glue_scan_locked(NULL, 0, NULL, 0, NULL))
             goto out;
         /* no scan to be had: try with what was heard before */
     }

@@ -26,3 +26,30 @@
 | `linux/skbuff.h`, `rtw88_compat.c` | `skb_put` / `skb_push` check the room and stop (`rtw88_skb_panic`) instead of silently corrupting the heap, as Linux's `skb_over_panic` does. | ⬆ |
 | `linux/skbuff.h` | `dev_alloc_skb` / `netdev_alloc_skb` reserve `NET_SKB_PAD` (64) bytes of headroom like Linux. | — |
 | `rtw88_compat.c` | New hook `rtw88_napi_post_poll` (called on the datapath thread after every NAPI poll) and `rtw88_queue_datapath_delayed_work()` (queue work on that thread). rtw89 uses them to pass on received frames the driver is holding for a PPDU status report that does not come; see `src/compat_rtw89/rtw89_core_wrap.c`. | — |
+
+## Directed scan observations and join selection
+
+A completed, non-wildcard scan marks older cached radios of its target SSID as
+unavailable for joining. Both signal ranking and the 5/6 GHz preference skip
+those radios; an explicitly named unavailable BSSID returns `ENOENT`. Cache
+readers retain the records, and another beacon or probe response makes a radio
+eligible again. Aborted, wildcard and unrelated scans do not invalidate it.
+The scan observation generation is advanced before hardware submission so early
+receive/completion callbacks belong to the request being completed.
+
+`make selectiontest` exercises the actual glue join API with a stronger absent
+radio and weaker new radio, the cross-band preference, explicit-BSSID rejection,
+empty directed results, aborted/wildcard/unrelated scans and rediscovery, under
+both ordinary and emulated channel contexts. The full host suite includes the
+same regression.
+
+## Local 0.6.0 hotspot integration
+
+Retain directed scan completion until the originating host reader consumes EOF,
+allowing the family's synchronous cache fill without stealing that completion.
+Identical SSID and channel-list requests reuse the running/completed scan; an
+unconsumed completed request expires after two seconds. Keep upstream channel
+lists, AWDL scan throttling and result sorting. Directed result lookup by BSSID
+also carries observation generations, filtering records older than the request.
+Regression tests use actual glue observations and exercise family-before-host
+read order, retry reuse, changed channel lists, cancellation and expiry.
