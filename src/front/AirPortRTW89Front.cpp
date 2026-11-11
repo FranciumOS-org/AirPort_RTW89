@@ -767,6 +767,7 @@ bool AirPortRTW89Front::start(IOService *provider)
     if (!_backLock)
         return false;
     _awdlEnableCall = thread_call_allocate(awdlEnableThread, this);
+    _awdlWatchCall = thread_call_allocate(awdlWatchThread, this);
     _mac = kPlaceholderMac;
 
     if (!super::start(provider)) {
@@ -798,6 +799,12 @@ void AirPortRTW89Front::stop(IOService *provider)
         for (unsigned int ms = 0; _awdlEnableBusy && ms < 2000; ms++)
             IOSleep(1);
     }
+    if (_awdlWatchCall) {
+        _awdlWatchStop = true;
+        thread_call_cancel(_awdlWatchCall);
+        for (unsigned int ms = 0; _awdlWatchBusy && ms < 2000; ms++)
+            IOSleep(1);
+    }
     opDestroyVif(this);
     if (_netif) {
         detachInterface(_netif, true);
@@ -816,6 +823,11 @@ void AirPortRTW89Front::free()
         thread_call_cancel(_awdlEnableCall);
         thread_call_free(_awdlEnableCall);
         _awdlEnableCall = nullptr;
+    }
+    if (_awdlWatchCall) {
+        thread_call_cancel(_awdlWatchCall);
+        thread_call_free(_awdlWatchCall);
+        _awdlWatchCall = nullptr;
     }
     if (_backLock) {
         IOLockFree(_backLock);
@@ -953,6 +965,11 @@ void AirPortRTW89Front::awdlEnableIfReady()
     IO80211VirtualInterface *vif = _vif;
     const uint8_t *vraw, *pm;
 
+    /* The watch runs from the first received frame on, whoever enables AWDL. */
+    if (vif && _awdlWatchCall && !_awdlWatchStarted && !_awdlWatchStop) {
+        _awdlWatchStarted = true;
+        thread_call_enter_delayed(_awdlWatchCall, awdlWatchDeadline());
+    }
     if (_awdlEnableAsked || !vif || !_awdlEnableCall)
         return;
     vraw = reinterpret_cast<const uint8_t *>(vif);
@@ -963,6 +980,77 @@ void AirPortRTW89Front::awdlEnableIfReady()
         return;
     _awdlEnableAsked = true;
     thread_call_enter(_awdlEnableCall);
+}
+
+uint64_t AirPortRTW89Front::awdlWatchDeadline()
+{
+    uint64_t deadline;
+
+    clock_interval_to_deadline(5, kSecondScale, &deadline);
+    return deadline;
+}
+
+/*
+ * The family's AWDL state every five seconds, as properties, and the link put
+ * back up when it is found down.
+ *
+ * IO80211AWDLPeerManager::updateLocalRequests() is where wifip2pd's service
+ * records (AirDrop's SRV and TXT among them) arrive, and it drops each one
+ * with "Received service request but link is down" while the interface's
+ * link state at 0xfc is not 2, or "but not configured" while bit 1 of the
+ * peer manager's state flags at 0x8528 is clear. Past those two checks it
+ * rebuilds the sync frame template with the records in it and hands it to
+ * us. On 2026-11-11 no new template ever arrived while AirDrop advertised,
+ * awdl0 read "status: inactive", and our own log has seen 0xfc read back 1
+ * after we set it up. The driver's log ring is too small to keep these
+ * readings, hence the registry. Offsets are IO80211FamilyLegacy's, as
+ * elsewhere in this file; everything here only reads them, except the
+ * setLinkState() call, which is the one awdlEnableThread() already makes.
+ */
+void AirPortRTW89Front::awdlWatchThread(thread_call_param_t p0, thread_call_param_t p1)
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(p0);
+    IO80211VirtualInterface *vif;
+    const uint8_t *vraw, *pm;
+    int link;
+    unsigned int flags = 0, enabled = 0, configured = 0;
+
+    OSIncrementAtomic(&self->_awdlWatchBusy);
+    vif = self->_vif;
+    if (self->_awdlWatchStop || !vif)
+        goto out;
+    vraw = reinterpret_cast<const uint8_t *>(vif);
+    link = *reinterpret_cast<const int *>(vraw + 0xfc);
+    pm = *reinterpret_cast<const uint8_t *const *>(vraw + 0xb0);
+    if (pm) {
+        flags = *reinterpret_cast<const unsigned int *>(pm + 0x8528);
+        enabled = pm[0x2f4];
+        configured = *reinterpret_cast<const unsigned int *>(pm + 0xcd4);
+    }
+    if (link != self->_awdlLastLink || flags != self->_awdlLastFlags) {
+        LOG("awdl0 link state %d, AWDL state flags 0x%x, enabled %u, 0xcd4 %u",
+            link, flags, enabled, configured);
+        self->_awdlLastLink = link;
+        self->_awdlLastFlags = flags;
+    }
+    self->setProperty("rtw89-awdl-link-state", (unsigned long long)link, 32);
+    self->setProperty("rtw89-awdl-state-flags", (unsigned long long)flags, 32);
+    self->setProperty("rtw89-awdl-enabled", (unsigned long long)enabled, 32);
+    self->setProperty("rtw89-awdl-link-raised", (unsigned long long)self->_awdlLinkRaised, 32);
+    self->setProperty("rtw89-awdl-out-packets", (unsigned long long)self->_awdlOutSeen, 32);
+
+    /* Only once the family has enabled AWDL: before that, bringing the link up
+     * is awdlEnableThread()'s job, and it has to come first there. */
+    if (enabled && vraw[0x169] && link != kIO80211NetworkLinkUp) {
+        self->_awdlLinkRaised++;
+        LOG("awdl0's link was %d with AWDL enabled; bringing it up again (%u)", link,
+            self->_awdlLinkRaised);
+        vif->setLinkState(kIO80211NetworkLinkUp, 1);
+    }
+out:
+    if (!self->_awdlWatchStop && self->_awdlWatchCall)
+        thread_call_enter_delayed(self->_awdlWatchCall, awdlWatchDeadline());
+    OSDecrementAtomic(&self->_awdlWatchBusy);
 }
 
 bool AirPortRTW89Front::logLine(const char *line)

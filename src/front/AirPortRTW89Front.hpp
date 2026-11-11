@@ -135,6 +135,8 @@ public:
     /* Asks the family to enable AWDL, once the interface is up. */
     void awdlEnableIfReady();
     static void awdlEnableThread(thread_call_param_t p0, thread_call_param_t p1);
+    static void awdlWatchThread(thread_call_param_t p0, thread_call_param_t p1);
+    static uint64_t awdlWatchDeadline();
     /* One log line into the driver's ring; false if the driver is not there. */
     bool logLine(const char *line);
     /* IOService */
@@ -228,6 +230,15 @@ private:
     thread_call_t _awdlEnableCall = nullptr;
     bool _awdlEnableAsked = false;
     volatile SInt32 _awdlEnableBusy = 0;
+    /* Every few seconds: the family's AWDL state, published, and the link
+     * brought back up if it fell (see awdlWatchThread). */
+    thread_call_t _awdlWatchCall = nullptr;
+    volatile bool _awdlWatchStop = false;
+    bool _awdlWatchStarted = false;
+    volatile SInt32 _awdlWatchBusy = 0;
+    unsigned int _awdlLinkRaised = 0;
+    unsigned int _awdlLastFlags = ~0u;
+    int _awdlLastLink = -1;
     unsigned int _awdlOutSeen = 0;
     const IONetworkMedium *_medium = nullptr;
     IOEthernetAddress _mac = {};
