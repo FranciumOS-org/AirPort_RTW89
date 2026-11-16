@@ -10,7 +10,8 @@ install: Kernel -> Add gets, in load order and after Lilu,
                             (the IO80211 controller, links against the family)
     AirPort_RTW89.kext/Contents/PlugIns/OwlyAirLinkBridge.kext
                             (RTLAirLink's Lilu plugin for AirDrop's event client)
-and boot-args gets -owlyeb1 owlyebstage=4, which switch the bridge on,
+and boot-args gets -owlyeb1 owlyebstage=4, which switch the bridge on, and
+-broadtekp2poff, which keeps BroadTek's AWDL hook off the same function,
 and Kernel -> Block gets an entry that keeps Apple's own IOSkywalkFamily out,
 all from Darwin 23 (Sonoma) on. Entries already there are switched on and
 otherwise left alone, so running it twice changes nothing. An entry for the
@@ -40,8 +41,11 @@ OURS = [
     ('AirPort_RTW89.kext/Contents/PlugIns/OwlyAirLinkBridge.kext', 'OwlyAirLinkBridge',
      'Wi-Fi: AirDrop event bridge (RTLAirLink, needs Lilu)'),
 ]
-# The bridge does nothing without these (RTLAirLink's opt-in).
-BOOT_ARGS = ['-owlyeb1', 'owlyebstage=4']
+# The bridge does nothing without the first two (RTLAirLink's opt-in). The
+# third keeps BroadTek's own hook on IO80211InterfacePostMessage out of the
+# way: Lilu panics when two plugins route one function, and the bridge routes
+# that one ("previous plugin had short jump type on a multiroute function").
+BOOT_ARGS = ['-owlyeb1', 'owlyebstage=4', '-broadtekp2poff']
 NVRAM_GUID = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
 OLD_FRONT = 'AirPortRTW89Front.kext'     # the front as a kext of its own
 BRCM = 'IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext'
