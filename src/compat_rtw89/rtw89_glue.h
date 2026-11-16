@@ -422,48 +422,12 @@ void rtw89_glue_set_ppdu_flush(bool on);
  */
 void rtw89_glue_set_rejoin(bool on);
 
-/* Log the AWDL sync frames the chip already hears (see rtw89_awdl.h). Nothing
- * is transmitted; this only measures Apple's timeline before we try to join it. */
-
-/* Hand received AWDL action frames up through platform.awdl_frame as well. */
-
-/* The transmit loop: the kext owns the clock, this owns the frames. */
-
-/* How many sync frames went out, and how many could not. */
-
-/*
- * When the followed master's next availability window begins, on the same
- * clock the kext keeps time with, and the window length it advertises. False
- * while no master is being followed. The clock uses it to put its own window
- * boundaries on the master's, which is what being on the timeline means.
- */
-
 /*
  * A received frame's hardware arrival time, moved into the clock the driver
  * keeps time with. False until an offset between the two has been measured.
  * Only meaningful for a frame whose status carried RX_FLAG_MACTIME_START.
  */
 bool rtw89_glue_rx_local_us(uint64_t mactime, uint64_t *local_us);
-
-/*
- * The channel the followed master keeps its windows on, or 0 while no master
- * is followed. Sitting anywhere else means being present in its windows on a
- * channel it is not listening to.
- */
-/* awdl0's own address, so the chip can be told to answer to it; NULL when it
- * goes away. See rtw89_compat_set_self_addr(). */
-
-/*
- * Ask for the radio to be held on @freq for AWDL while no network is joined,
- * or let it go again with 0. The request is carried out on a work thread,
- * because the caller may be the link notify, which already holds the wiphy
- * mutex. A network always outranks it.
- */
-
-/* An Ethernet frame the family sent to awdl0, to go out as an AWDL data
- * frame. Returns 0, or a negative errno when there is nothing to send it on. */
-
-/* The sync frame template IO80211 built, and the AWDL address it is for. */
 
 /* Called from inside the compat layer when one arrives. */
 

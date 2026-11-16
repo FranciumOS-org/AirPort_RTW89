@@ -1,5 +1,13 @@
 # Changes to the inherited AirPort_RTW88 compat layer
 
+> **`third_party/rtw89/` is no longer unmodified.** RTLAirLink's AWDL (merged
+> from its v0.1.0) changes cam.c, chan.c, core.c, core.h, fw.c, mac.c,
+> mac80211.c, phy.c and ser.c: raw-frame TX descriptors, the AWDL port and
+> channel context, and receive hooks, all under `RTW89_MACOS` and its
+> `OWLY_*` flags. `git diff ec3c47f -- third_party/rtw89` shows them. They are
+> to move into `src/compat_rtw89/` (as `rtw89_core_wrap.c` does for core.c)
+> before the vendored copy is next updated.
+
 `src/compat/` started as a copy of Realtek-AirPort-Family @ 1885e37
 (`AirPort_RTW88/Feixiao/src/compat`). Deviations, with ones worth sending upstream marked ⬆.
 

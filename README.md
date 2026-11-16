@@ -31,8 +31,15 @@ USB versions of these cards are not supported.
 - **6 GHz and Wi-Fi 7** on the cards that have them (new, untested on hardware).
 - Wi-Fi menu, saved networks, scanning, restart and shutdown.
 
-**Not yet:** AirDrop/AWDL/Continuity, Wi-Fi 7 multi-link, 160/320 MHz
-channels. Sleep and wake are untested.
+- **AirDrop** (experimental), with RTLAirLink's AWDL: transfers in both
+  directions have worked on an RTL8852BE; finding the other device is still
+  hit and miss. Needs Lilu and the boot-args `-owlyeb1 owlyebstage=4` (the
+  installer adds them). Not on the RTL8851BE or RTL8852AE, which have no
+  channel contexts for it.
+- **160 and 320 MHz** channels where card and network both have them (untested on hardware).
+
+**Not yet:** Handoff and the rest of Continuity, Wi-Fi 7 multi-link. Sleep
+and wake are untested.
 
 Tested on macOS Sequoia 15 and Tahoe 26.
 

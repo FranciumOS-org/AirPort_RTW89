@@ -620,19 +620,64 @@ fetch-firmware:
 # the GPL code in Contents/Resources. build/out/bundle/AirPort_RTW89.kext.
 BUNDLE := $(BUILD_DIR)/out/bundle/AirPort_RTW89.kext
 
-bundle: kext front
+# ---- RTLAirLink's Lilu event bridge (bridge/), nested in the bundle ----
+# It hooks the family's event user client for wifip2pd, and only for the
+# front it was built with: the front's UUID is written into the copy of
+# Plugin.cpp that is compiled (as RTLAirLink's build.py does). Active only
+# with the boot-args -owlyeb1 owlyebstage=4.
+BRIDGE_DIR    := $(PROJ_ROOT)/bridge
+BRIDGE_BUNDLE := $(BUILD_DIR)/out/OwlyAirLinkBridge.kext
+BRIDGE_BIN    := $(BRIDGE_BUNDLE)/Contents/MacOS/OwlyAirLinkBridge
+BRIDGE_OBJ    := $(BUILD_DIR)/bridge
+BRIDGE_VER    := $(shell /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' $(BRIDGE_DIR)/Info.plist 2>/dev/null)
+CLANG_RES     := $(shell xcrun clang -print-resource-dir 2>/dev/null)
+BRIDGE_COMMON := $(ARCH) $(MINOS) -isysroot $(SDK) -nostdinc \
+                 -isystem $(CLANG_RES)/include -I$(MKSDK)/Headers \
+                 -I$(BRIDGE_DIR)/vendor/Lilu -I$(BRIDGE_DIR)/src \
+                 -O2 -fno-strict-aliasing -fwrapv -mkernel -fno-exceptions \
+                 -fno-builtin -fno-common -fno-stack-protector -fno-omit-frame-pointer \
+                 -DKERNEL -DKERNEL_PRIVATE -DDRIVER_PRIVATE -DAPPLE -DNeXT -D__PRIVATE_SPI__ \
+                 -DPRODUCT_NAME=OwlyAirLinkBridge -DMODULE_VERSION=$(BRIDGE_VER) \
+                 -DLILU_CUSTOM_KMOD_INIT=1 -DLILU_CUSTOM_IOKIT_INIT=1 \
+                 -Wall -Wextra -Wframe-larger-than=1024
+BRIDGE_CXX    := -std=gnu++17 -fapple-kext -fno-rtti
+FRONT_UUID     = $(shell xcrun dwarfdump --uuid $(FRONT_BUNDLE)/Contents/MacOS/AirPortRTW89Front | sed -n 's/^UUID: \([0-9A-F-]*\) (x86_64).*/\1/p')
+
+.PHONY: bridge
+bridge: front
+	@mkdir -p $(BRIDGE_OBJ) $(BRIDGE_BUNDLE)/Contents/MacOS
+	@python3 tools/bind_bridge.py "$(FRONT_UUID)" $(BRIDGE_DIR)/src/Plugin.cpp $(BRIDGE_OBJ)/Plugin.cpp
+	@echo "  CC   bridge (Lilu plugin, bound to front $(FRONT_UUID))"
+	@$(CC) $(BRIDGE_COMMON) -std=gnu11 -c $(BRIDGE_DIR)/src/owly_event_core.c -o $(BRIDGE_OBJ)/core.o
+	@$(CXX) $(BRIDGE_COMMON) $(BRIDGE_CXX) -c $(BRIDGE_OBJ)/Plugin.cpp -o $(BRIDGE_OBJ)/plugin.o
+	@$(CXX) $(BRIDGE_COMMON) $(BRIDGE_CXX) -c $(BRIDGE_DIR)/src/Bootstrap.cpp -o $(BRIDGE_OBJ)/bootstrap.o
+	@$(CXX) $(BRIDGE_COMMON) $(BRIDGE_CXX) -c $(BRIDGE_DIR)/src/Service.cpp -o $(BRIDGE_OBJ)/service.o
+	@$(CXX) $(BRIDGE_COMMON) $(BRIDGE_CXX) -c $(BRIDGE_DIR)/src/Status.cpp -o $(BRIDGE_OBJ)/status.o
+	@$(CXX) $(BRIDGE_COMMON) $(BRIDGE_CXX) -c $(BRIDGE_DIR)/vendor/Lilu/Library/plugin_start.cpp -o $(BRIDGE_OBJ)/start.o
+	@$(CC) $(BRIDGE_COMMON) -std=gnu11 -c $(BRIDGE_DIR)/src/kmod_info.c -o $(BRIDGE_OBJ)/kmod.o
+	@cp $(BRIDGE_DIR)/Info.plist $(BRIDGE_BUNDLE)/Contents/Info.plist
+	@$(CXX) $(ARCH) $(MINOS) -isysroot $(SDK) -nostdlib -Xlinker -kext -L$(MKSDK)/Library/x86_64 \
+	    $(BRIDGE_OBJ)/core.o $(BRIDGE_OBJ)/plugin.o $(BRIDGE_OBJ)/bootstrap.o $(BRIDGE_OBJ)/service.o \
+	    $(BRIDGE_OBJ)/status.o $(BRIDGE_OBJ)/start.o $(BRIDGE_OBJ)/kmod.o -lkmod -o $(BRIDGE_BIN)
+	@python3 tools/bind_bridge.py --check "$(FRONT_UUID)" $(BRIDGE_BIN)
+	@/usr/bin/codesign --force --sign - --timestamp=none $(BRIDGE_BUNDLE) 2>/dev/null
+	@echo "  KEXT $(BRIDGE_BUNDLE)"
+
+bundle: kext front bridge
 	@rm -rf $(BUNDLE)
 	@mkdir -p $(dir $(BUNDLE))
 	@cp -R $(BUILD_DIR)/out/AirPort_RTW89.kext $(BUNDLE)
 	@mkdir -p $(BUNDLE)/Contents/PlugIns $(BUNDLE)/Contents/Resources
 	@cp -R $(BUILD_DIR)/out/AirPortRTW89Front.kext $(BUNDLE)/Contents/PlugIns/
-	@cp LICENSE CREDITS.md $(FIRMWARE_DIR)/LICENCE.rtlwifi_firmware.txt $(BUNDLE)/Contents/Resources/
+	@cp -R $(BRIDGE_BUNDLE) $(BUNDLE)/Contents/PlugIns/
+	@cp LICENSE CREDITS.md CREDITS-RTLAirLink.md $(FIRMWARE_DIR)/LICENCE.rtlwifi_firmware.txt $(BUNDLE)/Contents/Resources/
+	@cp $(BRIDGE_DIR)/vendor/Lilu/LICENSE.txt $(BUNDLE)/Contents/Resources/LICENSE-Lilu.txt
 	@git rev-parse --short HEAD > $(BUNDLE)/Contents/Resources/COMMIT
 	@# the front must start before the driver on the card (see its Info.plist)
 	@f=$$(/usr/libexec/PlistBuddy -c 'Print :IOKitPersonalities:RTW89:IOProbeScore' $(BUNDLE)/Contents/PlugIns/AirPortRTW89Front.kext/Contents/Info.plist 2>/dev/null || echo 0); \
 	 d=$$(/usr/libexec/PlistBuddy -c 'Print :IOKitPersonalities:RTW89:IOProbeScore' $(BUNDLE)/Contents/Info.plist 2>/dev/null || echo 0); \
 	 [ "$$f" -gt "$$d" ] || { echo "  the front's IOProbeScore ($$f) must be above the driver's ($$d)"; exit 1; }
-	@echo "  BUNDLE $(BUNDLE) (the front in Contents/PlugIns)"
+	@echo "  BUNDLE $(BUNDLE) (the front and the bridge in Contents/PlugIns)"
 
 # The downloads: AirPort_RTW89-<version>.zip, the kext and next to it the
 # Kext Installer (.command for macOS, .cmd for Windows, .sh for Linux, and the

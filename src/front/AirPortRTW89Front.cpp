@@ -601,19 +601,6 @@ void AirPortRTW89Front::backLeave()
 }
 
 /*
- * Switch the family's AWDL engine on, once, when it will actually take.
- *
- * configure() -- which sets the flags actionFrameProcessInput() tests before
- * it will look at a received frame -- refuses in two ways that both matter
- * here. It wants the interface's enabled byte at 0x169 set, which happens
- * when awdl0 is brought up rather than when it is created; and it aborts if
- * it finds itself on the controller's workloop thread, which is where every
- * natural place to call this from runs. So the condition is polled from the
- * receive path and the call itself is made on a thread_call, which is
- * neither.
- */
-
-/*
  * The family's AWDL state every five seconds, as properties, and the link put
  * back up when it is found down.
  *
@@ -808,64 +795,6 @@ void AirPortRTW89Front::opSetAppleRsn(void *ctx, bool on)
 {
     gAppleRsn = on;
 }
-
-/*
- * The family builds the virtual interface, through the override above:
- * attachVirtualInterface() calls createVirtualInterface(), attaches what it
- * gets and gives it a BSD name (awdl0). We keep the one we were given; macOS
- * asks for a second one only for P2P.
- */
-
-/*
- * A received AWDL action frame, handed to the family's AWDL engine.
- *
- * IO80211VirtualInterface::bpfTapInput() is the way in: with DLT 12 it gives
- * the frame to the peer manager's actionFrameInput() and only falls through to
- * the ordinary bpf tap if that does not take it. The header it wants is an
- * apple80211_act_frm_hdr of 72 bytes, mapped out of
- * AirPort_BrcmNIC::wlEvent(), which builds one the same way: the transmitter's
- * address first, then an apple80211_channel at offset 12. Broadcom fills three
- * more words at 0x1c, 0x20 and 0x24 out of its own event, byte-swapped; what
- * they are is not known, so they are left zero.
- *
- * Two fields in it are not decoration, and between them they are why the
- * family has never built a peer for anything we handed it:
- *
- *   - the frame itself must start at the action body, since isValidAF()
- *     checks mbuf_data()[1..5] for 00 17 f2 08 00 and getTlvPtrForType()
- *     counts TLVs from mbuf_data() + 16. The driver strips the 802.11 header
- *     now; before, the frame control sat where the OUI should be and every
- *     frame was rejected as "BAD OUI in AF".
- *   - the RSSI at 0x2c, as a signed int. determinePeerReachability() returns
- *     "unreachable" for zero whatever else is true, and addAWDLPeer() then
- *     logs "Unable to create peer" and returns nothing. Past that, the
- *     threshold at the peer manager's 0x6e84 is -70 dBm by default.
- *
- * The mbuf stays ours: after its own bpfTapInput() Broadcom hands the packet
- * straight to its free routine, so the family does not take it.
- */
-
-/*
- * A received AWDL data frame on its way to awdl0, which is where a transfer
- * lives. The action frames go to the peer manager through bpfTapInput(); a
- * data frame goes to the interface itself.
- *
- * IO80211VirtualInterface::inputPacket() sets the receive interface from the
- * virtual interface's own ifnet, lets the peer manager look at the frame --
- * it reads the destination and source out of the 802.3 header, which is why
- * the driver builds one -- and pushes it up. The packet becomes the family's
- * either way: it is pushed on or freed inside, and nothing comes back.
- *
- * The packet_info_tag is a structure with no layout in any header here. The
- * family only passes the pointer along and never reads through it on this
- * path, so a zeroed one of generous size is enough and is what is sent.
- */
-
-/*
- * One availability window, reported to the family. See the declaration of
- * rtw89_awdl_report_event() above for where the layout comes from and why a
- * misread field here cannot fault.
- */
 
 bool AirPortRTW89Front::useAppleRSNSupplicant(IO80211Interface *interface)
 {

@@ -71,9 +71,6 @@ struct AirPort_RTW89::NativeState {
     /* OWLY_NATIVE_IDENTITY_BRIDGE_END */
 };
 
-/* The AWDL requests we have seen the family make, by number, so the log reads
- * without apple80211_ioctl.h open beside it. */
-
 /* The first bytes of a buffer, for the log. */
 
 /* True the first time @number is seen. The bitmap covers every request number
@@ -121,33 +118,6 @@ static bool advertiseWPA3()
     return state == 1;
 }
 
-extern "C" bool rtw89_awdl_strip_tlvs;
-extern "C" bool rtw89_awdl_own_mac;
-
-/*
- * Whether the AWDL groundwork is live (boot-arg -rtw89awdl): macOS may create
- * the virtual interface awdl0 on this card, and every request that arrives on
- * it is logged. Off by default; normal Wi-Fi behaves as before either way.
- */
-
-/*
- * Whether AWDL may cost something while nothing wants it (-rtw89awdlalways).
- *
- * The groundwork used to engage the moment macOS created awdl0, which it does
- * early in every boot whether or not AirDrop is ever opened. Two things then
- * ran for the rest of the session: promiscuous receive, which hands the host
- * every frame on the channel from every BSS, and the window schedule with the
- * channel hold under it, which asks for a social channel in exactly the state
- * the machine is in before its first association. Measured on this machine
- * that cost the first join and the throughput after it, which is a bad trade
- * for a feature nobody asked for yet, so both are gated now:
- * awdlClockUpdate() waits for a network to have been joined once, and
- * awdlDeliverUpdate() keeps promiscuous receive off unless the schedule is
- * really running where peers can hear it.
- *
- * This boot-arg puts back the old unconditional behaviour, for comparing the
- * two or for a machine that never joins anything.
- */
 
 struct Scratch {
     void *p;
@@ -999,29 +969,6 @@ int AirPort_RTW89::backRequest(void *ctx, unsigned int type, int number, void *i
 #endif
     return me->nativeRequest(type == SIOCSA80211, number, data);
 }
-
-/*
- * A get or set on a virtual interface (awdl0). Phase 0 of AWDL: note which
- * requests macOS makes, and let the family answer them, so that the work the
- * injected Ventura family already does for AWDL can be told from the work the
- * driver still owes it.
- */
-/*
- * A received AWDL action frame, on its way to IO80211's AWDL engine. Lives
- * here rather than beside the other platform callbacks because NativeState is
- * only declared in AirPortRTW89.cpp, not defined.
- */
-
-/* And a received AWDL data frame, which goes to awdl0 itself rather than to
- * the engine. Here for the same reason as the one above. */
-
-/* An availability window has begun, for the family's own timeline. */
-
-/*
- * What we answer on awdl0. Everything still unanswered returns EOPNOTSUPP, which
- * sends the front to the family; each number is logged once above, and that log
- * is how the next thing to implement is chosen.
- */
 
 /*
  * The BSD ioctl in front of apple80211Request(). The old family unpacks most

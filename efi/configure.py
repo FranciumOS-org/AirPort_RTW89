@@ -8,14 +8,18 @@ install: Kernel -> Add gets, in load order and after Lilu,
     AirPort_RTW89.kext      (the driver)
     AirPort_RTW89.kext/Contents/PlugIns/AirPortRTW89Front.kext
                             (the IO80211 controller, links against the family)
+    AirPort_RTW89.kext/Contents/PlugIns/OwlyAirLinkBridge.kext
+                            (RTLAirLink's Lilu plugin for AirDrop's event client)
+and boot-args gets -owlyeb1 owlyebstage=4, which switch the bridge on,
 and Kernel -> Block gets an entry that keeps Apple's own IOSkywalkFamily out,
 all from Darwin 23 (Sonoma) on. Entries already there are switched on and
 otherwise left alone, so running it twice changes nothing. An entry for the
 front as a kext of its own (AirPortRTW89Front.kext, as early builds had it) is
 switched off: it is inside the driver now.
 
-uninstall: the same entries are switched off (not removed), so the config is
-as before as far as OpenCore is concerned, and install can switch them on.
+uninstall: the same entries are switched off (not removed), and the two
+boot-args taken out again, so the config is as before as far as OpenCore is
+concerned, and install can switch them on.
 
 Nothing else in the file is touched.
 """
@@ -33,7 +37,12 @@ FRONT = 'AirPort_RTW89.kext/Contents/PlugIns/AirPortRTW89Front.kext'
 OURS = [
     ('AirPort_RTW89.kext', 'AirPort_RTW89', 'Wi-Fi: rtw89 driver (AirPort_RTW89)'),
     (FRONT, 'AirPortRTW89Front', 'Wi-Fi: rtw89 front (AirPort_RTW89)'),
+    ('AirPort_RTW89.kext/Contents/PlugIns/OwlyAirLinkBridge.kext', 'OwlyAirLinkBridge',
+     'Wi-Fi: AirDrop event bridge (RTLAirLink, needs Lilu)'),
 ]
+# The bridge does nothing without these (RTLAirLink's opt-in).
+BOOT_ARGS = ['-owlyeb1', 'owlyebstage=4']
+NVRAM_GUID = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
 OLD_FRONT = 'AirPortRTW89Front.kext'     # the front as a kext of its own
 BRCM = 'IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext'
 BLOCK_ID = 'com.apple.iokit.IOSkywalkFamily'
@@ -102,9 +111,28 @@ def install(config, changes):
         })
         changes.append('Kernel -> Block: ' + BLOCK_ID)
 
+    set_boot_args(config, changes, add_them=True)
+
     if secure_boot_model(config) != 'Disabled':
         print('note: Misc -> Security -> SecureBootModel is %r; the old Wi-Fi stack needs '
               'Disabled' % secure_boot_model(config))
+
+
+def set_boot_args(config, changes, add_them):
+    """Add (or take out) BOOT_ARGS in NVRAM -> Add's boot-args, leaving the rest."""
+    nvram = config.get('NVRAM', {}).get('Add', {}).get(NVRAM_GUID)
+    if nvram is None or 'boot-args' not in nvram:
+        if add_them:
+            print('note: no boot-args in NVRAM -> Add -> %s; add %s by hand for AirDrop'
+                  % (NVRAM_GUID, ' '.join(BOOT_ARGS)))
+        return
+    args = str(nvram['boot-args']).split()
+    names = {a.split('=')[0] for a in BOOT_ARGS}
+    kept = [a for a in args if a.split('=')[0] not in names]
+    new = kept + BOOT_ARGS if add_them else kept
+    if new != args:
+        nvram['boot-args'] = ' '.join(new)
+        changes.append('boot-args: ' + nvram['boot-args'])
 
 
 def secure_boot_model(config):
@@ -122,6 +150,7 @@ def uninstall(config, changes):
         if e.get('Identifier') == BLOCK_ID and e.get('Enabled'):
             e['Enabled'] = False
             changes.append('switched off the block of ' + BLOCK_ID)
+    set_boot_args(config, changes, add_them=False)
 
 
 def main():

@@ -2262,6 +2262,22 @@ static void owly_core04c_vif_unregister(struct ieee80211_hw *hw)
 #error "OWLY backend bridge requires channel attachment OFF"
 #endif
 #endif
+/*
+ * Whether this chip can carry AWDL at all. RTLAirLink's AWDL holds its own
+ * channel context and assigns a second vif to it; rtw89 leaves
+ * assign/unassign_vif_chanctx out and emulates channel contexts through
+ * ->config() on chips that have none, or whose firmware lacks scan offload
+ * or beacon filtering (the RTL8851B and RTL8852A always). On those AWDL is
+ * reported as off and awdl0 is refused, rather than half set up.
+ */
+static bool glue_awdl_chip_capable(void)
+{
+    const struct ieee80211_ops *ops = hw_to_local(glue_hw())->ops;
+
+    return ops->add_chanctx && ops->remove_chanctx &&
+           ops->assign_vif_chanctx && ops->unassign_vif_chanctx;
+}
+
 int rtw89_glue_awdl_vif_create(const uint8_t mac[6])
 {
 #if OWLY_BACKEND_REAL_VIF
@@ -2272,6 +2288,7 @@ int rtw89_glue_awdl_vif_create(const uint8_t mac[6])
     for (unsigned int i = 0; i < ETH_ALEN; ++i) nonzero |= mac[i];
     if (!nonzero || (mac[0] & 1u)) return -EINVAL;
     if (!glue.active || !glue.probed) return -ENODEV;
+    if (!glue_awdl_chip_capable()) return -EOPNOTSUPP;
     mutex_lock(&glue.cmd_lock);
     if (!glue.up || !glue.vif) {
         rc = -ENETDOWN;
@@ -2650,7 +2667,7 @@ int rtw89_glue_awdl_radio_status(struct rtw89_glue_awdl_radio_status *out)
 #if defined(OWLY_AWDL_RADIO_SCC) && OWLY_AWDL_RADIO_SCC
     mutex_lock(&glue.cmd_lock);
     wiphy_lock(glue_hw()->wiphy);
-    out->enabled = true;
+    out->enabled = glue_awdl_chip_capable();
     out->vif_registered = owly_core04c_vif != NULL;
     out->channel_bound = owly_radio_is_bound(&owly_radio_state);
     out->blocked = owly_radio_state.blocked;
@@ -4221,50 +4238,10 @@ void rtw89_glue_drop(void)
         rtw89_mlme_connection_lost();
 }
 
-/* The channel the master says it keeps its own windows on, or 0. */
-
-/*
- * Park the radio on a channel for AWDL, or let it go again.
- *
- * Only while nothing is joined: a join takes the radio back and the mlme
- * gives the context up on its way in. Returns 0, or a negative errno; -EBUSY
- * means a network has it, which is the ordinary answer while associated.
- */
-
 /*
  * Whether the self address still disagrees with what @freq asks for, so that
  * the work is queued for the address alone once the channel has settled.
  */
-
-/* awdl0's own address, so the chip can be told to answer to it. */
-
-/*
- * Receiving AWDL means receiving frames addressed to someone else: every one
- * of them carries Apple's BSSID, and a unicast one between two peers is not
- * addressed to us at all. The chip drops those by default -- B_AX_A_A1_MATCH
- * in the receive filter -- which is why, with the clock keeping perfect time
- * on a social channel and nothing competing for the radio, only 11 frames out
- * of 8192 offered to the AWDL path were on the AWDL BSSID. The phase-0 spike
- * heard a dozen peers because it had asked for an unfiltered receive; normal
- * operation never does. configure_filter() was called exactly once, with
- * changed_flags 0, which applies nothing.
- *
- * FIF_OTHER_BSS clears A1_MATCH, and on its own it was not enough: pinned to
- * a social channel with a schedule that held and 19968 frames reaching the
- * AWDL path, 6 were on the AWDL BSSID. Two more bits were still set. AWDL
- * action frames go to broadcast and its data frames to 33:33:.. IPv6
- * multicast, and B_AX_A_BC and B_AX_A_MC throw both away -- which is why
- * rtw89's own scan path clears all three together. So all three flags are
- * asked for here.
- *
- * They go on with AWDL and off again with it. Promiscuous receive costs
- * interrupts and some power, which is reason enough not to leave it on when
- * nothing wants it.
- */
-
-/* From rtw89_awdl.c, on the receive thread. */
-
-/* From rtw89_awdl.c, once per action frame window. */
 
 /* From rtw89_awdl.c as well, with the frame already in 802.3 form. */
 

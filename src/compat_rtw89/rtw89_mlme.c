@@ -3921,46 +3921,7 @@ void rtw89_mlme_set_tx_tap(void (*tap)(const u8 *frame, size_t len))
     mlme.tx_tap = tap;
 }
 
-/*
- * Put a frame the AWDL side built on air as it is.
- *
- * It goes out unencrypted and unprotected whatever the link is doing: an AWDL
- * action frame is addressed to Apple's AWDL address, not to the access point,
- * and is not part of the association, so mlme_tx_mgmt()'s management
- * protection must not touch it.  Everything else is the ordinary path, which
- * means the radio has to be up and on the right channel already -- the caller
- * owns the schedule, this only hands the frame to the chip.
- */
 /* rtw89_core_wrap.c: needs core.c's static link helpers. */
-
-/*
- * The conditions rtw89_mlme_tx_awdl() checks, asked on their own.
- *
- * The schedule starts as soon as awdl0 is up and the template has arrived,
- * which is about half a minute before the radio will carry anything: 257
- * sync frames were built and refused with -ENETDOWN, all of them in the
- * window where AirDrop is first opened and a peer is first looking for us.
- * Waiting is not a failure and should not be counted or logged as one.
- */
-
-/*
- * Hold the radio on one channel for AWDL, with no network joined.
- *
- * AWDL lives on channels 6, 44 and 149 and nowhere else. Until now the radio
- * went where the association put it and the schedule followed: on an access
- * point parked on channel 1 every sync frame went out on 1, 11 of 5120 frames
- * offered to the AWDL path were on the AWDL BSSID, and no peer ever heard
- * this machine. Not everyone can move their access point.
- *
- * One radio still cannot be in two places, so this is the other half of the
- * trade: with no network joined, take a channel context on a social channel
- * and keep it. That is all an association gave the transmit path -- the
- * checks in rtw89_mlme_tx_awdl() are a channel and a link, and the link is
- * there from add_interface() -- so the frames go out exactly as they did,
- * on a channel where there is someone to hear them. A join takes the radio
- * back (mlme_connect() gives this up first), and macOS keeps Wi-Fi scanning
- * and awdl0 up either way.
- */
 
 /* Give it back: the clock stopped, or a network is wanted instead. */
 
