@@ -14,10 +14,19 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "owly_native_config.h"
+#include "owly_native_scan_policy.h"
+#include "owly_awdl_poll_policy.h"
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+#include "owly_native_link.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* A real bound, configured AWDL link with a fresh peer or unicast traffic. */
+bool rtw89_glue_awdl_scan_protect(bool *data_busy);
 
 struct rtw89_glue_platform {
     void *ctx;
@@ -48,6 +57,19 @@ struct rtw89_glue_platform {
      * thread, may sleep; @frame is only valid during the call. */
     void (*rx_frame)(void *ctx, const uint8_t *frame, size_t len);
 
+    /* ABI6 experimental callback boundary. NULL by default. Receives only
+     * syntax-validated AWDL Action metadata or IPv6 payload; callbacks borrow
+     * pointers for the duration of the call, and MUST NOT retain them. These
+     * callbacks are NOT yet bound to IO80211VirtualInterface or awdl0. */
+    bool (*awdl_rx_action)(void *ctx, const uint8_t source[6],
+                           unsigned int subtype, unsigned int social_mask,
+                           const uint8_t *raw_frame, size_t frame_len);
+    /* C3: passive scan-time signature ONLY, no Apple peer authorization and
+     * never consume skb. Receiver copies bytes synchronously and returns false. */
+    bool (*awdl_rx_scan_signature)(void *ctx, const uint8_t source[6],
+                                   const uint8_t *raw_frame, size_t frame_len);
+    bool (*awdl_rx_ipv6)(void *ctx, const uint8_t dst[6],
+                         const uint8_t src[6], const uint8_t *ip6, size_t len);
     /* Optional: rtw89_glue_tx_room() returned zero earlier and there is room
      * again. Called from a driver thread; may call rtw89_glue_tx*(). */
     void (*tx_wake)(void *ctx);
@@ -55,6 +77,14 @@ struct rtw89_glue_platform {
     /* Optional: a scan has ended (or was given up). Called from a driver
      * thread with driver locks held: only the scan result calls are safe. */
     void (*scan_done)(void *ctx, bool aborted);
+
+    /* Keep this shared table's layout independent of feature flags. The
+     * host harness and kernel TUs both copy the entire table, even when the
+     * native consumer is disabled. New callbacks append after old members;
+     * an absent native consumer is represented by NULL, never a smaller ABI. */
+    bool (*native_rx)(void *ctx,uint32_t kind,const uint8_t *bytes,size_t len,
+                      const uint8_t src[6],const uint8_t dst[6],
+                      uint8_t channel,int8_t rssi,uint64_t received_us);
 };
 
 struct rtw89_glue_device {
@@ -81,6 +111,10 @@ struct rtw89_glue_info {
 
 /* True if the driver's id_table has this vendor/device pair. */
 bool rtw89_glue_supports(uint16_t vendor, uint16_t device);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+int rtw89_glue_native_output(const uint8_t *ethernet,size_t len);
+int rtw89_glue_native_window(struct owly_link_window *window);
+#endif
 
 /*
  * Bring the compat runtime up and run the driver's probe(): allocate the hw,
@@ -113,6 +147,60 @@ size_t rtw89_glue_coex_info(char *buf, size_t max);
 int rtw89_glue_up(void);
 void rtw89_glue_down(void);
 bool rtw89_glue_is_up(void);
+
+/* OWLY backend VIF bridge: on-demand second P2P-client hardware VIF.
+ * NOT an AWDL channel scheduler, Skywalk path or BSD awdl0 registration.
+ * All operations serialize on glue.cmd_lock and the wiphy lock internally.
+ * rc = 0 only after the real driver add_interface() succeeds.
+ */
+int rtw89_glue_awdl_vif_create(const uint8_t mac[6]);
+int rtw89_glue_awdl_vif_destroy(void);
+bool rtw89_glue_awdl_vif_present(void);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+int rtw89_glue_awdl_vif_enable(void);
+#endif
+
+/* Internal C-driver/host-test status only. No pointers or packet ownership
+ * cross this API; channel_bound does NOT mean AWDL synchronized or RF TX.
+ * A feature-disabled build returns enabled == false and zero counters. */
+struct rtw89_glue_awdl_radio_status {
+    bool enabled;
+    bool vif_registered;
+    bool channel_bound;
+    bool blocked;
+    uint16_t freq;
+    int last_error;
+    uint32_t attempts;
+    uint32_t binds;
+    uint32_t releases;
+};
+int rtw89_glue_awdl_radio_status(struct rtw89_glue_awdl_radio_status *out);
+
+/* Software PSF engine, serialized with the actual VIF/channel lifecycle.
+ * enabled retains a configured session on the bound VIF across a scan.
+ * active additionally requires an available radio scheduler. */
+struct rtw89_glue_awdl_sync_status {
+    bool built, requested, enabled, scan_paused, active, blocked, has_template;
+    uint8_t channel;
+    uint64_t staged, handed_off, failed, skipped, native_mi_handed_off;
+    uint32_t config_mask, master_channel, sync_role, psf_period_ms, election_id;
+    int32_t peer_rssi;
+    uint64_t rejected_rssi;
+};
+int rtw89_glue_awdl_config(bool set, unsigned number, void *data);
+int rtw89_glue_awdl_ht_capability(void *output, size_t capacity);
+int rtw89_glue_awdl_sync_template(const uint8_t *bytes, size_t length);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+int rtw89_glue_awdl_mi(bool automatic, const uint8_t destination[6],
+                       const uint8_t *bytes, size_t length);
+int rtw89_glue_awdl_vif_disable(void);
+#endif
+int rtw89_glue_awdl_sync_enable(bool enabled);
+int rtw89_glue_awdl_sync_status(struct rtw89_glue_awdl_sync_status *out);
+/* Service readiness requires a bound, permitted channel and a live VIF.
+ * The radio scheduler independently checks whether it can transmit. */
+bool rtw89_glue_awdl_service_ready(void);
+
 
 /*
  * Start a firmware scan over every enabled channel: active (wildcard probe

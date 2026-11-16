@@ -498,7 +498,7 @@ static int __rtw89_ops_sta_add(struct rtw89_dev *rtwdev,
 	int ret;
 	int i;
 
-	if (vif->type == NL80211_IFTYPE_STATION && !sta->tdls) {
+	if (vif->type == NL80211_IFTYPE_STATION && !rtw89_sta_is_direct_peer(sta)) {
 		rtwvif->mlo_mode = RTW89_MLO_MODE_MLSR;
 
 		/* for station mode, assign the mac_id from itself */
@@ -533,7 +533,7 @@ static int __rtw89_ops_sta_add(struct rtw89_dev *rtwdev,
 	if (ret)
 		goto unset_link;
 
-	if (vif->type == NL80211_IFTYPE_AP || sta->tdls)
+	if (vif->type == NL80211_IFTYPE_AP || rtw89_sta_is_direct_peer(sta))
 		rtw89_queue_chanctx_change(rtwdev, RTW89_CHANCTX_REMOTE_STA_CHANGE);
 
 	rtw89_fw_h2c_init_trx_protect(rtwdev);
@@ -541,6 +541,9 @@ static int __rtw89_ops_sta_add(struct rtw89_dev *rtwdev,
 	return 0;
 
 unset_link:
+	if (rtwsta->owly_awdl)
+		rtw89_fw_h2c_role_maintain(rtwdev, rtwvif_link, rtwsta_link,
+					   RTW89_ROLE_REMOVE);
 	rtw89_sta_unset_link(rtwsta, sta->deflink.link_id);
 err:
 	if (acquire_macid)
@@ -650,7 +653,7 @@ static int __rtw89_ops_sta_remove(struct rtw89_dev *rtwdev,
 		rtw89_sta_unset_link(rtwsta, link_id);
 	}
 
-	if (vif->type == NL80211_IFTYPE_AP || sta->tdls) {
+	if (vif->type == NL80211_IFTYPE_AP || rtw89_sta_is_direct_peer(sta)) {
 		rtw89_release_mac_id(rtwdev, macid);
 		rtw89_queue_chanctx_change(rtwdev, RTW89_CHANCTX_REMOTE_STA_CHANGE);
 	}
@@ -950,7 +953,7 @@ static int __rtw89_ops_sta_state(struct ieee80211_hw *hw,
 
 	if (old_state == IEEE80211_STA_AUTH &&
 	    new_state == IEEE80211_STA_ASSOC) {
-		if (vif->type == NL80211_IFTYPE_STATION && !sta->tdls)
+		if (vif->type == NL80211_IFTYPE_STATION && !rtw89_sta_is_direct_peer(sta))
 			return 0; /* defer to bss_info_changed to have vif info */
 		return __rtw89_ops_sta_assoc(rtwdev, vif, sta, false);
 	}

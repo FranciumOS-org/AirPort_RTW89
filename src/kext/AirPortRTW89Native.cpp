@@ -12,6 +12,7 @@
 #include "AirPortRTW89.hpp"
 #include "rtw89_chips.h"
 #include "rtw89_host_assoc.h"
+#include "../rtw89_release.h"
 
 #include <IOKit/80211/apple80211_ioctl.h>
 #include <IOKit/80211/apple80211_var.h>
@@ -21,6 +22,10 @@
 #include <sys/errno.h>
 #include <sys/kpi_mbuf.h>
 #include <sys/systm.h>
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+#include "OwlyAwdlEntitlement.hpp"
+#include <kern/task.h>
+#endif
 
 #define LOG(fmt, ...) IOLog("AirPort_RTW89: " fmt "\n", ##__VA_ARGS__)
 
@@ -32,6 +37,7 @@ struct AirPort_RTW89::NativeState {
     unsigned int scanCursor = 0;
     bool scanInProgress = false;
     bool scanBootstrapTried = false;
+    uint64_t awdlScansDeferred = 0;
     uint64_t lastConnectedScan = 0;     /* uptime (ns) of the last scan while connected */
     uint32_t authLower = APPLE80211_AUTHTYPE_OPEN;
     uint32_t authUpper = APPLE80211_AUTHTYPE_NONE;
@@ -49,6 +55,9 @@ struct AirPort_RTW89::NativeState {
      * form (too long for apple80211_key); wiped once the join has started. */
     uint8_t joinPass[64] = {};
     uint8_t joinPassLen = 0;
+    /* OWLY_NATIVE_IDENTITY_BRIDGE_BEGIN: opaque Apple identity only. */
+    struct rtw89_front_native_vif_state airlink = {};
+    /* OWLY_NATIVE_IDENTITY_BRIDGE_END */
 };
 
 /* ------------------------------------------------------------------ */
@@ -436,6 +445,11 @@ bool AirPort_RTW89::connectFront()
     back.enable = backEnable;
     back.output = backOutput;
     back.power = backPower;
+    back.vif_event = backVifEvent;
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    back.native_output=backNativeOutput;
+    back.native_window=backNativeWindow;
+#endif
 
     _native = true;         /* the callbacks below may come during the call */
     ret = front->callPlatformFunction(name, true, &back, &_ns->front, nullptr, nullptr);
@@ -449,6 +463,18 @@ bool AirPort_RTW89::connectFront()
         return false;
     }
     _front = front;
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    /* No RX callback may enter until both halves of ABI v6 are connected. */
+    IOLockLock(_owlyRxGateLock);
+    _nativeClosing = false;
+    const bool rxGateOpened = owly_abi6_gate_open(&_owlyRxGate);
+    IOLockUnlock(_owlyRxGateLock);
+    if (!rxGateOpened) {
+        LOG("ABI6 RX gate refused open; disconnecting incomplete frontend");
+        disconnectFront();
+        return false;
+    }
+#endif
     _dataReady = true;
     /* macOS decides when to join and when to join again */
     rtw89_glue_set_rejoin(false);
@@ -456,15 +482,141 @@ bool AirPort_RTW89::connectFront()
     return true;
 }
 
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+/* Borrowed radio data is deep-copied and drained before disconnect. P1's
+ * verified frontend owns native RX; older feature modes remain observers. */
+bool AirPort_RTW89::awdlHandoff(uint32_t kind, const uint8_t *raw, size_t len,
+                                const uint8_t src[6], const uint8_t dst[6],
+                                uint8_t channel,int8_t rssi,uint64_t received_us)
+{
+    /* Lock-protected callback admission. _ns may be deleted only AFTER
+     * disconnectFront has CLOSED the gate and drained admitted callbacks.
+     * Never call the frontend while holding this lock: Apple can reenter us.
+     * RX runs on the rtw89 receive thread, not interrupt top half. */
+    bool (*handoff)(void *, const struct owly_abi6_packet *) = nullptr;
+    void *ctx = nullptr;
+    if (!_owlyRxGateLock) return false;
+    IOLockLock(_owlyRxGateLock);
+    if (!_halting && !_asleep && _native && _ns &&
+        _ns->front.owly_rx_handoff && owly_abi6_gate_enter(&_owlyRxGate)) {
+        handoff = _ns->front.owly_rx_handoff;
+        ctx = _ns->front.ctx;
+    }
+    IOLockUnlock(_owlyRxGateLock);
+    if (!handoff) return false;
+
+    bool ok = false;
+    /* Gate B never compiled this branch. In Gate C2, avoid putting a
+     * 1.5KiB packet on the 16KiB kernel RX stack. */
+    if (raw && src && dst && len <= OWLY_ABI6_PACKET_MAX) {
+        struct owly_abi6_packet *packet =
+            static_cast<struct owly_abi6_packet *>(IOMalloc(sizeof(struct owly_abi6_packet)));
+        if (packet) {
+            if (owly_abi6_packet_make(packet, kind, raw, len, src, dst)) {
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+                packet->channel=channel;packet->rssi=rssi;packet->received_us=received_us;
+#else
+                (void)channel;(void)rssi;(void)received_us;
+#endif
+                ok = handoff(ctx, packet);
+            }
+            IOFree(packet, sizeof(struct owly_abi6_packet));
+        }
+    }
+
+    IOLockLock(_owlyRxGateLock);
+    (void)owly_abi6_gate_leave(&_owlyRxGate);
+    IOLockUnlock(_owlyRxGateLock);
+    return ok;
+}
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+bool AirPort_RTW89::nativeRx(void *ctx,uint32_t kind,const uint8_t *raw,size_t len,
+    const uint8_t src[6],const uint8_t dst[6],uint8_t channel,int8_t rssi,uint64_t received_us)
+{
+    return ctx && static_cast<AirPort_RTW89 *>(ctx)->awdlHandoff(kind,raw,len,src,dst,channel,rssi,received_us);
+}
+uint32_t AirPort_RTW89::backNativeOutput(void *ctx,mbuf_t m)
+{
+    auto *self=static_cast<AirPort_RTW89 *>(ctx);
+    if(!m)return kIOReturnOutputDropped;
+    size_t n=mbuf_pkthdr_len(m);int rc=-ENETDOWN;
+    if(self && self->_native && self->_ns && !self->_nativeClosing &&
+       !self->_halting && !self->_asleep && self->_ns->airlink.enabled && n>=14 && n<=2062) {
+        Scratch copied(n);
+        if(copied.p && !mbuf_copydata(m,0,n,copied.p))rc=rtw89_glue_native_output(copied.bytes(),n);
+    }
+    mbuf_freem(m); /* all statuses consume once; bounded queue copies before returning */
+    if(self)self->setProperty("OwlyNativeTXEnqueueResult",static_cast<unsigned long long>(static_cast<uint32_t>(rc)),32);
+    return rc ? kIOReturnOutputDropped : kIOReturnOutputSuccess;
+}
+int AirPort_RTW89::backNativeWindow(void *ctx,struct owly_link_window *out)
+{
+    auto *self=static_cast<AirPort_RTW89 *>(ctx);
+    if(!out)return -EINVAL;
+    bzero(out,sizeof(*out));
+    if(!self || !self->_native || !self->_ns || self->_nativeClosing || self->_halting ||
+       self->_asleep || !self->_ns->airlink.enabled)return -ENETDOWN;
+    return rtw89_glue_native_window(out);
+}
+#endif
+bool AirPort_RTW89::awdlRxAction(void *ctx, const uint8_t src[6],
+                                 unsigned int subtype, unsigned int social_mask,
+                                 const uint8_t *raw, size_t len)
+{
+    (void)subtype; (void)social_mask;
+    /* Address 1 is the 802.11 receiver; packet src came from validated parser. */
+    return static_cast<AirPort_RTW89 *>(ctx)->awdlHandoff(
+        OWLY_ABI6_PACKET_ACTION, raw, len, src, raw ? raw + 4 : nullptr);
+}
+#if defined(OWLY_ABI6_C3_SCAN_OBSERVER) && OWLY_ABI6_C3_SCAN_OBSERVER
+bool AirPort_RTW89::awdlRxScanSignature(void *ctx, const uint8_t src[6],
+                                         const uint8_t *raw, size_t len)
+{
+    if (!ctx || !src || !raw || len < 31u) return false;
+    /* Borrow only; awdlHandoff makes a deep copy and drains on teardown. */
+    return static_cast<AirPort_RTW89 *>(ctx)->awdlHandoff(
+        OWLY_ABI6_PACKET_C3_SCAN_SIGNATURE, raw, len, src, raw+4);
+}
+#endif
+bool AirPort_RTW89::awdlRxIPv6(void *ctx, const uint8_t dst[6],
+                               const uint8_t src[6], const uint8_t *ip6, size_t len)
+{
+    return static_cast<AirPort_RTW89 *>(ctx)->awdlHandoff(
+        OWLY_ABI6_PACKET_IPV6, ip6, len, src, dst);
+}
+#endif
+
 void AirPort_RTW89::disconnectFront()
 {
     const OSSymbol *name;
 
-    if (!_front)
-        return;
-    if (_ns->front.set_apple_rsn)
-        _ns->front.set_apple_rsn(_ns->front.ctx, false);
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    /* Close admission under same lock as enter(), BEFORE _ns can be freed.
+     * Do NOT hold gate during wait: active callback must be able to leave. */
+    if (_owlyRxGateLock) {
+        IOLockLock(_owlyRxGateLock);
+        owly_abi6_gate_close(&_owlyRxGate);
+        _nativeClosing = true;
+        IOLockUnlock(_owlyRxGateLock);
+        unsigned int ms = 0;
+        for (;;) {
+            IOLockLock(_owlyRxGateLock);
+            const bool drained = owly_abi6_gate_drained(&_owlyRxGate);
+            IOLockUnlock(_owlyRxGateLock);
+            if (drained) break;
+            IOSleep(1);
+            if (++ms % 5000 == 0)
+                LOG("ABI6 RX gate draining callbacks (%u ms)", ms);
+        }
+    } else {
+        _nativeClosing = true;
+    }
+#else
     _nativeClosing = true;
+#endif
+    if (!_front) return;
+    if (_ns && _ns->front.set_apple_rsn)
+        _ns->front.set_apple_rsn(_ns->front.ctx, false);
     if (_nativeCall) {
         /* nothing new is queued now; let one that is running finish */
         thread_call_cancel(_nativeCall);
@@ -594,6 +746,71 @@ int AirPort_RTW89::backEnable(void *ctx, bool on)
     return ret;
 }
 
+/* OWLY_NATIVE_IDENTITY_BRIDGE_BEGIN
+ * Fail-closed lifecycle handshake. Callback returns true only if backend
+ * accepted the transition. No Skywalk queue or data path is connected.
+ * The opaque VIF cookie must never be dereferenced here.
+ */
+bool AirPort_RTW89::backVifEvent(void *ctx, void *vif, uint32_t role, uint32_t event,
+                                  const uint8_t request_mac[6])
+{
+    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
+    if (!me || !me->_ns || !vif || role != RTW89_FRONT_ROLE_AIRLINK_OBSERVED ||
+        me->_nativeClosing || me->_halting || me->_asleep)
+        return false;
+    NativeState *ns = me->_ns;
+#if defined(OWLY_AWDL_SERVICE_LIFECYCLE) && OWLY_AWDL_SERVICE_LIFECYCLE
+    if (event == RTW89_FRONT_VIF_SERVICE_READY) {
+        const bool ready = !request_mac && ns->airlink.cookie == vif &&
+            ns->airlink.role == role && rtw89_glue_awdl_service_ready();
+        me->setProperty("OwlyServiceBackendReadyLast", ready);
+        return ready; /* No identity, enabled bit, template or radio mutation. */
+    }
+#endif
+    /* Check the identity transition BEFORE touching the radio. */
+    struct rtw89_front_native_vif_state next = ns->airlink;
+    if (!rtw89_front_native_vif_update(&next, vif, role, event)) {
+        LOG("OWLY backend VIF: identity transition rejected event=%u", (unsigned)event);
+        return false;
+    }
+
+    int rc = 0;
+    if (event == RTW89_FRONT_VIF_CREATED) {
+        /* This is now a hardware transaction, not a cookie-only ACK. */
+        if (!request_mac) return false;
+        rc = rtw89_glue_awdl_vif_create(request_mac);
+    } else if (event == RTW89_FRONT_VIF_ENABLED) {
+        /* An Apple re-enable can prepare a new native sync transaction. */
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        if (!ns->airlink.enabled) rc = rtw89_glue_awdl_vif_enable();
+        else
+#endif
+        if (!rtw89_glue_awdl_vif_present()) rc = -1;
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    } else if (event == RTW89_FRONT_VIF_DISABLED) {
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        rc = rtw89_glue_awdl_vif_disable();
+#else
+        rc = rtw89_glue_awdl_sync_enable(false);
+#endif
+#endif
+    } else if (event == RTW89_FRONT_VIF_DESTROYED) {
+        rc = rtw89_glue_awdl_vif_destroy();
+    }
+    if (rc != 0) {
+        LOG("OWLY backend VIF: hardware transition rejected event=%u rc=%d",
+            (unsigned)event, rc);
+        return false;
+    }
+    ns->airlink = next;
+    if (event == RTW89_FRONT_VIF_CREATED)
+        LOG("OWLY backend VIF: second P2P-client added; no AWDL RF TX or Skywalk");
+    else if (event == RTW89_FRONT_VIF_DESTROYED)
+        LOG("OWLY backend VIF: second P2P-client removed");
+    return true;
+}
+/* OWLY_NATIVE_IDENTITY_BRIDGE_END */
+
 void AirPort_RTW89::backPower(void *ctx, bool on)
 {
     /* sleep and wake: not handled yet */
@@ -636,6 +853,12 @@ int AirPort_RTW89::backRequest(void *ctx, unsigned int type, int number, void *i
         return kIOReturnBadArgument;
     if (!data && number != APPLE80211_IOC_DISASSOCIATE)
         return kIOReturnBadArgument;
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    if (me->_ns && interface && interface==me->_ns->airlink.cookie &&
+        me->_ns->airlink.role==RTW89_FRONT_ROLE_AIRLINK_OBSERVED &&
+        !me->_nativeClosing && !me->_halting && !me->_asleep)
+        return me->nativeAwdlSyncRequest(type==SIOCSA80211,number,data);
+#endif
     return me->nativeRequest(type == SIOCSA80211, number, data);
 }
 
@@ -659,6 +882,11 @@ int AirPort_RTW89::backIoctl(void *ctx, void *interface, void *vif, void *ifnet,
         return 0;
     }
     *handled = true;
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    int awdlResult=0;
+    if (me->nativeAwdlGetEnvelope(interface,vif,cmd,data,&awdlResult))
+        return awdlResult;
+#endif
     if (version_major < 23 || !req || (!isGet && !isSet) || vif || interface != front->interface)
         return front->super_ioctl(front->ctx, interface, vif, ifnet, cmd, data);
 
@@ -1086,23 +1314,29 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         if (_ns->scanInProgress)
             return kIOReturnSuccess;
         _ns->scanCursor = 0;
-        if (link.state != RTW89_GLUE_LINK_DOWN) {
+        bool awdlBusy=false;
+        const bool awdlProtected=rtw89_glue_awdl_scan_protect(&awdlBusy);
+        setProperty("OwlyNativeScanProtected",awdlProtected);
+        setProperty("OwlyNativeScanBusy",awdlBusy);
+        if (link.state != RTW89_GLUE_LINK_DOWN || awdlProtected) {
             /*
-             * Connected: a real scan at most every kConnectedScanGap, the
+             * Connected or real AWDL peer: a real scan at most every kConnectedScanGap, the
              * firmware going back to the access point's channel in between
              * (rtw89's hw_scan with the operating channel, as on Linux).
              * Requests in between, and any while joining, are answered from
              * what has been heard. Without the real ones a network that comes
              * up later (a phone's hotspot) never appeared in the list.
              */
-            const uint64_t kConnectedScanGap = 30ULL * 1000 * 1000 * 1000;
             uint64_t now;
 
             absolutetime_to_nanoseconds(mach_absolute_time(), &now);
-            if (!isConnected(link) ||
-                (_ns->lastConnectedScan && now - _ns->lastConnectedScan < kConnectedScanGap)) {
+            if ((link.state!=RTW89_GLUE_LINK_DOWN && !isConnected(link)) ||
+                owly_native_scan_cached(true,awdlProtected && awdlBusy,now,_ns->lastConnectedScan)) {
                 UInt32 result = 0;
-
+                if(awdlProtected) {
+                    setProperty("OwlyNativeScansDeferred",++_ns->awdlScansDeferred,64);
+                    _ns->scanBootstrapTried=true;
+                }
                 nativePost(APPLE80211_M_SCAN_DONE, &result, sizeof(result));
                 return kIOReturnSuccess;
             }
@@ -1156,6 +1390,17 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
             int ret;
 
             _ns->scanBootstrapTried = true;
+            bool awdlBusy=false;
+            const bool awdlProtected=rtw89_glue_awdl_scan_protect(&awdlBusy);
+            uint64_t now;
+            absolutetime_to_nanoseconds(mach_absolute_time(), &now);
+            if(owly_native_scan_cached(awdlProtected,awdlBusy,now,_ns->lastConnectedScan)) {
+                setProperty("OwlyNativeScanProtected",awdlProtected);
+                setProperty("OwlyNativeScanBusy",awdlBusy);
+                setProperty("OwlyNativeScansDeferred",++_ns->awdlScansDeferred,64);
+                return 5; /* no new results; do not restart RF scan from GET */
+            }
+            if(awdlProtected)_ns->lastConnectedScan=now;
             _ns->scanInProgress = true;
             IOLockLock(_commandLock);
             ret = rtw89_glue_scan();
@@ -1354,6 +1599,17 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         d->op_mode = APPLE80211_M_STA;
         return kIOReturnSuccess;
     }
+    case APPLE80211_IOC_HT_CAPABILITY: {
+        /* Legacy configure needs the complete IE to build its own TLV7.
+         * GET154 used to fall through to Unsupported, leaving HT length 0.
+         */
+        if (isSet) return kIOReturnUnsupported;
+        static_assert(sizeof(apple80211_ht_capability)==32,"Legacy GET154 ABI");
+        const int rc=rtw89_glue_awdl_ht_capability(data,sizeof(apple80211_ht_capability));
+        setProperty("OwlyAWDLHTCapabilityResult",static_cast<unsigned long long>(static_cast<uint32_t>(-rc)),32);
+        if (!rc) setProperty("OwlyAWDLHTCapabilityIE",static_cast<uint8_t *>(data)+4,28);
+        return rc ? -rc : kIOReturnSuccess;
+    }
     case APPLE80211_IOC_PHY_MODE: {
         struct apple80211_phymode_data *d = static_cast<struct apple80211_phymode_data *>(data);
 
@@ -1534,7 +1790,8 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         bzero(d, sizeof(*d));
         d->version = APPLE80211_VERSION;
         if (number == APPLE80211_IOC_DRIVER_VERSION)
-            snprintf(d->string, sizeof(d->string), "%s (AirPort_RTW89 0.5.0)",
+            /* Modified 2026-11-15: System Information Wi-Fi driver label. */
+            snprintf(d->string, sizeof(d->string), "%s (RTLAirLink " RTLAIRLINK_VERSION ")",
                      rtw89_chip_name(_deviceID));
         else
             strlcpy(d->string, rtw89_chip_name(_deviceID), sizeof(d->string));
@@ -1679,4 +1936,191 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
     default:
         return kIOReturnUnsupported;
     }
+}
+
+
+/* Only invoked for this controller's acknowledged role-6 cookie. The family
+ * owns the kernel buffers. No userspace pointer is dereferenced on this path. */
+int AirPort_RTW89::nativeAwdlSyncRequest(bool isSet,int number,void *data)
+{
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    if (!data) return kIOReturnBadArgument;
+    /* GET buffers are output: unlike SET, their prior bytes/version are not
+     * an input contract. The 0.1.6 frontend initialized GET117 itself. */
+    if (isSet) {
+        if (current_task()!=kernel_task) {
+            OwlyEntitlement::Result auth;
+            if (!OwlyEntitlement::authorize(current_task(),auth)) return kIOReturnNotPrivileged;
+        }
+        uint32_t version=0;
+        memcpy(&version,data,sizeof(version));
+        if (version>APPLE80211_VERSION) return kIOReturnBadArgument;
+    }
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    if (isSet && (number==APPLE80211_IOC_AWDL_OOB_AUTO_REQUEST ||
+                  number==APPLE80211_IOC_AWDL_OOB_REQUEST)) {
+        // Legacy4C dispatches this buffer only from the internal peer
+        // manager. Both request numbers have empty BSD SET/GET entries.
+        struct MasterIndicationRequest {
+            uint32_t version;
+            uint8_t destination[6], reserved[10];
+            uint16_t subtype;
+            uint8_t options[18];
+            uint16_t length;
+            uint8_t padding[6];
+            const uint8_t *payload;
+        };
+        static_assert(sizeof(MasterIndicationRequest)==56 &&
+                      offsetof(MasterIndicationRequest,subtype)==20 &&
+                      offsetof(MasterIndicationRequest,length)==40 &&
+                      offsetof(MasterIndicationRequest,payload)==48,
+                      "Legacy AWDL MI callback layout");
+        MasterIndicationRequest request;
+        memcpy(&request,data,sizeof(request));
+        const bool automatic=number==APPLE80211_IOC_AWDL_OOB_AUTO_REQUEST;
+        if (request.subtype!=6 || request.length>OWLY_MI_TEMPLATE_MAX)
+            return kIOReturnBadArgument;
+        int rc;
+        if (automatic && !request.length && !request.payload) {
+            rc=-rtw89_glue_awdl_mi(true,request.destination,nullptr,0);
+        } else {
+            if (!request.length ||
+                reinterpret_cast<uintptr_t>(request.payload)<0xffffff8000000000ULL)
+                return kIOReturnBadArgument;
+            Scratch snapshot(request.length);
+            if (!snapshot.p) return kIOReturnNoMemory;
+            memcpy(snapshot.p,request.payload,request.length);
+            rc=-rtw89_glue_awdl_mi(automatic,request.destination,
+                                  snapshot.bytes(),request.length);
+        }
+        setProperty(automatic ? "OwlyNativeMI225Result" : "OwlyNativeMI149Result",
+                    static_cast<unsigned long long>(rc),32);
+        if (!rc && automatic) setProperty("OwlyNativeMI225Bytes",request.length,32);
+        return rc;
+    }
+#endif
+    if (owly_cfg_known(static_cast<unsigned>(number)) &&
+        (number!=APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE || isSet)) {
+        const int rc=-rtw89_glue_awdl_config(isSet,static_cast<unsigned>(number),data);
+        setProperty("OwlyNativeConfigLastRequest",static_cast<unsigned long long>(number),32);
+        setProperty("OwlyNativeConfigLastType",isSet ? 1ULL : 0ULL,32);
+        setProperty("OwlyNativeConfigLastResult",static_cast<unsigned long long>(static_cast<uint32_t>(rc)),32);
+        if (isSet) {
+            const char *key=number==116 ? "OwlyNativeConfigSET116Result" :
+                number==122 ? "OwlyNativeConfigSET122Result" :
+                number==125 ? "OwlyNativeConfigSET125Result" :
+                number==129 ? "OwlyNativeConfigSET129Result" :
+                number==132 ? "OwlyNativeConfigSET132Result" :
+                number==134 ? "OwlyNativeConfigSET134Result" :
+                number==135 ? "OwlyNativeConfigSET135Result" : "OwlyNativeConfigSET213Result";
+            setProperty(key,static_cast<unsigned long long>(static_cast<uint32_t>(rc)),32);
+            if (number==132) {
+                const auto *channel=static_cast<const owly_cfg_u32 *>(data);
+                setProperty("OwlyNativeConfigRequestedMasterChannel",channel->value,32);
+            }
+        }
+        return rc;
+    }
+    if (number==APPLE80211_IOC_AWDL_SYNC_ENABLED) {
+        static_assert(sizeof(apple80211_awdl_sync_enabled)==12,"GET117 ABI");
+        auto *d=static_cast<apple80211_awdl_sync_enabled *>(data);
+        if (isSet) {
+            if (d->enabled>1) return kIOReturnBadArgument;
+            return (-rtw89_glue_awdl_sync_enable(d->enabled!=0));
+        }
+        struct rtw89_glue_awdl_sync_status st={};
+        int rc=rtw89_glue_awdl_sync_status(&st);
+        if (rc) return -rc;
+        bzero(d,sizeof(*d)); d->version=APPLE80211_VERSION;
+        /* Keep the configured session enabled across a connected scan. */
+        d->enabled=st.enabled ? 1u : 0u;
+        setProperty("OwlySoftwareAWDLEnabled",st.enabled);
+        setProperty("OwlySoftwareAWDLScanPaused",st.scan_paused);
+        setProperty("OwlySoftwareAWDLActive",st.active);
+        setProperty("OwlySoftwareAWDLTemplate",st.has_template);
+        setProperty("OwlySoftwareAWDLRequested",st.requested);
+        setProperty("OwlySoftwareAWDLHandoffs",st.handed_off,64);
+        setProperty("OwlySoftwareAWDLFailures",st.failed,64);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        setProperty("OwlyNativeMIHandoffs",st.native_mi_handed_off,64);
+#endif
+        setProperty("OwlyNativeConfigMask",st.config_mask,32);
+        setProperty("OwlyNativeConfigMasterChannel",st.master_channel,32);
+        setProperty("OwlyNativeConfigSyncRole",st.sync_role,32);
+        setProperty("OwlyNativeConfigPSFPeriodMS",st.psf_period_ms,32);
+        setProperty("OwlyNativeConfigRSSIDrops",st.rejected_rssi,64);
+        return kIOReturnSuccess;
+    }
+    if (number==APPLE80211_IOC_AWDL_SYNC_FRAME_TEMPLATE) {
+        static_assert(sizeof(apple80211_awdl_sync_frame_template)==16,"SET151 ABI");
+        if (!isSet) return kIOReturnUnsupported;
+        auto *d=static_cast<apple80211_awdl_sync_frame_template *>(data);
+        if (!d->payload_len && !d->payload)
+            return (-rtw89_glue_awdl_sync_template(nullptr,0));
+        if (!d->payload || !d->payload_len || d->payload_len>1826)
+            return kIOReturnBadArgument;
+        /* Same trusted in-kernel pointer contract as the Apple family/upstream
+         * template callback. A range check is only an added rejection rule,
+         * never a claim that an arbitrary pointer becomes safe by alignment. */
+        if (reinterpret_cast<uintptr_t>(d->payload)<0xffffff8000000000ULL)
+            return kIOReturnBadArgument;
+        Scratch snapshot(d->payload_len);
+        if (!snapshot.p) return kIOReturnNoMemory;
+        memcpy(snapshot.p,d->payload,d->payload_len);
+        return -rtw89_glue_awdl_sync_template(snapshot.bytes(),d->payload_len);
+    }
+    if (number==APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE) {
+        static_assert(sizeof(owly_cfg_sequence)==400,"GET129 Legacy ABI");
+        struct rtw89_glue_awdl_sync_status st={};
+        int rc=rtw89_glue_awdl_sync_status(&st);
+        if (rc) return -rc;
+        auto *d=static_cast<owly_cfg_sequence *>(data);
+        bzero(d,sizeof(*d)); d->version=APPLE80211_VERSION;
+        /* GET129 reads configuration during startup, before SET117/151.
+         * Match the reference driver's absent-sequence response: versioned,
+         * zeroed output, with no invented slots or implication of RF activity.
+         * GET117 continues to report the actual engine state independently. */
+        if (!st.enabled) return kIOReturnSuccess;
+        owly_config_sequence(d,st.channel);
+        return kIOReturnSuccess;
+    }
+#else
+    (void)isSet; (void)number; (void)data;
+#endif
+    return kIOReturnUnsupported;
+}
+
+/* Bounded BSD output bridge for the two fixed-size GETs. No user input or
+ * embedded pointer is trusted as a kernel pointer. SET/151/service commands
+ * stay with the family's existing control path. No radio state changes. */
+bool AirPort_RTW89::nativeAwdlGetEnvelope(void *interface,void *vif,
+                                        unsigned long cmd,void *data,int *result)
+{
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    if (!result || version_major<23 || cmd!=SIOCGA80211 || !data || !_ns ||
+        !_ns->airlink.cookie || _ns->airlink.role!=RTW89_FRONT_ROLE_AIRLINK_OBSERVED)
+        return false;
+    const bool ours=vif ? vif==_ns->airlink.cookie : interface==_ns->airlink.cookie;
+    if (!ours) return false;
+    auto *req=static_cast<apple80211req *>(data);
+    const uint32_t number=static_cast<uint32_t>(req->req_type);
+    const size_t size=number==APPLE80211_IOC_AWDL_SYNC_ENABLED ? 12u :
+        (number==APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE ? 400u : 0u);
+    if (!size) return false;
+    setProperty("OwlySoftwareAWDLBSDGet",number,32);
+    if (_nativeClosing || _halting || _asleep) { *result=ENXIO; return true; }
+    if (req->req_len!=size) { *result=EINVAL; return true; }
+    const user_addr_t destination=reinterpret_cast<user_addr_t>(req->req_data);
+    if (!destination) { *result=EFAULT; return true; }
+    Scratch output(size);
+    if (!output.p) { *result=ENOMEM; return true; }
+    int rc=errnoOf(nativeAwdlSyncRequest(false,static_cast<int>(number),output.p));
+    if (!rc) rc=copyout(output.p,destination,size);
+    *result=rc;
+    setProperty("OwlySoftwareAWDLBSDResult",static_cast<unsigned long long>(static_cast<uint32_t>(rc)),32);
+    return true;
+#else
+    (void)interface; (void)vif; (void)cmd; (void)data; (void)result;
+    return false;
+#endif
 }

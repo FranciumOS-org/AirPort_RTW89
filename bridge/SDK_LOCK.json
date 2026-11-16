@@ -1,0 +1,6169 @@
+{
+  "repository": "https://github.com/acidanthera/MacKernelSDK.git",
+  "commit": "3f750085caa17ec3a7880f11c11bf4f48cd6a164",
+  "tree": "ef361592c6340fe53560a8aba98619da641ed437",
+  "source_commit_date": "2026-09-23T19:13:31Z",
+  "source": "https://github.com/acidanthera/MacKernelSDK/commit/3f750085caa17ec3a7880f11c11bf4f48cd6a164",
+  "files": {
+    ".gitignore": {
+      "sha": "b5b762d72fff24e582e5472ac0c210c2809996eb",
+      "mode": "100644",
+      "size": 87
+    },
+    "Docs/xcode-config.png": {
+      "sha": "280571886faecca5d94e2324b3ea84c0f5f4ea1f",
+      "mode": "100644",
+      "size": 172190
+    },
+    "Docs/xcode-link.png": {
+      "sha": "12d1e502df7436a72e07e34a3fd7c34bf5d48aeb",
+      "mode": "100644",
+      "size": 64677
+    },
+    "Headers/AppleDSP/OSvKernDSPLib.h": {
+      "sha": "f848113aeb72715e168cfcb2b4bc4bb5a599333c",
+      "mode": "100644",
+      "size": 6634
+    },
+    "Headers/AppleFirmwareKit/AFKEndpointInterface.h": {
+      "sha": "b54d6a2d0984ef20dc256e0e060e82dcad098e52",
+      "mode": "100644",
+      "size": 17129
+    },
+    "Headers/AppleFirmwareKit/AFKEndpointInterface.iig": {
+      "sha": "779f63e7941a0449dbdbfd2794a3c7788d93d02d",
+      "mode": "100644",
+      "size": 9582
+    },
+    "Headers/AppleFirmwareKit/AFKMemoryDescriptorOptions.h": {
+      "sha": "20fd00c4ed7de134e8e088d1716ca0fc3fe5d783",
+      "mode": "100644",
+      "size": 1004
+    },
+    "Headers/AppleFirmwareKit/AFKUserDataPipe.h": {
+      "sha": "1739621bc3f10b851c2ad829f00105ab1912ce4b",
+      "mode": "100644",
+      "size": 26083
+    },
+    "Headers/AppleFirmwareKit/AFKUserDataPipe.iig": {
+      "sha": "350d4d806d60f204374551feed77f3b4d10a9675",
+      "mode": "100644",
+      "size": 6899
+    },
+    "Headers/AppleFirmwareKit/AFKUserMemoryDescriptor.h": {
+      "sha": "9c1c3944a3f37e84e74a7b0d2784bf7dce8fc1ab",
+      "mode": "100644",
+      "size": 6865
+    },
+    "Headers/AppleFirmwareKit/AFKUserMemoryDescriptor.iig": {
+      "sha": "0b4a8ead5345bdf4f1442356271eba029628f394",
+      "mode": "100644",
+      "size": 3094
+    },
+    "Headers/AssertMacros.h": {
+      "sha": "c338a0f9e443e5fef18256a3336269e42fa06752",
+      "mode": "100644",
+      "size": 59503
+    },
+    "Headers/Availability.h": {
+      "sha": "7f02d20ac12bb2e56c6a3526b55ed94c03860875",
+      "mode": "100644",
+      "size": 22502
+    },
+    "Headers/AvailabilityInternal.h": {
+      "sha": "9e0f124ef4fb31bb2ed82354a05fd7ac509a6b80",
+      "mode": "100644",
+      "size": 27899
+    },
+    "Headers/AvailabilityInternalLegacy.h": {
+      "sha": "9226c576293bfbc33711df2fd0d060a0939118a4",
+      "mode": "100644",
+      "size": 414503
+    },
+    "Headers/AvailabilityMacros.h": {
+      "sha": "37fed18a4a2c5a86b0ea1e4991b8325be034064b",
+      "mode": "100644",
+      "size": 210073
+    },
+    "Headers/AvailabilityVersions.h": {
+      "sha": "bdcc3e119861134f10846c62bf973951b0645c7a",
+      "mode": "100644",
+      "size": 25537
+    },
+    "Headers/DriverKit/IOBufferMemoryDescriptor.h": {
+      "sha": "155dbf35fbeb06e02e5d3ace17bf92d4e8a042a9",
+      "mode": "100644",
+      "size": 6146
+    },
+    "Headers/DriverKit/IODMACommand.h": {
+      "sha": "db832faee62c8f5d8b7334f43bc9f877dee80630",
+      "mode": "100644",
+      "size": 11446
+    },
+    "Headers/DriverKit/IODataQueueDispatchSource.h": {
+      "sha": "f356309a6c3010304992ac9cecb1b6fdbbafaa89",
+      "mode": "100644",
+      "size": 17146
+    },
+    "Headers/DriverKit/IODispatchQueue.h": {
+      "sha": "a3ae3ef68aa5792eb4d69c08c12a1fdd7c36fe23",
+      "mode": "100644",
+      "size": 8573
+    },
+    "Headers/DriverKit/IODispatchSource.h": {
+      "sha": "ee9718bfffdadb326eadee1c9e24c880bb71579d",
+      "mode": "100644",
+      "size": 5804
+    },
+    "Headers/DriverKit/IOInterruptDispatchSource.h": {
+      "sha": "92a1c6b3db2ecf2569ea44178c9be4f9a0206539",
+      "mode": "100644",
+      "size": 10651
+    },
+    "Headers/DriverKit/IOKitKeys.h": {
+      "sha": "728e165ef7908bfd13452e64475ca7b3ffbe5658",
+      "mode": "100644",
+      "size": 10742
+    },
+    "Headers/DriverKit/IOMemoryDescriptor.h": {
+      "sha": "c921237e71e93e5f9127c61081f43482724e99fc",
+      "mode": "100644",
+      "size": 8511
+    },
+    "Headers/DriverKit/IOMemoryMap.h": {
+      "sha": "268c70ac4faa6ae953874299e98a434ceed8ec56",
+      "mode": "100644",
+      "size": 4096
+    },
+    "Headers/DriverKit/IORPC.h": {
+      "sha": "bb729c8a062697ad245556bb8ed1f4a729864b0d",
+      "mode": "100644",
+      "size": 3935
+    },
+    "Headers/DriverKit/IOReturn.h": {
+      "sha": "f0c0d2e698e842125cc622fa7df8982878b26f86",
+      "mode": "100644",
+      "size": 8545
+    },
+    "Headers/DriverKit/IOService.h": {
+      "sha": "6b4caaf847a07372208135b967b522c4d44187b5",
+      "mode": "100644",
+      "size": 24642
+    },
+    "Headers/DriverKit/IOServiceNotificationDispatchSource.h": {
+      "sha": "5ad8e0819d9c547aac3c23799a546382bca7fc68",
+      "mode": "100644",
+      "size": 10949
+    },
+    "Headers/DriverKit/IOTypes.h": {
+      "sha": "c3a591c06d8b289d961ed7d9b2f8f7682f49e231",
+      "mode": "100644",
+      "size": 6733
+    },
+    "Headers/DriverKit/IOUserClient.h": {
+      "sha": "d36cb6a8e49b15557872f513372b1ae0c6395c62",
+      "mode": "100644",
+      "size": 16501
+    },
+    "Headers/DriverKit/IOUserServer.h": {
+      "sha": "dbb8ea3fadd46288931e58a6629bc4da9c364f7f",
+      "mode": "100644",
+      "size": 4563
+    },
+    "Headers/DriverKit/OSAction.h": {
+      "sha": "a348bb278569aeacefd0991ded8f04f67c86bd09",
+      "mode": "100644",
+      "size": 10197
+    },
+    "Headers/DriverKit/OSObject.h": {
+      "sha": "31be10b4d0bd67f7b18ed6e3965e739ec6642baa",
+      "mode": "100644",
+      "size": 7419
+    },
+    "Headers/HIDDriverKit/HIDDriverKit.h": {
+      "sha": "63a762fa44b89a0796d57955c30bf864a707586e",
+      "mode": "100644",
+      "size": 2359
+    },
+    "Headers/HIDDriverKit/IOHIDDevice.h": {
+      "sha": "5b92e50a91a56b2ff4cb42dd3fcde04dfeb47549",
+      "mode": "100644",
+      "size": 12989
+    },
+    "Headers/HIDDriverKit/IOHIDDevice.iig": {
+      "sha": "88f91f5169fce3e60f792b351547d12b919d34d4",
+      "mode": "100644",
+      "size": 8536
+    },
+    "Headers/HIDDriverKit/IOHIDDeviceKeys.h": {
+      "sha": "77030c42eeebaa4f3f971424530d8cd4af53baab",
+      "mode": "100644",
+      "size": 5981
+    },
+    "Headers/HIDDriverKit/IOHIDDeviceTypes.h": {
+      "sha": "73cc226609ea834f05e9aaef2896727a7ec87839",
+      "mode": "100644",
+      "size": 8637
+    },
+    "Headers/HIDDriverKit/IOHIDDigitizerCollection.h": {
+      "sha": "56ba50803689b6074298df32029a8c0bfb1512ce",
+      "mode": "100644",
+      "size": 5316
+    },
+    "Headers/HIDDriverKit/IOHIDDigitizerCollection.iig": {
+      "sha": "7d417553818dd1cb3cce9770a1b322b5995a49ce",
+      "mode": "100644",
+      "size": 2641
+    },
+    "Headers/HIDDriverKit/IOHIDDigitizerStructs.h": {
+      "sha": "2b35f0c08b7de83a3bfc20d31b75b5f5fe5de4d3",
+      "mode": "100644",
+      "size": 4822
+    },
+    "Headers/HIDDriverKit/IOHIDElement.h": {
+      "sha": "af411bef98eb295291290ef4c45b402c253599a9",
+      "mode": "100644",
+      "size": 10355
+    },
+    "Headers/HIDDriverKit/IOHIDElement.iig": {
+      "sha": "625ea64f09a26a575375dcdcf53786ee53fc7d4a",
+      "mode": "100644",
+      "size": 7530
+    },
+    "Headers/HIDDriverKit/IOHIDEventService.h": {
+      "sha": "17fa87061267843bb71f2c20ce8aa8a2311c9a9a",
+      "mode": "100644",
+      "size": 19136
+    },
+    "Headers/HIDDriverKit/IOHIDEventService.iig": {
+      "sha": "71f9e9c1e1b6f445294c46ada8b02a0045e43599",
+      "mode": "100644",
+      "size": 10649
+    },
+    "Headers/HIDDriverKit/IOHIDEventServiceKeys.h": {
+      "sha": "595c4586d974a932b7bfcafeb4ae4e8acbaa69f8",
+      "mode": "100644",
+      "size": 4239
+    },
+    "Headers/HIDDriverKit/IOHIDEventServiceTypes.h": {
+      "sha": "94d7ed998f5d4ecc52e3c4fec3d959f5c3edb69c",
+      "mode": "100644",
+      "size": 2558
+    },
+    "Headers/HIDDriverKit/IOHIDInterface.h": {
+      "sha": "40a403abdaf2c0b2e360c801e15b364dfddba2a3",
+      "mode": "100644",
+      "size": 18195
+    },
+    "Headers/HIDDriverKit/IOHIDInterface.iig": {
+      "sha": "245e8f6b8721fe916675f1b4b089971798ba5225",
+      "mode": "100644",
+      "size": 9263
+    },
+    "Headers/HIDDriverKit/IOHIDUsageTables.h": {
+      "sha": "77db9966e8650a7b5b62589322cbd86daebb635c",
+      "mode": "100644",
+      "size": 171632
+    },
+    "Headers/HIDDriverKit/IOUserHIDDevice.h": {
+      "sha": "b93f90b008184c427fa9dbec1715e30fc6463eaf",
+      "mode": "100644",
+      "size": 6179
+    },
+    "Headers/HIDDriverKit/IOUserHIDDevice.iig": {
+      "sha": "9b8dcbeb32c53c56ce51672a49c42fca65609aad",
+      "mode": "100644",
+      "size": 3824
+    },
+    "Headers/HIDDriverKit/IOUserHIDEventDriver.h": {
+      "sha": "3b1d513a6306ea70d66b7b90c22f11d488680f16",
+      "mode": "100644",
+      "size": 14095
+    },
+    "Headers/HIDDriverKit/IOUserHIDEventDriver.iig": {
+      "sha": "addd64d684bfc07f887bf036af9e430a1f281403",
+      "mode": "100644",
+      "size": 9145
+    },
+    "Headers/HIDDriverKit/IOUserHIDEventService.h": {
+      "sha": "b8863e29af9c53eaab8a870029d98f3f69339391",
+      "mode": "100644",
+      "size": 11450
+    },
+    "Headers/HIDDriverKit/IOUserHIDEventService.iig": {
+      "sha": "57b641f3fb17352ec0d1cbf5286c4a77a5bf2ab0",
+      "mode": "100644",
+      "size": 7248
+    },
+    "Headers/HIDDriverKit/IOUserUSBHostHIDDevice.h": {
+      "sha": "7260276cc81e4cc715519be3c695773057f58f1f",
+      "mode": "100644",
+      "size": 19478
+    },
+    "Headers/HIDDriverKit/IOUserUSBHostHIDDevice.iig": {
+      "sha": "df5e50306773a442a68ce2b6cae98bb5398ed92f",
+      "mode": "100644",
+      "size": 13199
+    },
+    "Headers/IOKit/80211/Apple80211.h": {
+      "sha": "f29a8152a0cfd06205181793297dc7735ec6ba10",
+      "mode": "100644",
+      "size": 581
+    },
+    "Headers/IOKit/80211/IO80211Controller.h": {
+      "sha": "5a8906cb109a6c32f437e46aaedf97b6ff486023",
+      "mode": "100644",
+      "size": 15300
+    },
+    "Headers/IOKit/80211/IO80211Interface.h": {
+      "sha": "e2ab249243aaa6355c98b16e98053de9ab438638",
+      "mode": "100644",
+      "size": 5400
+    },
+    "Headers/IOKit/80211/IO80211P2PInterface.h": {
+      "sha": "fbf71c2d9477c7076e5daf6690bd26fb41490fd8",
+      "mode": "100644",
+      "size": 5149
+    },
+    "Headers/IOKit/80211/IO80211SkywalkInterface.h": {
+      "sha": "82dc191efdc164d9d875db9dc6fece4b055ad8b1",
+      "mode": "100644",
+      "size": 640
+    },
+    "Headers/IOKit/80211/IO80211VirtualInterface.h": {
+      "sha": "f405498aee2cb05a8a55ad2df4a2eefbeb7c6fbc",
+      "mode": "100644",
+      "size": 5038
+    },
+    "Headers/IOKit/80211/IO80211VirtualInterfaceNamer.h": {
+      "sha": "4327a55a1b29771786fccf7982114157934923b0",
+      "mode": "100644",
+      "size": 2725
+    },
+    "Headers/IOKit/80211/IO80211WorkLoop.h": {
+      "sha": "bf33bfd77998e1a5e1ac41cb86cd8feb0fc99563",
+      "mode": "100644",
+      "size": 975
+    },
+    "Headers/IOKit/80211/IOSkywalkEthernetInterface.h": {
+      "sha": "6670ff6d299fd516db1000408dba297f6512ddec",
+      "mode": "100644",
+      "size": 306
+    },
+    "Headers/IOKit/80211/apple80211_ioctl.h": {
+      "sha": "55fb45058cbba056624e26118989d6b25c34401a",
+      "mode": "100644",
+      "size": 28716
+    },
+    "Headers/IOKit/80211/apple80211_var.h": {
+      "sha": "186760b2b2511ec6e661b51248cb3bc4645570dd",
+      "mode": "100644",
+      "size": 27256
+    },
+    "Headers/IOKit/80211/apple80211_wps.h": {
+      "sha": "0204b14424aeb92f38a511be5dc0d2c2bcdd3537",
+      "mode": "100644",
+      "size": 22660
+    },
+    "Headers/IOKit/80211/apple_private_spi.h": {
+      "sha": "a644de63323c3586119af6ab45866cf567bf5d6e",
+      "mode": "100644",
+      "size": 2633
+    },
+    "Headers/IOKit/80211/debug.h": {
+      "sha": "80937044c50c99c84f2bd58bc9b544b8b0693285",
+      "mode": "100644",
+      "size": 6603
+    },
+    "Headers/IOKit/IOBSD.h": {
+      "sha": "1359f4b4de0956219b9e849167e0078b47eda06b",
+      "mode": "100644",
+      "size": 1791
+    },
+    "Headers/IOKit/IOBufferMemoryDescriptor.h": {
+      "sha": "e95644d29447dec08ccdb87fc843b5c62798e8b5",
+      "mode": "100644",
+      "size": 15668
+    },
+    "Headers/IOKit/IOCatalogue.h": {
+      "sha": "55035bc8d85fc8a0282e2230e817315adf53c8d1",
+      "mode": "100644",
+      "size": 10238
+    },
+    "Headers/IOKit/IOCommand.h": {
+      "sha": "6cfd848c99dca887593c49facf9a813b4ab9cd1d",
+      "mode": "100644",
+      "size": 2845
+    },
+    "Headers/IOKit/IOCommandGate.h": {
+      "sha": "2a1d2f287816dd64c73ba8f0bd7dad247a553b1b",
+      "mode": "100644",
+      "size": 14574
+    },
+    "Headers/IOKit/IOCommandPool.h": {
+      "sha": "ee30bb44ea7d634a6fd979f577a29074fe0254a5",
+      "mode": "100644",
+      "size": 7608
+    },
+    "Headers/IOKit/IOConditionLock.h": {
+      "sha": "52dd502d037690fe9a9d406c9d8c3f09570779b6",
+      "mode": "100644",
+      "size": 2695
+    },
+    "Headers/IOKit/IODMACommand.h": {
+      "sha": "2188f95770a0afa4ed11e20b7ffa8b4aaa6e6f1e",
+      "mode": "100644",
+      "size": 37601
+    },
+    "Headers/IOKit/IODMAController.h": {
+      "sha": "2d8682cc20ee8912e5902383c414b05ce9c0eadb",
+      "mode": "100644",
+      "size": 3321
+    },
+    "Headers/IOKit/IODMAEventSource.h": {
+      "sha": "5b26e08b70baf30509a5dc524af4c5ecc54175a8",
+      "mode": "100644",
+      "size": 3573
+    },
+    "Headers/IOKit/IODataQueue.h": {
+      "sha": "c16d03fa2f089ba282312c9f1ea1805b6ddf5ce7",
+      "mode": "100644",
+      "size": 9618
+    },
+    "Headers/IOKit/IODataQueueShared.h": {
+      "sha": "0e8c7b40701a5689e42f85f1a238a81042e71be2",
+      "mode": "100644",
+      "size": 5035
+    },
+    "Headers/IOKit/IODeviceMemory.h": {
+      "sha": "dadc043b03dea684469d04e9d79a0ef5fba2fe35",
+      "mode": "100644",
+      "size": 4808
+    },
+    "Headers/IOKit/IODeviceTreeSupport.h": {
+      "sha": "105b86be09e8f627b35874d5a3c201e693be30cf",
+      "mode": "100644",
+      "size": 4258
+    },
+    "Headers/IOKit/IOEventSource.h": {
+      "sha": "c57fbfbb2a8b35f4152bc4259eb7b766d2e19cf5",
+      "mode": "100644",
+      "size": 11627
+    },
+    "Headers/IOKit/IOFilterInterruptEventSource.h": {
+      "sha": "2719cc1fd107b1fb4f76e185d2144d93c64b3937",
+      "mode": "100644",
+      "size": 9342
+    },
+    "Headers/IOKit/IOInterleavedMemoryDescriptor.h": {
+      "sha": "5221ab19f3a2bed6cb5a6ab8d5d604bd21c62b1a",
+      "mode": "100644",
+      "size": 7959
+    },
+    "Headers/IOKit/IOInterruptController.h": {
+      "sha": "53bdcf529dd3430932db8e52cb56782b30af6d3d",
+      "mode": "100644",
+      "size": 6169
+    },
+    "Headers/IOKit/IOInterruptEventSource.h": {
+      "sha": "d18d41efa50d500dd569e7d9745a74a47b1384a9",
+      "mode": "100644",
+      "size": 14086
+    },
+    "Headers/IOKit/IOInterrupts.h": {
+      "sha": "86e737d82bc89e298b016725647495267f3f3242",
+      "mode": "100644",
+      "size": 1954
+    },
+    "Headers/IOKit/IOKernelReportStructs.h": {
+      "sha": "162ac5565b2304bcac8dfe31717c91881d830cc0",
+      "mode": "100644",
+      "size": 3763
+    },
+    "Headers/IOKit/IOKitDebug.h": {
+      "sha": "082d1b2a0eb8b74ddc7193a3424e978f860f6981",
+      "mode": "100644",
+      "size": 7052
+    },
+    "Headers/IOKit/IOKitDiagnosticsUserClient.h": {
+      "sha": "f78c45cc1c6a7bc3f3d8ab6aee46e460a3d095eb",
+      "mode": "100644",
+      "size": 630
+    },
+    "Headers/IOKit/IOKitKeys.h": {
+      "sha": "3b5c96b8c11d225f2abf6e2daf7a0c6d6dd0312e",
+      "mode": "100644",
+      "size": 10262
+    },
+    "Headers/IOKit/IOKitServer.h": {
+      "sha": "4b12abf6608cc4ea31429d156d392098b848cc05",
+      "mode": "100644",
+      "size": 4385
+    },
+    "Headers/IOKit/IOLib.h": {
+      "sha": "9775c1ddb9204713ab04408f271c372836fa2979",
+      "mode": "100644",
+      "size": 21869
+    },
+    "Headers/IOKit/IOLocks.h": {
+      "sha": "aa4951e1ce7ca345aae7b0eaf012b464710a813a",
+      "mode": "100644",
+      "size": 18629
+    },
+    "Headers/IOKit/IOMapper.h": {
+      "sha": "c44c0a65a7bb0b8e4a89cd7b590067543cbf296b",
+      "mode": "100644",
+      "size": 4733
+    },
+    "Headers/IOKit/IOMemoryCursor.h": {
+      "sha": "3b81e6d3de7d00c7b468d68ea78936ae0061a533",
+      "mode": "100644",
+      "size": 21301
+    },
+    "Headers/IOKit/IOMemoryDescriptor.h": {
+      "sha": "8f92bd26e134b98dd38c695c10e1329c0235c52d",
+      "mode": "100644",
+      "size": 52757
+    },
+    "Headers/IOKit/IOMessage.h": {
+      "sha": "cdd53930aad71171c41e894f681e6b318a1010ff",
+      "mode": "100644",
+      "size": 9462
+    },
+    "Headers/IOKit/IOMultiMemoryDescriptor.h": {
+      "sha": "f7ede4a1b6f5e7136685c17521b308a035b5d87c",
+      "mode": "100644",
+      "size": 8004
+    },
+    "Headers/IOKit/IONVRAM.h": {
+      "sha": "ef2e533e8ba6c9a02beba7a3c2e17da9b5c1c0eb",
+      "mode": "100644",
+      "size": 6776
+    },
+    "Headers/IOKit/IONotifier.h": {
+      "sha": "3324fc7f555d654ba5439e210325358e11925b01",
+      "mode": "100644",
+      "size": 3244
+    },
+    "Headers/IOKit/IOPlatformExpert.h": {
+      "sha": "9fdfd87d43644bdc324b8b824778d9268737db64",
+      "mode": "100644",
+      "size": 14598
+    },
+    "Headers/IOKit/IORPC.h": {
+      "sha": "bb729c8a062697ad245556bb8ed1f4a729864b0d",
+      "mode": "100644",
+      "size": 3935
+    },
+    "Headers/IOKit/IORangeAllocator.h": {
+      "sha": "e7b0472dc2235c504e11ea431d1193fa9fd2637a",
+      "mode": "100644",
+      "size": 8478
+    },
+    "Headers/IOKit/IORegistryEntry.h": {
+      "sha": "a590e92945df7c4b3e15e34e6240a22ee7322553",
+      "mode": "100644",
+      "size": 65576
+    },
+    "Headers/IOKit/IOReportHub.h": {
+      "sha": "7cbbd5bab460b8af46cc911d7bec138688c54605",
+      "mode": "100644",
+      "size": 2344
+    },
+    "Headers/IOKit/IOReportMacros.h": {
+      "sha": "db8e8aed97179bf123601cf60d0878e7a7ed295c",
+      "mode": "100644",
+      "size": 24917
+    },
+    "Headers/IOKit/IOReportTypes.h": {
+      "sha": "dd81759a416ba5cc3b5f6b79f843554765053c22",
+      "mode": "100644",
+      "size": 17208
+    },
+    "Headers/IOKit/IOReportUserClient.h": {
+      "sha": "5aca2810ee81c2db2b24dfc3ec2108bb78157e14",
+      "mode": "100644",
+      "size": 3595
+    },
+    "Headers/IOKit/IOReturn.h": {
+      "sha": "f0c0d2e698e842125cc622fa7df8982878b26f86",
+      "mode": "100644",
+      "size": 8545
+    },
+    "Headers/IOKit/IOSMBusController.h": {
+      "sha": "814c73fab372ef552605616e290dcab215a3024b",
+      "mode": "100644",
+      "size": 9579
+    },
+    "Headers/IOKit/IOService.h": {
+      "sha": "00d4ceef150460e4f6db68f47a35eb62ed118188",
+      "mode": "100644",
+      "size": 135715
+    },
+    "Headers/IOKit/IOServicePM.h": {
+      "sha": "e4a928fa627752dd1544c6200ea4c9426c20424c",
+      "mode": "100644",
+      "size": 1604
+    },
+    "Headers/IOKit/IOSharedDataQueue.h": {
+      "sha": "f4cd156d54aa9865367b28d30d9646ec6988fb05",
+      "mode": "100644",
+      "size": 10593
+    },
+    "Headers/IOKit/IOSharedLock.h": {
+      "sha": "306b40698e1bce63d0e506f5426ad77d84cec74d",
+      "mode": "100644",
+      "size": 1272
+    },
+    "Headers/IOKit/IOSubMemoryDescriptor.h": {
+      "sha": "42b10d913c413c1651a78837e4ab4c69df1b5d96",
+      "mode": "100644",
+      "size": 5474
+    },
+    "Headers/IOKit/IOTimeStamp.h": {
+      "sha": "95d08197efe44623d84e25f7f5ab4541f12ef166",
+      "mode": "100644",
+      "size": 9042
+    },
+    "Headers/IOKit/IOTimerEventSource.h": {
+      "sha": "e4dddac6216be75e80b5be17a2ffb42e3fb3bca7",
+      "mode": "100644",
+      "size": 16437
+    },
+    "Headers/IOKit/IOTypes.h": {
+      "sha": "22f8942fe75aef73c51382ad66e4a67465a49b05",
+      "mode": "100644",
+      "size": 7000
+    },
+    "Headers/IOKit/IOUserClient.h": {
+      "sha": "4deedeaa7acc6142b608cb505d10ff44f912dc30",
+      "mode": "100644",
+      "size": 15042
+    },
+    "Headers/IOKit/IOUserServer.h": {
+      "sha": "66003dbe48af37b8ab47e4a1c97ed484653d726e",
+      "mode": "100644",
+      "size": 3131
+    },
+    "Headers/IOKit/IOWorkLoop.h": {
+      "sha": "f0dd49be736a0a56e004395185bfda95ffffa20c",
+      "mode": "100644",
+      "size": 16581
+    },
+    "Headers/IOKit/OSMessageNotification.h": {
+      "sha": "42f1bc85a38dbdfe4a1bb357d060cbc9aaa9ef30",
+      "mode": "100644",
+      "size": 4502
+    },
+    "Headers/IOKit/acpi/IOACPIPlatformDevice.h": {
+      "sha": "b521a303608afa8816e75edd1950344a11cb00a4",
+      "mode": "100644",
+      "size": 11201
+    },
+    "Headers/IOKit/acpi/IOACPIPlatformExpert.h": {
+      "sha": "3abbb39622d1f94f4ac98011b242889d325700f0",
+      "mode": "100644",
+      "size": 8303
+    },
+    "Headers/IOKit/acpi/IOACPITypes.h": {
+      "sha": "4e36211819f019cb88e651eaa1118c329c833a20",
+      "mode": "100644",
+      "size": 3844
+    },
+    "Headers/IOKit/assert.h": {
+      "sha": "cb021298b7fb32a491bc6b71bf09bc801d3f2c13",
+      "mode": "100644",
+      "size": 1742
+    },
+    "Headers/IOKit/ata/ATADeviceNub.h": {
+      "sha": "db141823e624423fce4a6a8f00f7ebaf31142328",
+      "mode": "100644",
+      "size": 5078
+    },
+    "Headers/IOKit/ata/ATATimerEventSource.h": {
+      "sha": "c6afe3645c6adcbf43e5a5e2013e780c5f161631",
+      "mode": "100644",
+      "size": 3657
+    },
+    "Headers/IOKit/ata/IOATABusCommand.h": {
+      "sha": "94b3bca023cbeac083aa850ee99e8be443c9bc58",
+      "mode": "100644",
+      "size": 7227
+    },
+    "Headers/IOKit/ata/IOATABusInfo.h": {
+      "sha": "6faec4c116d7f4fc87243f9d7caf248e63efc8b6",
+      "mode": "100644",
+      "size": 7681
+    },
+    "Headers/IOKit/ata/IOATACommand.h": {
+      "sha": "773f28ae53868a334d8faebb647b001a56e89e8f",
+      "mode": "100644",
+      "size": 16721
+    },
+    "Headers/IOKit/ata/IOATAController.h": {
+      "sha": "375894139f9a2d271eae9197a68c3412d070a48e",
+      "mode": "100644",
+      "size": 11231
+    },
+    "Headers/IOKit/ata/IOATADevConfig.h": {
+      "sha": "e5714c3a5355e56bd237840de296af5ff1137fec",
+      "mode": "100644",
+      "size": 10275
+    },
+    "Headers/IOKit/ata/IOATADevice.h": {
+      "sha": "78be513dc9309f5d669779849808c7ce353d5668",
+      "mode": "100644",
+      "size": 6983
+    },
+    "Headers/IOKit/ata/IOATARegI386.h": {
+      "sha": "73016ba81b372475d445ea1eec08ab9a3d5c833e",
+      "mode": "100644",
+      "size": 2919
+    },
+    "Headers/IOKit/ata/IOATATypes.h": {
+      "sha": "a3be9dcdb2a60c25f9f2d2b54a009ceef176b83e",
+      "mode": "100644",
+      "size": 16274
+    },
+    "Headers/IOKit/ata/IOPCIATA.h": {
+      "sha": "62067b2166b5b2564be604ae3c37571ac9103e21",
+      "mode": "100644",
+      "size": 6306
+    },
+    "Headers/IOKit/audio/BigNum128.h": {
+      "sha": "ebeaba9813463fd7fe3ed17c8a079762ebe91bf7",
+      "mode": "100644",
+      "size": 2956
+    },
+    "Headers/IOKit/audio/IOAudioBlitterLibDispatch.h": {
+      "sha": "08293e273d86751f110c13c89458105166e05eec",
+      "mode": "100644",
+      "size": 9721
+    },
+    "Headers/IOKit/audio/IOAudioControl.h": {
+      "sha": "3063cfc9f28c5ac5dbe00a7f49c2f804a4987503",
+      "mode": "100644",
+      "size": 34120
+    },
+    "Headers/IOKit/audio/IOAudioControlUserClient.h": {
+      "sha": "c4afaf8975c6b79f84e3cd6897a2f47ea12a4750",
+      "mode": "100644",
+      "size": 4450
+    },
+    "Headers/IOKit/audio/IOAudioDebug.h": {
+      "sha": "e9a728c8e88eec141ce8622bd75b8e296cd4106c",
+      "mode": "100644",
+      "size": 2778
+    },
+    "Headers/IOKit/audio/IOAudioDefines.h": {
+      "sha": "0f8f617029b524a2fcd7f98a7080e271417e01a1",
+      "mode": "100644",
+      "size": 18759
+    },
+    "Headers/IOKit/audio/IOAudioDevice.h": {
+      "sha": "8e73e5b7d441eafeedf5977b8203a64784a3c5e6",
+      "mode": "100644",
+      "size": 45790
+    },
+    "Headers/IOKit/audio/IOAudioEngine.h": {
+      "sha": "29015ce6e311f05c620a572d20903a23e1f2c572",
+      "mode": "100644",
+      "size": 53328
+    },
+    "Headers/IOKit/audio/IOAudioEngineUserClient.h": {
+      "sha": "e8a80ef542d173e3baef3e8ec588f8cdcfc75fd8",
+      "mode": "100644",
+      "size": 18707
+    },
+    "Headers/IOKit/audio/IOAudioLevelControl.h": {
+      "sha": "2209594e6d27ee455db5b266d76bc81d0f7792e1",
+      "mode": "100644",
+      "size": 10398
+    },
+    "Headers/IOKit/audio/IOAudioPort.h": {
+      "sha": "a8be7ac68536b87a910de98ad9eb38c794a44814",
+      "mode": "100644",
+      "size": 9749
+    },
+    "Headers/IOKit/audio/IOAudioSelectorControl.h": {
+      "sha": "94f553fb4a43bb2288ce73835177459990697dca",
+      "mode": "100644",
+      "size": 6961
+    },
+    "Headers/IOKit/audio/IOAudioStream.h": {
+      "sha": "aa2fd9ba588d1fb2b441e554350f2a3c37b84e66",
+      "mode": "100644",
+      "size": 18974
+    },
+    "Headers/IOKit/audio/IOAudioTimeIntervalFilter.h": {
+      "sha": "4f2e045066976824574c34645cd1d2af1b99d764",
+      "mode": "100644",
+      "size": 9920
+    },
+    "Headers/IOKit/audio/IOAudioToggleControl.h": {
+      "sha": "a84001319711216b95a52a93b2d43076922f8cfd",
+      "mode": "100644",
+      "size": 5834
+    },
+    "Headers/IOKit/audio/IOAudioTypes.h": {
+      "sha": "bf60ddbc1aa971265b51fc0ad77907ac90ac6fbc",
+      "mode": "100644",
+      "size": 25576
+    },
+    "Headers/IOKit/avc/IOFireWireAVCCommand.h": {
+      "sha": "ff9850de3f96404089e974e343b24f5d6d366ae3",
+      "mode": "100644",
+      "size": 3554
+    },
+    "Headers/IOKit/avc/IOFireWireAVCConsts.h": {
+      "sha": "ae7a12c8bcae3953056fc45533600269ec741605",
+      "mode": "100644",
+      "size": 7791
+    },
+    "Headers/IOKit/avc/IOFireWireAVCRequestSpace.h": {
+      "sha": "c02797f39917a8ae69b4dc83d92a5d373bdacd3f",
+      "mode": "100644",
+      "size": 1163
+    },
+    "Headers/IOKit/avc/IOFireWireAVCTargetSpace.h": {
+      "sha": "4f3cdb0a16d1442c09fe810b0b484249532c4c6a",
+      "mode": "100644",
+      "size": 9970
+    },
+    "Headers/IOKit/avc/IOFireWireAVCUnit.h": {
+      "sha": "0abf1cdf93128bb61d8035be2fc5c164028ff7cc",
+      "mode": "100644",
+      "size": 15014
+    },
+    "Headers/IOKit/avc/IOFireWireAVCUserClientCommon.h": {
+      "sha": "cecf8124ddab0009dcb8f6b6aeaf15bc4f13d65b",
+      "mode": "100644",
+      "size": 5535
+    },
+    "Headers/IOKit/avc/IOFireWirePCRSpace.h": {
+      "sha": "9f31176a3bd209850e6fdee4043c402679639f96",
+      "mode": "100644",
+      "size": 7349
+    },
+    "Headers/IOKit/battery/AppleSmartBatteryCommands.h": {
+      "sha": "83e453503bc80f2bd8915e987aed74b5d6fea6e0",
+      "mode": "100644",
+      "size": 6492
+    },
+    "Headers/IOKit/bluetooth/AppleCSRBluetoothHostController.h": {
+      "sha": "b436588cdf4536a5d1161e9f4a07f885d82b7afa",
+      "mode": "100644",
+      "size": 4504
+    },
+    "Headers/IOKit/bluetooth/Bluetooth.h": {
+      "sha": "ae31787671c1904fe3d475069c76ff049f08415c",
+      "mode": "100644",
+      "size": 126611
+    },
+    "Headers/IOKit/bluetooth/BluetoothAssignedNumbers.h": {
+      "sha": "0b0778f280733788decb7522dc8a584d08983ceb",
+      "mode": "100644",
+      "size": 56584
+    },
+    "Headers/IOKit/bluetooth/CSRBluetoothHostController.h": {
+      "sha": "63724318e67175dbaec344bc8573aece8e30b831",
+      "mode": "100644",
+      "size": 4944
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothACPIMethods.h": {
+      "sha": "b3e81dae4522e83298e43386d092146e00ba86f1",
+      "mode": "100644",
+      "size": 5093
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothDataQueue.h": {
+      "sha": "4623523c4e5ba65ed40df2c9ea9762c9b0c4d3e7",
+      "mode": "100644",
+      "size": 3819
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothHCIController.h": {
+      "sha": "ce54ddecc5d4e7955ff165183b5beb6660fa379a",
+      "mode": "100644",
+      "size": 25768
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothHCIRequest.h": {
+      "sha": "d39114179ed56f2270c2f167fea8723779a9438c",
+      "mode": "100644",
+      "size": 9336
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothHIDDriver.h": {
+      "sha": "b27f7fa587ce04fd67f7c0da97f8b7d6b031b2ae",
+      "mode": "100644",
+      "size": 11533
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothHIDDriverTypes.h": {
+      "sha": "43f5f482b4f21323e61a0ee3809aa9d666c6403d",
+      "mode": "100644",
+      "size": 3191
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothHostController.h": {
+      "sha": "ee94d0a97df48e38b5a7c0e38be2b54d5c9a6c7c",
+      "mode": "100644",
+      "size": 78185
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothInactivityTimerEventSource.h": {
+      "sha": "3b57af39320623b53f8a8337d77ae55ed9929dab",
+      "mode": "100644",
+      "size": 4227
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothInternal.h": {
+      "sha": "51a6ae3b88680d0ec8f6d24d8d04560fa82cfcca",
+      "mode": "100644",
+      "size": 7842
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothMemoryBlock.h": {
+      "sha": "40715b95a1de3f166d624eaecbb3b71f18e337e9",
+      "mode": "100644",
+      "size": 13319
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothMemoryBlockQueue.h": {
+      "sha": "651d2894ea9672a493d0ee9f3effd0f3b9e6c646",
+      "mode": "100644",
+      "size": 4830
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothObject.h": {
+      "sha": "6572544a3c6ed1b89c7880c169e356546a2a6c47",
+      "mode": "100644",
+      "size": 6815
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothTimerEventSource.h": {
+      "sha": "8080cbe11179d235eb0f339483ddf295bc14fa27",
+      "mode": "100644",
+      "size": 3209
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothTypes.h": {
+      "sha": "e352d5bb8770c8bf61e2d0ac898e49f8ffa6d255",
+      "mode": "100644",
+      "size": 2113
+    },
+    "Headers/IOKit/bluetooth/IOBluetoothWorkLoop.h": {
+      "sha": "9a82e4fd45a07175bb6ac20470187ef35de8517e",
+      "mode": "100644",
+      "size": 5698
+    },
+    "Headers/IOKit/bluetooth/IOWorkQueue.h": {
+      "sha": "56d4fbee88cb39153180b3e50d213b1f49434f76",
+      "mode": "100644",
+      "size": 6407
+    },
+    "Headers/IOKit/bluetooth/serial/IOBluetoothSerialClient.h": {
+      "sha": "dddb2a7b55226843b829cd0ee82748b7b7f3134b",
+      "mode": "100644",
+      "size": 10069
+    },
+    "Headers/IOKit/bluetooth/serial/IOBluetoothSerialManager.h": {
+      "sha": "6d3be15da96687640785447fed5674eeaad50c7f",
+      "mode": "100644",
+      "size": 7953
+    },
+    "Headers/IOKit/bluetooth/transport/CSRBluetoothHostControllerUSBTransport.h": {
+      "sha": "2e331418e79d45c06486cb126ce5ef9a5d2fce64",
+      "mode": "100644",
+      "size": 3717
+    },
+    "Headers/IOKit/bluetooth/transport/IOBluetoothHostControllerTransport.h": {
+      "sha": "db10020c32b335176b5638943d952ca71af96443",
+      "mode": "100644",
+      "size": 17515
+    },
+    "Headers/IOKit/bluetooth/transport/IOBluetoothHostControllerUARTTransport.h": {
+      "sha": "57a4dd7a3e06d839c0145858aabc52acc5fa693a",
+      "mode": "100644",
+      "size": 7006
+    },
+    "Headers/IOKit/bluetooth/transport/IOBluetoothHostControllerUSBTransport.h": {
+      "sha": "1de4c7be2dde9e9c99fe9b74bab7b879e49957d5",
+      "mode": "100644",
+      "size": 16263
+    },
+    "Headers/IOKit/firewire/IOConfigDirectory.h": {
+      "sha": "d72ed21ee794304a833402b6355591e47b2b4d0a",
+      "mode": "100644",
+      "size": 6973
+    },
+    "Headers/IOKit/firewire/IOFWAddressSpace.h": {
+      "sha": "7ad6764f291c96897b346475eca3eb36bbd50e0b",
+      "mode": "100644",
+      "size": 11914
+    },
+    "Headers/IOKit/firewire/IOFWAsyncStreamListener.h": {
+      "sha": "025b591bc1b8301281a5377c8ac5e80a9e2fe9ef",
+      "mode": "100644",
+      "size": 4454
+    },
+    "Headers/IOKit/firewire/IOFWCommand.h": {
+      "sha": "fdf85b512788945e1dd288572ad2a41b1655d106",
+      "mode": "100644",
+      "size": 28828
+    },
+    "Headers/IOKit/firewire/IOFWDCL.h": {
+      "sha": "719e243e34b860c08efdbfb238cbfa0e7decfd77",
+      "mode": "100644",
+      "size": 8432
+    },
+    "Headers/IOKit/firewire/IOFWDCLPool.h": {
+      "sha": "66fbf38981979ebe81814434aa2bf3cc22bc3e39",
+      "mode": "100644",
+      "size": 4215
+    },
+    "Headers/IOKit/firewire/IOFWDCLProgram.h": {
+      "sha": "144622c4864e40ef1ba99d182de95d0615d5faf6",
+      "mode": "100644",
+      "size": 4048
+    },
+    "Headers/IOKit/firewire/IOFWDCLTranslator.h": {
+      "sha": "e02067c50aee8e0523009244a64c294bba4259ce",
+      "mode": "100644",
+      "size": 3282
+    },
+    "Headers/IOKit/firewire/IOFWIsochChannel.h": {
+      "sha": "4bbd6c85dda4b03cece464bbfe75aed68d5b4a31",
+      "mode": "100644",
+      "size": 4250
+    },
+    "Headers/IOKit/firewire/IOFWIsochPort.h": {
+      "sha": "793c5e944a0e600b5f9d2d88e66ac62bd2ea358e",
+      "mode": "100644",
+      "size": 2223
+    },
+    "Headers/IOKit/firewire/IOFWLocalIsochPort.h": {
+      "sha": "d98bff0a6e4ee56d9e9d31fa4a1464caf86a84f9",
+      "mode": "100644",
+      "size": 4178
+    },
+    "Headers/IOKit/firewire/IOFWPHYPacketListener.h": {
+      "sha": "ea2c6ff3a257d89af10919d05aa9895ce4e31f7c",
+      "mode": "100644",
+      "size": 2626
+    },
+    "Headers/IOKit/firewire/IOFWPhysicalAddressSpace.h": {
+      "sha": "b1944f4c6c257d6e2e58f927b3eafabb1bd46332",
+      "mode": "100644",
+      "size": 9555
+    },
+    "Headers/IOKit/firewire/IOFWPseudoAddressSpace.h": {
+      "sha": "02c2c308fd77ceb0b3bc0dd363f7bc6949c36a7d",
+      "mode": "100644",
+      "size": 14158
+    },
+    "Headers/IOKit/firewire/IOFWRegs.h": {
+      "sha": "01c09cca0b484bf1439a710da147faafbaf38c11",
+      "mode": "100644",
+      "size": 2975
+    },
+    "Headers/IOKit/firewire/IOFWSimpleContiguousPhysicalAddressSpace.h": {
+      "sha": "606a9b2e484399df030f47beb1f983be1c088677",
+      "mode": "100644",
+      "size": 2530
+    },
+    "Headers/IOKit/firewire/IOFWSimplePhysicalAddressSpace.h": {
+      "sha": "83a76a4d5c268f7686518905852ba5e2f97fb99e",
+      "mode": "100644",
+      "size": 2539
+    },
+    "Headers/IOKit/firewire/IOFWSyncer.h": {
+      "sha": "0fa497fa485e3609e6d0cd17897086b43398d03b",
+      "mode": "100644",
+      "size": 1688
+    },
+    "Headers/IOKit/firewire/IOFWUserObjectExporter.h": {
+      "sha": "d6890ac1c733e9aa42eca7a9d2ee795575e5a2ab",
+      "mode": "100644",
+      "size": 3438
+    },
+    "Headers/IOKit/firewire/IOFWUtils.h": {
+      "sha": "1a0ffc3240cd311f2242cc475c2c0b8424733366",
+      "mode": "100644",
+      "size": 703
+    },
+    "Headers/IOKit/firewire/IOFireWireBus.h": {
+      "sha": "053bfe4e2f1b92a8ab73b3d0f869c03b5b16a5f7",
+      "mode": "100644",
+      "size": 16486
+    },
+    "Headers/IOKit/firewire/IOFireWireController.h": {
+      "sha": "44f73c26eefc0415fd2ed04179653f81b0346431",
+      "mode": "100644",
+      "size": 38207
+    },
+    "Headers/IOKit/firewire/IOFireWireDevice.h": {
+      "sha": "9bf07f4331fecc86cdd984fe63094bee9d8a5d31",
+      "mode": "100644",
+      "size": 10235
+    },
+    "Headers/IOKit/firewire/IOFireWireFamilyCommon.h": {
+      "sha": "702759fa78bf473f603103ad1ec48081305dfa92",
+      "mode": "100644",
+      "size": 37828
+    },
+    "Headers/IOKit/firewire/IOFireWireIRMAllocation.h": {
+      "sha": "c67986c6afaf4e12f88206a1e0b98faaa5fabb52",
+      "mode": "100644",
+      "size": 4200
+    },
+    "Headers/IOKit/firewire/IOFireWireLocalNode.h": {
+      "sha": "8906da3244f373c9410cb9cd78a5e259e1d42c65",
+      "mode": "100644",
+      "size": 3992
+    },
+    "Headers/IOKit/firewire/IOFireWireMultiIsochReceive.h": {
+      "sha": "e003660c0f28696f5b0ff43faaffe5c2e8dca445",
+      "mode": "100644",
+      "size": 5103
+    },
+    "Headers/IOKit/firewire/IOFireWireNub.h": {
+      "sha": "39762ceddced4ace8f2e090b5e4ce862631e53f7",
+      "mode": "100644",
+      "size": 10100
+    },
+    "Headers/IOKit/firewire/IOFireWirePowerManager.h": {
+      "sha": "e0a141a793f7b8fd3601b5d0e617948969a04d5e",
+      "mode": "100644",
+      "size": 2703
+    },
+    "Headers/IOKit/firewire/IOFireWireUnit.h": {
+      "sha": "6509b94ee47dad59a98989676c097cf473d32818",
+      "mode": "100644",
+      "size": 4712
+    },
+    "Headers/IOKit/firewire/IOLocalConfigDirectory.h": {
+      "sha": "953d5f9a02d60cf431004ba99a32329e441257d8",
+      "mode": "100644",
+      "size": 3846
+    },
+    "Headers/IOKit/firewire/IORemoteConfigDirectory.h": {
+      "sha": "f5438aeeceec2f2537f0220e005bef9c447e7cd0",
+      "mode": "100644",
+      "size": 3153
+    },
+    "Headers/IOKit/graphics/GTrace.hpp": {
+      "sha": "5645918550a793174af252d25178196e80c2cae4",
+      "mode": "100644",
+      "size": 18727
+    },
+    "Headers/IOKit/graphics/IOAccelClientConnect.h": {
+      "sha": "1092d73a488bf4c4f13cf7c8c04e43cfa0e849e5",
+      "mode": "100644",
+      "size": 1435
+    },
+    "Headers/IOKit/graphics/IOAccelSurfaceConnect.h": {
+      "sha": "19dfe1beb5889fcbdcd89afa09096995a054e7f4",
+      "mode": "100644",
+      "size": 6204
+    },
+    "Headers/IOKit/graphics/IOAccelTypes.h": {
+      "sha": "b28ae848e570eab1b9d02147c85d1dcce271d2e7",
+      "mode": "100644",
+      "size": 2511
+    },
+    "Headers/IOKit/graphics/IOAccelerator.h": {
+      "sha": "618d38d8bc669db09c6bb7b9f491d7289efa756b",
+      "mode": "100644",
+      "size": 1438
+    },
+    "Headers/IOKit/graphics/IODisplay.h": {
+      "sha": "3ba8e1503544916b4d2cc45d74ef9f8fcd37edba",
+      "mode": "100644",
+      "size": 13648
+    },
+    "Headers/IOKit/graphics/IOFramebuffer.h": {
+      "sha": "a12dc63cd50c4056a5909674d61f209a84f9211a",
+      "mode": "100644",
+      "size": 56999
+    },
+    "Headers/IOKit/graphics/IOFramebufferShared.h": {
+      "sha": "4034934d1314cdca555cc288891b7a308fdf10f4",
+      "mode": "100644",
+      "size": 13361
+    },
+    "Headers/IOKit/graphics/IOGraphicsDevice.h": {
+      "sha": "b724d5a9ea28ff488674821c1961445f857e68a9",
+      "mode": "100644",
+      "size": 1554
+    },
+    "Headers/IOKit/graphics/IOGraphicsEngine.h": {
+      "sha": "8b1ccaad84844321ed89fbe908e4bc090998e98e",
+      "mode": "100644",
+      "size": 1567
+    },
+    "Headers/IOKit/graphics/IOGraphicsInterfaceTypes.h": {
+      "sha": "5b392a7e7f747b04a5b604b78ebdbeb4f6bf36e9",
+      "mode": "100644",
+      "size": 10741
+    },
+    "Headers/IOKit/graphics/IOGraphicsTypes.h": {
+      "sha": "92feacf03a0ac709180905be2d274ed1ddd52a61",
+      "mode": "100644",
+      "size": 75881
+    },
+    "Headers/IOKit/graphics/tl/_config": {
+      "sha": "b1a05dc2055cc0ad52c2a0d62836baef6d7bef6d",
+      "mode": "100644",
+      "size": 1334
+    },
+    "Headers/IOKit/graphics/tl/iolocks": {
+      "sha": "898975dacff7a6d9d717a7a97bd03b27b4662b74",
+      "mode": "100644",
+      "size": 4614
+    },
+    "Headers/IOKit/graphics/tl/osmemory": {
+      "sha": "1b486a4b1b75f96b7782bf3f6a5f9cedce703e07",
+      "mode": "100644",
+      "size": 14677
+    },
+    "Headers/IOKit/graphics/tl/osutility": {
+      "sha": "733bdfb3cca99ee4211a6bec16408850aeba9692",
+      "mode": "100644",
+      "size": 2620
+    },
+    "Headers/IOKit/hid/AppleHIDUsageTables.h": {
+      "sha": "03f275775047d968d5ea8b840cc298083c82934b",
+      "mode": "100644",
+      "size": 13106
+    },
+    "Headers/IOKit/hid/IOHIDDevice.h": {
+      "sha": "fcd6710ee60fd616f4340e00a465a9b8666136f9",
+      "mode": "100644",
+      "size": 36006
+    },
+    "Headers/IOKit/hid/IOHIDDeviceKeys.h": {
+      "sha": "77030c42eeebaa4f3f971424530d8cd4af53baab",
+      "mode": "100644",
+      "size": 5981
+    },
+    "Headers/IOKit/hid/IOHIDDeviceTypes.h": {
+      "sha": "73cc226609ea834f05e9aaef2896727a7ec87839",
+      "mode": "100644",
+      "size": 8637
+    },
+    "Headers/IOKit/hid/IOHIDElement.h": {
+      "sha": "fa3ecec9c31f399a21a874a168ae31c9553e0767",
+      "mode": "100644",
+      "size": 5838
+    },
+    "Headers/IOKit/hid/IOHIDEvent.h": {
+      "sha": "45aefe8789e45c854cec63a2fa642e6064c24d42",
+      "mode": "100644",
+      "size": 28623
+    },
+    "Headers/IOKit/hid/IOHIDEventDriver.h": {
+      "sha": "09de75f0acdb484464b905eaf18bb27576e4cc9f",
+      "mode": "100644",
+      "size": 16475
+    },
+    "Headers/IOKit/hid/IOHIDEventFieldDefs.h": {
+      "sha": "32aeaa5e4d48e7c7d77f52b6e0d7a508bb16757f",
+      "mode": "100644",
+      "size": 33015
+    },
+    "Headers/IOKit/hid/IOHIDEventService.h": {
+      "sha": "2230924be6dfc80b014c6362d808d532d57f9882",
+      "mode": "100644",
+      "size": 52263
+    },
+    "Headers/IOKit/hid/IOHIDEventServiceKeys.h": {
+      "sha": "595c4586d974a932b7bfcafeb4ae4e8acbaa69f8",
+      "mode": "100644",
+      "size": 4239
+    },
+    "Headers/IOKit/hid/IOHIDEventServiceKeys_Private.h": {
+      "sha": "eb71209413a16fb179f3341690d09941a713df87",
+      "mode": "100644",
+      "size": 1984
+    },
+    "Headers/IOKit/hid/IOHIDEventServiceTypes.h": {
+      "sha": "94d7ed998f5d4ecc52e3c4fec3d959f5c3edb69c",
+      "mode": "100644",
+      "size": 2558
+    },
+    "Headers/IOKit/hid/IOHIDEventTypes.h": {
+      "sha": "9f37f49c547f807135deb197934f3b56d4a3e276",
+      "mode": "100644",
+      "size": 28957
+    },
+    "Headers/IOKit/hid/IOHIDInterface.h": {
+      "sha": "b216c244bfef45d08f2e30b78b34349e2d4fd725",
+      "mode": "100644",
+      "size": 12685
+    },
+    "Headers/IOKit/hid/IOHIDKeys.h": {
+      "sha": "203b5c083cd1ca65fd2e06be1ce355c5cc9316f7",
+      "mode": "100644",
+      "size": 16016
+    },
+    "Headers/IOKit/hid/IOHIDPrivateKeys.h": {
+      "sha": "939411e6678734d92046bee4f43f8adddd221c51",
+      "mode": "100644",
+      "size": 9813
+    },
+    "Headers/IOKit/hid/IOHIDProperties.h": {
+      "sha": "c172dffd0d3a185f5ce136dfc0eb69608bfc14c3",
+      "mode": "100644",
+      "size": 3427
+    },
+    "Headers/IOKit/hid/IOHIDUsageTables.h": {
+      "sha": "77db9966e8650a7b5b62589322cbd86daebb635c",
+      "mode": "100644",
+      "size": 171632
+    },
+    "Headers/IOKit/hid/IOHIDUtility.h": {
+      "sha": "fbb4e2b7c5b99f40c6e42703bfc176c667cdb7c0",
+      "mode": "100644",
+      "size": 3001
+    },
+    "Headers/IOKit/hidsystem/IOHIDDescriptorParser.h": {
+      "sha": "0c16bd54204a51eb95a1b8131ccbf860d23e11a2",
+      "mode": "100644",
+      "size": 54308
+    },
+    "Headers/IOKit/hidsystem/IOHIDParameter.h": {
+      "sha": "c80512379130bc143ec1d040a678dc82f443d4a4",
+      "mode": "100644",
+      "size": 12935
+    },
+    "Headers/IOKit/hidsystem/IOHIDShared.h": {
+      "sha": "7ac20b1b76b9147be193f1bfb0ebfd1beead57cd",
+      "mode": "100644",
+      "size": 11211
+    },
+    "Headers/IOKit/hidsystem/IOHIDSystem.h": {
+      "sha": "83616a04ca08e55f6b30f66ffd38984ef2661b16",
+      "mode": "100644",
+      "size": 24556
+    },
+    "Headers/IOKit/hidsystem/IOHIDTypes.h": {
+      "sha": "c665f9b32eaf1eba053bfe8dfcd9b0f095f0315c",
+      "mode": "100644",
+      "size": 6064
+    },
+    "Headers/IOKit/hidsystem/IOHIDUsageTables.h": {
+      "sha": "77db9966e8650a7b5b62589322cbd86daebb635c",
+      "mode": "100644",
+      "size": 171632
+    },
+    "Headers/IOKit/hidsystem/IOHIDWorkLoop.h": {
+      "sha": "c78f25aaf3c79f06bce545753a10238e1680d20d",
+      "mode": "100644",
+      "size": 423
+    },
+    "Headers/IOKit/hidsystem/IOHIDevice.h": {
+      "sha": "b3605b0a64c5d13fa4a2910cde0bed547b23e6ec",
+      "mode": "100644",
+      "size": 2374
+    },
+    "Headers/IOKit/hidsystem/IOHIKeyboard.h": {
+      "sha": "0c023ab3ff4afa43de640b723384735f859dbf5b",
+      "mode": "100644",
+      "size": 11637
+    },
+    "Headers/IOKit/hidsystem/IOHIKeyboardMapper.h": {
+      "sha": "2fd3fdb9743cca501d6b6f4acd4c143afc914b4c",
+      "mode": "100644",
+      "size": 8672
+    },
+    "Headers/IOKit/hidsystem/IOHIPointing.h": {
+      "sha": "22fce3c1498f4a1bf3e5c5712a6aa41437371bb2",
+      "mode": "100644",
+      "size": 11137
+    },
+    "Headers/IOKit/hidsystem/IOLLEvent.h": {
+      "sha": "0a72a4e100be5aa297bc04d698e46e3abbdfde85",
+      "mode": "100644",
+      "size": 23148
+    },
+    "Headers/IOKit/hidsystem/ev_keymap.h": {
+      "sha": "e6db930f21993b7e27e1c40222f02cf31599fc95",
+      "mode": "100644",
+      "size": 6242
+    },
+    "Headers/IOKit/i2c/IOI2CInterface.h": {
+      "sha": "0a10f74d9ece05256e51e966c5ebb73841e42003",
+      "mode": "100644",
+      "size": 11887
+    },
+    "Headers/IOKit/ndrvsupport/IOMacOSTypes.h": {
+      "sha": "61893ee0f866a72ff24bcff062ef2ee91ec00fa0",
+      "mode": "100644",
+      "size": 15923
+    },
+    "Headers/IOKit/ndrvsupport/IOMacOSVideo.h": {
+      "sha": "795072b6d7766aecb503ddcd18dae331649960f9",
+      "mode": "100644",
+      "size": 82435
+    },
+    "Headers/IOKit/ndrvsupport/IONDRVFramebuffer.h": {
+      "sha": "154e1469d17da30c406d63c29fe915ba9912a54a",
+      "mode": "100644",
+      "size": 15027
+    },
+    "Headers/IOKit/ndrvsupport/IONDRVLibraries.h": {
+      "sha": "3d4b8d355c5c1ec13681b0d382620711b1df2865",
+      "mode": "100644",
+      "size": 14365
+    },
+    "Headers/IOKit/ndrvsupport/IONDRVSupport.h": {
+      "sha": "f2702bcfe85581d88df5e012ec7cae22e23a9376",
+      "mode": "100644",
+      "size": 1333
+    },
+    "Headers/IOKit/network/IOBasicOutputQueue.h": {
+      "sha": "f568224d0640877283f4320619e44f1b3e394636",
+      "mode": "100644",
+      "size": 13836
+    },
+    "Headers/IOKit/network/IOEthernetController.h": {
+      "sha": "72b4600948157708c3e5997e7d8c6a4e5b06051e",
+      "mode": "100644",
+      "size": 62807
+    },
+    "Headers/IOKit/network/IOEthernetInterface.h": {
+      "sha": "a5f707e64e6c57b97fd997dc2fea39a6d3e2c854",
+      "mode": "100644",
+      "size": 14063
+    },
+    "Headers/IOKit/network/IOEthernetStats.h": {
+      "sha": "6125c2de9b99a11dd0aa612eac2c6eec29dd1182",
+      "mode": "100644",
+      "size": 5839
+    },
+    "Headers/IOKit/network/IOGatedOutputQueue.h": {
+      "sha": "7ffca750253650cfa18281e62f852fba697d8754",
+      "mode": "100644",
+      "size": 7572
+    },
+    "Headers/IOKit/network/IOKernelDebugger.h": {
+      "sha": "4543aca8f5d10afdb418f2a954651e03cc958fae",
+      "mode": "100644",
+      "size": 17595
+    },
+    "Headers/IOKit/network/IOMbufMemoryCursor.h": {
+      "sha": "4e40173d173fa50c576436e2fbbf8944d34d3475",
+      "mode": "100644",
+      "size": 16114
+    },
+    "Headers/IOKit/network/IONetworkController.h": {
+      "sha": "21be744ca961c9818b19cdc761a7517915986b70",
+      "mode": "100644",
+      "size": 82275
+    },
+    "Headers/IOKit/network/IONetworkData.h": {
+      "sha": "9b61df28b0b16b568668e5eafd46ac5807b047b0",
+      "mode": "100644",
+      "size": 19955
+    },
+    "Headers/IOKit/network/IONetworkInterface.h": {
+      "sha": "1e5170640179e8bf707f04d0826649351498a26f",
+      "mode": "100644",
+      "size": 72612
+    },
+    "Headers/IOKit/network/IONetworkMedium.h": {
+      "sha": "62dbc6620d595cec7543f53924b48592e56d1ce0",
+      "mode": "100644",
+      "size": 16820
+    },
+    "Headers/IOKit/network/IONetworkStats.h": {
+      "sha": "f358c1e8a4525d8b575fd82ff2f3240810d5e3b9",
+      "mode": "100644",
+      "size": 3124
+    },
+    "Headers/IOKit/network/IOOutputQueue.h": {
+      "sha": "5716dd6f348c584a1948c8ae5b2ab7242bef7214",
+      "mode": "100644",
+      "size": 10062
+    },
+    "Headers/IOKit/network/IOPacketQueue.h": {
+      "sha": "b6694b061c7ab337258e90b7ac00b4783820b2f0",
+      "mode": "100644",
+      "size": 10294
+    },
+    "Headers/IOKit/network/IOSkywalkEthernetInterface.h": {
+      "sha": "6266d89219ce1e1db4a6a24ce813deee11e22800",
+      "mode": "100644",
+      "size": 440
+    },
+    "Headers/IOKit/nvram/IONVRAMController.h": {
+      "sha": "fcabedf915975d277c26a271aa47a3e9c7ce67ca",
+      "mode": "100644",
+      "size": 1866
+    },
+    "Headers/IOKit/pci/IOAGPDevice.h": {
+      "sha": "c3a7d9088c091ca819967250b9b5d862f3cda16a",
+      "mode": "100644",
+      "size": 9741
+    },
+    "Headers/IOKit/pci/IOPCIBridge.h": {
+      "sha": "e4aa04efd096e5d05c2856aa8ae6acb1e3344858",
+      "mode": "100644",
+      "size": 21029
+    },
+    "Headers/IOKit/pci/IOPCIDevice.h": {
+      "sha": "20b3d8a3959288e84d049cb64e48178938e623e8",
+      "mode": "100644",
+      "size": 40887
+    },
+    "Headers/IOKit/pci/IOPCIFamilyDefinitions.h": {
+      "sha": "4cf01c40c0c40c6bf669d537b663dc135078d060",
+      "mode": "100644",
+      "size": 9432
+    },
+    "Headers/IOKit/platform/AppleMacIO.h": {
+      "sha": "45e5b9bd0a13924b2b9013d96cc2524b569acff6",
+      "mode": "100644",
+      "size": 2519
+    },
+    "Headers/IOKit/platform/AppleMacIODevice.h": {
+      "sha": "cb6f898daf45d0d2ce2ccad911aeb1277a9b350b",
+      "mode": "100644",
+      "size": 2188
+    },
+    "Headers/IOKit/platform/AppleNMI.h": {
+      "sha": "a21688e1b25a262cf2b40071eefd6fd302e8569b",
+      "mode": "100644",
+      "size": 2548
+    },
+    "Headers/IOKit/platform/ApplePlatformExpert.h": {
+      "sha": "d5ffd5a6a7462ad35f3d555b59434755493768c1",
+      "mode": "100644",
+      "size": 2858
+    },
+    "Headers/IOKit/power/IOPwrController.h": {
+      "sha": "f38707f8d8791b8c2b9fc1f96c424bb779c6c12d",
+      "mode": "100644",
+      "size": 1500
+    },
+    "Headers/IOKit/pwr_mgt/IOPM.h": {
+      "sha": "84fcaa788d9293d38ce7377f710b42f77445f8ab",
+      "mode": "100644",
+      "size": 41199
+    },
+    "Headers/IOKit/pwr_mgt/IOPMLibDefs.h": {
+      "sha": "7caa525287865156ffbb15edf6dc570cb1a9e577",
+      "mode": "100644",
+      "size": 2059
+    },
+    "Headers/IOKit/pwr_mgt/IOPMPowerSource.h": {
+      "sha": "c248941a5d61873a7bc7ce16b2b0fe68042d7a09",
+      "mode": "100644",
+      "size": 9241
+    },
+    "Headers/IOKit/pwr_mgt/IOPMPowerSourceList.h": {
+      "sha": "e69663a3e842acbb213a9e4c9b1751741733cd8c",
+      "mode": "100644",
+      "size": 2043
+    },
+    "Headers/IOKit/pwr_mgt/IOPMpowerState.h": {
+      "sha": "1ca2452976c67d62876a14a9e8fdf07ecd336aa9",
+      "mode": "100644",
+      "size": 3972
+    },
+    "Headers/IOKit/pwr_mgt/IOPowerConnection.h": {
+      "sha": "67d84b3893d7b1c7ef821c8493a8f633c3ff89d6",
+      "mode": "100644",
+      "size": 6264
+    },
+    "Headers/IOKit/pwr_mgt/RootDomain.h": {
+      "sha": "066b1f5d0448ea77f67d516a334fb7c21e6901ee",
+      "mode": "100644",
+      "size": 14794
+    },
+    "Headers/IOKit/rtc/IORTCController.h": {
+      "sha": "876210ee1832885055513738098a2fb61c45acfb",
+      "mode": "100644",
+      "size": 2994
+    },
+    "Headers/IOKit/sbp2/IOFireWireSBP2LSIWorkaroundDescriptor.h": {
+      "sha": "178ef0083c86ebfc2feb4a8c8840b7d2e2660126",
+      "mode": "100644",
+      "size": 12217
+    },
+    "Headers/IOKit/sbp2/IOFireWireSBP2LUN.h": {
+      "sha": "e6c97ded43731c2f6cd1d816a8ada6901a73fc0f",
+      "mode": "100644",
+      "size": 10404
+    },
+    "Headers/IOKit/sbp2/IOFireWireSBP2Login.h": {
+      "sha": "42a838c6cde9aa4d8670c4cba2f63801cabaf7da",
+      "mode": "100644",
+      "size": 41499
+    },
+    "Headers/IOKit/sbp2/IOFireWireSBP2ManagementORB.h": {
+      "sha": "9455383bbb9a4f9ec826d399b4e24ff74453f8b1",
+      "mode": "100644",
+      "size": 11075
+    },
+    "Headers/IOKit/sbp2/IOFireWireSBP2ORB.h": {
+      "sha": "5c1159335c0c304668e82f92d3bea336c62af73f",
+      "mode": "100644",
+      "size": 21217
+    },
+    "Headers/IOKit/sbp2/IOFireWireSBP2Target.h": {
+      "sha": "4288ce94dbd2b5e601508a03d61b00166850f85f",
+      "mode": "100644",
+      "size": 7550
+    },
+    "Headers/IOKit/sbp2/IOFireWireSBP2UserClient.h": {
+      "sha": "a4695588d73efbc568e9238809e1f5c317274ea3",
+      "mode": "100644",
+      "size": 8326
+    },
+    "Headers/IOKit/sbp2/IOFireWireSBP2UserClientCommon.h": {
+      "sha": "cb114bad636459bfafc5227d166a277eac00f476",
+      "mode": "100644",
+      "size": 4524
+    },
+    "Headers/IOKit/sbp2/IOFireWireSerialBusProtocolTransport.h": {
+      "sha": "4e0276e7a9e0521f4f83d94c91ac95674c538f7b",
+      "mode": "100644",
+      "size": 14310
+    },
+    "Headers/IOKit/scsi/IOBDServices.h": {
+      "sha": "55a6e318ae22f69b94aadb1d77f2b6ea5312da8c",
+      "mode": "100644",
+      "size": 8898
+    },
+    "Headers/IOKit/scsi/IOBlockStorageServices.h": {
+      "sha": "4f756d45c619aa50466fcf7ef02ebf2769eaf088",
+      "mode": "100644",
+      "size": 6218
+    },
+    "Headers/IOKit/scsi/IOCompactDiscServices.h": {
+      "sha": "0a9f5aea127b6108261facde2676749f8a66a1ba",
+      "mode": "100644",
+      "size": 8374
+    },
+    "Headers/IOKit/scsi/IODVDServices.h": {
+      "sha": "2f276db0dfc58f94b633f4fb55129041670c9331",
+      "mode": "100644",
+      "size": 9368
+    },
+    "Headers/IOKit/scsi/IOReducedBlockServices.h": {
+      "sha": "46188af30812ecc24bcda7a9297186ccdf090c44",
+      "mode": "100644",
+      "size": 5314
+    },
+    "Headers/IOKit/scsi/IOSCSIBlockCommandsDevice.h": {
+      "sha": "f99312a6a1caeff197d0e4f51bc0beb0b13d6faf",
+      "mode": "100644",
+      "size": 69035
+    },
+    "Headers/IOKit/scsi/IOSCSIMultimediaCommandsDevice.h": {
+      "sha": "0aa05a242a35caa0fe17b527934b9dcc111e87b7",
+      "mode": "100644",
+      "size": 30128
+    },
+    "Headers/IOKit/scsi/IOSCSIPeripheralDeviceNub.h": {
+      "sha": "f6404c9f570416bff720e0d74b65fb456d51e2a3",
+      "mode": "100644",
+      "size": 8644
+    },
+    "Headers/IOKit/scsi/IOSCSIPeripheralDeviceType00.h": {
+      "sha": "0e8e8af6ad1a046c7fc799f615d0643c96a10fb3",
+      "mode": "100644",
+      "size": 3745
+    },
+    "Headers/IOKit/scsi/IOSCSIPeripheralDeviceType05.h": {
+      "sha": "e4431664d9daf652a86eef1f7a070869acaf0246",
+      "mode": "100644",
+      "size": 2912
+    },
+    "Headers/IOKit/scsi/IOSCSIPeripheralDeviceType07.h": {
+      "sha": "96312870b333d6ac73f88e9229927d2d7ab9e228",
+      "mode": "100644",
+      "size": 2852
+    },
+    "Headers/IOKit/scsi/IOSCSIPeripheralDeviceType0E.h": {
+      "sha": "d3eac580e823b9127bdfc0c8becdd41c4276ad3e",
+      "mode": "100644",
+      "size": 2969
+    },
+    "Headers/IOKit/scsi/IOSCSIPrimaryCommandsDevice.h": {
+      "sha": "53a15759b963998cfdd2f5c0601904a41dd2ae3a",
+      "mode": "100644",
+      "size": 26556
+    },
+    "Headers/IOKit/scsi/IOSCSIProtocolInterface.h": {
+      "sha": "c6a7393e2db6570da8f1a602fc24b83b33ba0748",
+      "mode": "100644",
+      "size": 38857
+    },
+    "Headers/IOKit/scsi/IOSCSIProtocolServices.h": {
+      "sha": "2c7a52e4b11f23af098a781abbe4029c6f02053e",
+      "mode": "100644",
+      "size": 33634
+    },
+    "Headers/IOKit/scsi/IOSCSIReducedBlockCommandsDevice.h": {
+      "sha": "8658fa76819eddd763d70cc17b67dd790f18d268",
+      "mode": "100644",
+      "size": 41868
+    },
+    "Headers/IOKit/scsi/SCSICmds_INQUIRY_Definitions.h": {
+      "sha": "c2ec0d2d2d6db01d085b57f14aba3212301b86f3",
+      "mode": "100644",
+      "size": 38644
+    },
+    "Headers/IOKit/scsi/SCSICmds_MODE_Definitions.h": {
+      "sha": "8d9c2506d95a9a88cb8ae80b6794f1b4ed665f09",
+      "mode": "100644",
+      "size": 14817
+    },
+    "Headers/IOKit/scsi/SCSICmds_READ_CAPACITY_Definitions.h": {
+      "sha": "59abde3f1cdc15d980c1462d81cc91bf70599847",
+      "mode": "100644",
+      "size": 3642
+    },
+    "Headers/IOKit/scsi/SCSICmds_REPORT_LUNS_Definitions.h": {
+      "sha": "e2892fbf42995ec81c852c44e5d2a2136a369754",
+      "mode": "100644",
+      "size": 4206
+    },
+    "Headers/IOKit/scsi/SCSICmds_REQUEST_SENSE_Defs.h": {
+      "sha": "8cfabb017e5bb75ad475e6109f75c9a451a0ab19",
+      "mode": "100644",
+      "size": 7152
+    },
+    "Headers/IOKit/scsi/SCSICommandDefinitions.h": {
+      "sha": "d33aed62c7792bb6bca48e79eee68703865b717e",
+      "mode": "100644",
+      "size": 12845
+    },
+    "Headers/IOKit/scsi/SCSICommandOperationCodes.h": {
+      "sha": "37a92c6ad7916df5de34bfea6194dff62a7e1078",
+      "mode": "100644",
+      "size": 50635
+    },
+    "Headers/IOKit/scsi/SCSIPort.h": {
+      "sha": "8eefbeb4d71cd869287098fd63477e10bc9428f3",
+      "mode": "100644",
+      "size": 2037
+    },
+    "Headers/IOKit/scsi/SCSITask.h": {
+      "sha": "52939faf78edd3fa4d83ecbc150cb8137d41e296",
+      "mode": "100644",
+      "size": 14962
+    },
+    "Headers/IOKit/scsi/spi/IOSCSIParallelInterfaceController.h": {
+      "sha": "9cd970951b14b3fa0aab2a31d9cef8c42b75b449",
+      "mode": "100644",
+      "size": 60891
+    },
+    "Headers/IOKit/serial/IOModemSerialStreamSync.h": {
+      "sha": "be752873cc20f83a1aaa7193fe7c2a4e2224d1ad",
+      "mode": "100644",
+      "size": 1425
+    },
+    "Headers/IOKit/serial/IORS232SerialStreamSync.h": {
+      "sha": "15d520a9c08476d49e6db710893730d4002488e8",
+      "mode": "100644",
+      "size": 7628
+    },
+    "Headers/IOKit/serial/IOSerialDriverSync.h": {
+      "sha": "92f69df91d74a01e1ca97f517a3c4d3453a7c257",
+      "mode": "100644",
+      "size": 3579
+    },
+    "Headers/IOKit/serial/IOSerialKeys.h": {
+      "sha": "9538a249be71d5cfd007abfaa7aea3dbf8bd41dc",
+      "mode": "100644",
+      "size": 2856
+    },
+    "Headers/IOKit/serial/IOSerialStreamSync.h": {
+      "sha": "e1b80176ab6a944700a8952cb49344e21e8033ef",
+      "mode": "100644",
+      "size": 11967
+    },
+    "Headers/IOKit/skywalk/IOSkywalkCloneableNetworkPacket.h": {
+      "sha": "97b2f33989aa0a289f02ebb3dfe76d3ed11f253b",
+      "mode": "100644",
+      "size": 3956
+    },
+    "Headers/IOKit/skywalk/IOSkywalkController.h": {
+      "sha": "99cf72a387554516c997196fc7ad9ea46be78a3d",
+      "mode": "100644",
+      "size": 2466
+    },
+    "Headers/IOKit/skywalk/IOSkywalkEthernetInterface.h": {
+      "sha": "bdd1cb9b182ae6821ce530f03ef4594ccdda2f9e",
+      "mode": "100644",
+      "size": 4500
+    },
+    "Headers/IOKit/skywalk/IOSkywalkFamily.h": {
+      "sha": "05c2ff05864ee2e3dd37a3ca2c8e065db8583f55",
+      "mode": "100644",
+      "size": 2567
+    },
+    "Headers/IOKit/skywalk/IOSkywalkInterface.h": {
+      "sha": "c1828f990227cef941acb1bb0a0a86314675ff59",
+      "mode": "100644",
+      "size": 3897
+    },
+    "Headers/IOKit/skywalk/IOSkywalkMemorySegment.h": {
+      "sha": "634ad2f1aae659018e465c4498fd2465a76cc062",
+      "mode": "100644",
+      "size": 3607
+    },
+    "Headers/IOKit/skywalk/IOSkywalkNetworkController.h": {
+      "sha": "41a1ace226545de91d29bcc532b5b481784d7b7f",
+      "mode": "100644",
+      "size": 1848
+    },
+    "Headers/IOKit/skywalk/IOSkywalkNetworkInterface.h": {
+      "sha": "64502f9c9f27b9a10ff7c1f4f45b52787554f174",
+      "mode": "100644",
+      "size": 6973
+    },
+    "Headers/IOKit/skywalk/IOSkywalkNetworkPacket.h": {
+      "sha": "96316d359c492ff991dc66ce84e0842725285844",
+      "mode": "100644",
+      "size": 3304
+    },
+    "Headers/IOKit/skywalk/IOSkywalkPacket.h": {
+      "sha": "5253248322f10abb0cb22b68a759aae87317bdf4",
+      "mode": "100644",
+      "size": 4906
+    },
+    "Headers/IOKit/skywalk/IOSkywalkPacketBuffer.h": {
+      "sha": "903a7b4481495a53c7b94518c43a9b3793dbd5d4",
+      "mode": "100644",
+      "size": 4702
+    },
+    "Headers/IOKit/skywalk/IOSkywalkPacketBufferPool.h": {
+      "sha": "ae17cf33f0b69ed62ccf8ad56fc161a04ca620a4",
+      "mode": "100644",
+      "size": 8197
+    },
+    "Headers/IOKit/skywalk/IOSkywalkPacketQueue.h": {
+      "sha": "5446ae0d0b47c5320e48152e354e6e7f089ff02e",
+      "mode": "100644",
+      "size": 5172
+    },
+    "Headers/IOKit/skywalk/IOSkywalkRxCompletionQueue.h": {
+      "sha": "70f2858ddbb16185c674ccdf5366f20a8cb7a9b6",
+      "mode": "100644",
+      "size": 4733
+    },
+    "Headers/IOKit/skywalk/IOSkywalkRxSubmissionQueue.h": {
+      "sha": "8e282a8e355358ba578f16d8dba1f13806d7d2a2",
+      "mode": "100644",
+      "size": 4783
+    },
+    "Headers/IOKit/skywalk/IOSkywalkSupport.h": {
+      "sha": "17d6f3d13df67712f92167e4848685c8e5346642",
+      "mode": "100644",
+      "size": 12077
+    },
+    "Headers/IOKit/skywalk/IOSkywalkTxCompletionQueue.h": {
+      "sha": "5b3eae99ae8ded8022bc730dbc8e4ef1e6a491b8",
+      "mode": "100644",
+      "size": 6652
+    },
+    "Headers/IOKit/skywalk/IOSkywalkTxSubmissionQueue.h": {
+      "sha": "18050629c5d2f07ccb5f38fcf5d571bd071f8464",
+      "mode": "100644",
+      "size": 6183
+    },
+    "Headers/IOKit/skywalk/IOSkywalkTypes.h": {
+      "sha": "a0e1ca063cd6cb9da3bd41142932fd779c12698c",
+      "mode": "100644",
+      "size": 5798
+    },
+    "Headers/IOKit/skywalk/IOUserNetworkEthernetNicProxy.h": {
+      "sha": "b005098d3b9ffce579c29bc2f546d3818b4c857c",
+      "mode": "100644",
+      "size": 5839
+    },
+    "Headers/IOKit/storage/IOAppleLabelScheme.h": {
+      "sha": "242255efca0ed0d5a311ea348ad30bfc8e1c3aa0",
+      "mode": "100644",
+      "size": 5561
+    },
+    "Headers/IOKit/storage/IOApplePartitionScheme.h": {
+      "sha": "8e9f2c3be13fafea438c927e4e95169ba337c225",
+      "mode": "100644",
+      "size": 9755
+    },
+    "Headers/IOKit/storage/IOBDBlockStorageDevice.h": {
+      "sha": "f3c0e65570196794f25db17e0e77b48b22a387e6",
+      "mode": "100644",
+      "size": 5189
+    },
+    "Headers/IOKit/storage/IOBDBlockStorageDriver.h": {
+      "sha": "645ad1ddbc43be1f2319bf74b800f377627b53aa",
+      "mode": "100644",
+      "size": 6047
+    },
+    "Headers/IOKit/storage/IOBDMedia.h": {
+      "sha": "f932f19b9e08a1ded5e2322467ebff850d51efb2",
+      "mode": "100644",
+      "size": 10143
+    },
+    "Headers/IOKit/storage/IOBDMediaBSDClient.h": {
+      "sha": "778dd399043986d4644dfdb1fb6da61dd48b3de6",
+      "mode": "100644",
+      "size": 5406
+    },
+    "Headers/IOKit/storage/IOBDTypes.h": {
+      "sha": "d31cef7c2450a34158f51c2f37d34b4a8f25969d",
+      "mode": "100644",
+      "size": 3423
+    },
+    "Headers/IOKit/storage/IOBlockStorageDevice.h": {
+      "sha": "c197001238e02c234287e5923587697faf869c99",
+      "mode": "100644",
+      "size": 20556
+    },
+    "Headers/IOKit/storage/IOBlockStorageDriver.h": {
+      "sha": "0b04b9fb8a6a036e734e0e2936c547cdaad6d94c",
+      "mode": "100644",
+      "size": 58837
+    },
+    "Headers/IOKit/storage/IOCDBlockStorageDevice.h": {
+      "sha": "f33b85f609b507f59d986810251bc27fa6085d71",
+      "mode": "100644",
+      "size": 5259
+    },
+    "Headers/IOKit/storage/IOCDBlockStorageDriver.h": {
+      "sha": "7be06ebe3c74f3fd7464b3833ea374232ac09e05",
+      "mode": "100644",
+      "size": 8276
+    },
+    "Headers/IOKit/storage/IOCDMedia.h": {
+      "sha": "9aab27e1b1c131da49775390175f95ae8f722558",
+      "mode": "100644",
+      "size": 19081
+    },
+    "Headers/IOKit/storage/IOCDMediaBSDClient.h": {
+      "sha": "d5acdcf8090d44a98ce66c018730a044a851f52e",
+      "mode": "100644",
+      "size": 6004
+    },
+    "Headers/IOKit/storage/IOCDPartitionScheme.h": {
+      "sha": "1c9cd93cc7615cf69f6da6f99edb68949e2da35a",
+      "mode": "100644",
+      "size": 8149
+    },
+    "Headers/IOKit/storage/IOCDTypes.h": {
+      "sha": "db1be399f6b1969b1876a2a6e9cc14295f2b99f4",
+      "mode": "100644",
+      "size": 12296
+    },
+    "Headers/IOKit/storage/IODVDBlockStorageDevice.h": {
+      "sha": "7198d8e387304cfde3120682622f7db40d310fe9",
+      "mode": "100644",
+      "size": 5759
+    },
+    "Headers/IOKit/storage/IODVDBlockStorageDriver.h": {
+      "sha": "7b21b8beac680c32b57b1ba8ee6d71a4ad350764",
+      "mode": "100644",
+      "size": 9861
+    },
+    "Headers/IOKit/storage/IODVDMedia.h": {
+      "sha": "8745ce0a5a66d844a669704c8d38e7f962652e3c",
+      "mode": "100644",
+      "size": 11739
+    },
+    "Headers/IOKit/storage/IODVDMediaBSDClient.h": {
+      "sha": "d0d707323c37a6dc2182055504934331bcc369f4",
+      "mode": "100644",
+      "size": 5965
+    },
+    "Headers/IOKit/storage/IODVDTypes.h": {
+      "sha": "d4398a3b4ee8a08273ef334b5be479b4dba2367e",
+      "mode": "100644",
+      "size": 10463
+    },
+    "Headers/IOKit/storage/IOFDiskPartitionScheme.h": {
+      "sha": "0036e37927f29f4750847ba69c70609c53a86343",
+      "mode": "100644",
+      "size": 8566
+    },
+    "Headers/IOKit/storage/IOFilterScheme.h": {
+      "sha": "dcb6cf417ffb4a8844d700269ad268fb832a5336",
+      "mode": "100644",
+      "size": 15774
+    },
+    "Headers/IOKit/storage/IOFireWireStorageCharacteristics.h": {
+      "sha": "710f29f0cc59f6a6b62e9d99693ff9aac11275a1",
+      "mode": "100644",
+      "size": 2057
+    },
+    "Headers/IOKit/storage/IOGUIDPartitionScheme.h": {
+      "sha": "d4b9e5a8a5a98a29fa5fee9bd55e6be4dc4e2d3a",
+      "mode": "100644",
+      "size": 7413
+    },
+    "Headers/IOKit/storage/IOMedia.h": {
+      "sha": "75ed962c092262b4d9ee94ff702fed498c90102a",
+      "mode": "100644",
+      "size": 27651
+    },
+    "Headers/IOKit/storage/IOMediaBSDClient.h": {
+      "sha": "5896971db193f1712897d6eede2202d7fe21b679",
+      "mode": "100644",
+      "size": 4202
+    },
+    "Headers/IOKit/storage/IOPartitionScheme.h": {
+      "sha": "3d54142b62e4abd89fd77645af0201db04fb6c89",
+      "mode": "100644",
+      "size": 18620
+    },
+    "Headers/IOKit/storage/IOStorage.h": {
+      "sha": "34930beb5ea5b2eaa9f3c8622929be12fc898e8e",
+      "mode": "100644",
+      "size": 27969
+    },
+    "Headers/IOKit/storage/IOStorageCardCharacteristics.h": {
+      "sha": "143b5847ce5ebc0d1e37482a831d10cfbcb40ce1",
+      "mode": "100644",
+      "size": 9209
+    },
+    "Headers/IOKit/storage/IOStorageControllerCharacteristics.h": {
+      "sha": "2705809803b8df70f30418cc95da60537dbfcf41",
+      "mode": "100644",
+      "size": 30499
+    },
+    "Headers/IOKit/storage/IOStorageDeviceCharacteristics.h": {
+      "sha": "a2626355dc28f621a5607a1c129210f8cb7f33d6",
+      "mode": "100644",
+      "size": 15295
+    },
+    "Headers/IOKit/storage/IOStorageProtocolCharacteristics.h": {
+      "sha": "d7f065ae91b13cc242daa9a9c3041163d00a7276",
+      "mode": "100644",
+      "size": 15504
+    },
+    "Headers/IOKit/storage/ata/IOATAPIProtocolTransport.h": {
+      "sha": "3356ae75669514b2c0de84c313050404fe5f3ed8",
+      "mode": "100644",
+      "size": 14901
+    },
+    "Headers/IOKit/storage/ata/IOATAStorageDefines.h": {
+      "sha": "fdac8b39d7fedbc4f137d431dce992a57b5de1e5",
+      "mode": "100644",
+      "size": 9421
+    },
+    "Headers/IOKit/stream/IOStream.h": {
+      "sha": "060c7cb29be45b1be41ab7b0c0631d166cea33f8",
+      "mode": "100644",
+      "size": 21738
+    },
+    "Headers/IOKit/stream/IOStreamFamily.h": {
+      "sha": "a4eb7f0c1b7709f1909f091eda3a3963d8eea15a",
+      "mode": "100644",
+      "size": 256
+    },
+    "Headers/IOKit/stream/IOStreamShared.h": {
+      "sha": "7d520bb2644aeecc3041dd2a09a8f2514d094708",
+      "mode": "100644",
+      "size": 4727
+    },
+    "Headers/IOKit/stream/IOStreamUserClient.h": {
+      "sha": "887575a38a3f3a4276ab1c9b5d05379c298b603f",
+      "mode": "100644",
+      "size": 2502
+    },
+    "Headers/IOKit/system.h": {
+      "sha": "75c0ac6745fb8795f40c6f0d2c9342a10bd62cae",
+      "mode": "100644",
+      "size": 2140
+    },
+    "Headers/IOKit/system_management/IOWatchDogTimer.h": {
+      "sha": "0139a7b2c0340241dad38eff3cea1430a60eb95c",
+      "mode": "100644",
+      "size": 2161
+    },
+    "Headers/IOKit/usb/AppleUSBDefinitions.h": {
+      "sha": "257b46f4abc129db3482b191fb803982a2b635eb",
+      "mode": "100644",
+      "size": 47426
+    },
+    "Headers/IOKit/usb/IOUSBBus.h": {
+      "sha": "21e6534db850e5a5aca4531012d5987e133e1502",
+      "mode": "100644",
+      "size": 1145
+    },
+    "Headers/IOKit/usb/IOUSBCommand.h": {
+      "sha": "420d951e0df2889b448296ab26ff926fd9b97d0d",
+      "mode": "100644",
+      "size": 12098
+    },
+    "Headers/IOKit/usb/IOUSBController.h": {
+      "sha": "94a9b711e6b40377d5ba90fd40fef02ad8751ba8",
+      "mode": "100644",
+      "size": 57142
+    },
+    "Headers/IOKit/usb/IOUSBControllerListElement.h": {
+      "sha": "fa0d591099ac18bf42a004d51566e197d26cf33e",
+      "mode": "100644",
+      "size": 4821
+    },
+    "Headers/IOKit/usb/IOUSBControllerV2.h": {
+      "sha": "fb89bbecfc5b82ad7fd07d4b14c757b484bf2b4b",
+      "mode": "100644",
+      "size": 25054
+    },
+    "Headers/IOKit/usb/IOUSBDevice.h": {
+      "sha": "a9ec216012132e30e0b8ac7aeaaebe34b36c840e",
+      "mode": "100644",
+      "size": 28870
+    },
+    "Headers/IOKit/usb/IOUSBHostDevice.h": {
+      "sha": "f9cf3b464710fe956810c5eee7d66705191f0006",
+      "mode": "100644",
+      "size": 47592
+    },
+    "Headers/IOKit/usb/IOUSBHostFamily.h": {
+      "sha": "e5094fdec311d00c31f69894aaaef6210b78d318",
+      "mode": "100644",
+      "size": 32189
+    },
+    "Headers/IOKit/usb/IOUSBHostFamilyDefinitions.h": {
+      "sha": "f552863bcf0dae663345055a836744b834307a68",
+      "mode": "100644",
+      "size": 22072
+    },
+    "Headers/IOKit/usb/IOUSBHostHIDDevice.h": {
+      "sha": "5d2088d8fd9f3c36f6eeb36c65f3c713d7a35876",
+      "mode": "100644",
+      "size": 9767
+    },
+    "Headers/IOKit/usb/IOUSBHostIOSource.h": {
+      "sha": "a4cc25e44a73198fe1552e2941d459694a086945",
+      "mode": "100644",
+      "size": 19264
+    },
+    "Headers/IOKit/usb/IOUSBHostInterface.h": {
+      "sha": "5a1f97cb1a7bfcbe88e3696b50c5ad276c62ab88",
+      "mode": "100644",
+      "size": 29822
+    },
+    "Headers/IOKit/usb/IOUSBHostPipe.h": {
+      "sha": "03d24953c5c73e3241b1d9ba801905bfb06c4790",
+      "mode": "100644",
+      "size": 37320
+    },
+    "Headers/IOKit/usb/IOUSBHostStream.h": {
+      "sha": "0efd1d8cae30e6b1b0238314eeb7c861e8ae80b6",
+      "mode": "100644",
+      "size": 6217
+    },
+    "Headers/IOKit/usb/IOUSBInterface.h": {
+      "sha": "da115ce6e190aec1612aab7fc942c42997040054",
+      "mode": "100644",
+      "size": 18028
+    },
+    "Headers/IOKit/usb/IOUSBNub.h": {
+      "sha": "41ee7185e6445ffe701f0583c27ddec51b8d29f5",
+      "mode": "100644",
+      "size": 2920
+    },
+    "Headers/IOKit/usb/IOUSBPipe.h": {
+      "sha": "3979c116283d48c6f9f96bc73794d5deee8933a1",
+      "mode": "100644",
+      "size": 18041
+    },
+    "Headers/IOKit/usb/IOUSBPipeV2.h": {
+      "sha": "873ada016e149fc8cb63126407fd91acd3c4bbb2",
+      "mode": "100644",
+      "size": 8131
+    },
+    "Headers/IOKit/usb/IOUSBWorkLoop.h": {
+      "sha": "e4bca54ca97f22e1db396f96982604c36f08e987",
+      "mode": "100644",
+      "size": 2113
+    },
+    "Headers/IOKit/usb/StandardUSB.h": {
+      "sha": "0c885643eaa771a4469f6e9c2d1369c0791ed3b5",
+      "mode": "100644",
+      "size": 71425
+    },
+    "Headers/IOKit/usb/USB.h": {
+      "sha": "eb46ee1e67901e320294ce9f5739007b5704aef6",
+      "mode": "100644",
+      "size": 65807
+    },
+    "Headers/IOKit/usb/USBHub.h": {
+      "sha": "ba414370b20ccb18b9f84f25d8b069a40b2434c0",
+      "mode": "100644",
+      "size": 12696
+    },
+    "Headers/IOKit/usb/USBSpec.h": {
+      "sha": "32975ba101717c3d1a81235612d5af279ff0af63",
+      "mode": "100644",
+      "size": 24132
+    },
+    "Headers/IOKit/video/IOVideoControlDictionary.h": {
+      "sha": "3ae44fd83755ca6d21902ac8bb984646acb13338",
+      "mode": "100644",
+      "size": 3032
+    },
+    "Headers/IOKit/video/IOVideoDevice.h": {
+      "sha": "a32b5b76ff5e31c8528e3d95c541c13eab2a3555",
+      "mode": "100644",
+      "size": 5805
+    },
+    "Headers/IOKit/video/IOVideoDeviceClientInit.h": {
+      "sha": "0ab901f9edbb575ab0b693cd8cf7ecdc4c52a236",
+      "mode": "100644",
+      "size": 927
+    },
+    "Headers/IOKit/video/IOVideoDeviceLib.h": {
+      "sha": "1f04ef8554345387f127906e608843daa92d02d9",
+      "mode": "100644",
+      "size": 8417
+    },
+    "Headers/IOKit/video/IOVideoDeviceShared.h": {
+      "sha": "12a485e45a4ebf410b9231ad2678d76fedf9aff8",
+      "mode": "100644",
+      "size": 785
+    },
+    "Headers/IOKit/video/IOVideoDeviceUserClient.h": {
+      "sha": "bd55ff1d8d3e4858e6850f9b56347667f73d4357",
+      "mode": "100644",
+      "size": 4598
+    },
+    "Headers/IOKit/video/IOVideoStream.h": {
+      "sha": "054c37e4a09dd1f7971a04f2b442a304f8864f01",
+      "mode": "100644",
+      "size": 5455
+    },
+    "Headers/IOKit/video/IOVideoStreamDictionary.h": {
+      "sha": "e488716c805813a27823eafc19aead90fa833887",
+      "mode": "100644",
+      "size": 1673
+    },
+    "Headers/IOKit/video/IOVideoStreamFormatDictionary.h": {
+      "sha": "9485c50ccb37520ddfeb88532d8c8d386222c168",
+      "mode": "100644",
+      "size": 1419
+    },
+    "Headers/IOKit/video/IOVideoTypes.h": {
+      "sha": "54358124dc2ba5de8dd7c14c7e302e9e7381b3c4",
+      "mode": "100644",
+      "size": 18281
+    },
+    "Headers/IOKitUser/IOBlockStorageDevice.h": {
+      "sha": "0be0d68b86a43aef9368be0d678f6d17d324828a",
+      "mode": "100644",
+      "size": 44
+    },
+    "Headers/IOKitUser/IOBufferMemoryDescriptor.h": {
+      "sha": "35733569521913df67defec9f35d7187bb96a0f0",
+      "mode": "100644",
+      "size": 48
+    },
+    "Headers/IOKitUser/IODataQueueDispatchSource.h": {
+      "sha": "4c7d36f1f8cb550e4792a9e499f6006531312965",
+      "mode": "100644",
+      "size": 49
+    },
+    "Headers/IOKitUser/IODispatchQueue.h": {
+      "sha": "05d4ff6415a79fa969257d2bd0e0adc5b0fff1b5",
+      "mode": "100644",
+      "size": 39
+    },
+    "Headers/IOKitUser/IODispatchSource.h": {
+      "sha": "9a9d06caeeb528ec659383dd0cceff8716e9b569",
+      "mode": "100644",
+      "size": 40
+    },
+    "Headers/IOKitUser/IOInterruptDispatchSource.h": {
+      "sha": "b27409e2709249956265e5c627cdc32e690c953a",
+      "mode": "100644",
+      "size": 49
+    },
+    "Headers/IOKitUser/IOMemoryDescriptor.h": {
+      "sha": "62cddfb57d4869f267cd48bb522a54746732764d",
+      "mode": "100644",
+      "size": 42
+    },
+    "Headers/IOKitUser/IOMemoryMap.h": {
+      "sha": "56fe092e5055f3d4d96a9674c5227df6d3f7a7d5",
+      "mode": "100644",
+      "size": 35
+    },
+    "Headers/IOKitUser/IOService.h": {
+      "sha": "ec9ad1b34320f74567558643b663ccb61c01d6a1",
+      "mode": "100644",
+      "size": 33
+    },
+    "Headers/IOKitUser/IOTimerDispatchSource.h": {
+      "sha": "7b0634dc82d6c698afeef7deafced6c05055835b",
+      "mode": "100644",
+      "size": 45
+    },
+    "Headers/IOKitUser/IOUserServer.h": {
+      "sha": "7c184bb4ef9c7e6ce08214d6393d54b580b7fff2",
+      "mode": "100644",
+      "size": 36
+    },
+    "Headers/IOKitUser/OSAction.h": {
+      "sha": "9568834b02f6dc69c74a8267d113f196139c0ad7",
+      "mode": "100644",
+      "size": 32
+    },
+    "Headers/IOKitUser/OSArray.h": {
+      "sha": "9bcf3f9d01e1e2ca6124ab598bd9ee18435e05f5",
+      "mode": "100644",
+      "size": 31
+    },
+    "Headers/IOKitUser/OSBoolean.h": {
+      "sha": "885b393fead518ea94ebaa0ce54345fcbb1bb4f3",
+      "mode": "100644",
+      "size": 33
+    },
+    "Headers/IOKitUser/OSCollection.h": {
+      "sha": "9e842c65811a75b92b2c5c1f2f05906613f305c1",
+      "mode": "100644",
+      "size": 36
+    },
+    "Headers/IOKitUser/OSContainer.h": {
+      "sha": "b36a0ce9f6b5e0872c1bd8692f3cafb567cd5d83",
+      "mode": "100644",
+      "size": 35
+    },
+    "Headers/IOKitUser/OSData.h": {
+      "sha": "bebb52d3d52fd6fdeb765e5884d567e043c86956",
+      "mode": "100644",
+      "size": 30
+    },
+    "Headers/IOKitUser/OSDictionary.h": {
+      "sha": "53cc653b3be2bfa391d62e5f7b4e7d34f0182be7",
+      "mode": "100644",
+      "size": 36
+    },
+    "Headers/IOKitUser/OSNumber.h": {
+      "sha": "377405c87d52d3a0b1bc046c3eaad8628126a929",
+      "mode": "100644",
+      "size": 32
+    },
+    "Headers/IOKitUser/OSObject.h": {
+      "sha": "4e5815435b31bc369bee6c6950d0a1d7da31ad8b",
+      "mode": "100644",
+      "size": 32
+    },
+    "Headers/IOKitUser/OSSerialization.h": {
+      "sha": "6635145e5052981c0b164a94a9da6c0624a6f2a2",
+      "mode": "100644",
+      "size": 39
+    },
+    "Headers/IOKitUser/OSString.h": {
+      "sha": "094407001ed9b91f9745ccf9c3833720c4cbdb53",
+      "mode": "100644",
+      "size": 32
+    },
+    "Headers/PCIDriverKit/IOPCIDevice.h": {
+      "sha": "2c6476dc9323436d865804fa9b0b611bc6bc6932",
+      "mode": "100644",
+      "size": 23326
+    },
+    "Headers/PCIDriverKit/IOPCIDevice.iig": {
+      "sha": "9ffeed6e6e7c234d0b62859a7c047330150fee9e",
+      "mode": "100644",
+      "size": 15128
+    },
+    "Headers/PCIDriverKit/IOPCIFamilyDefinitions.h": {
+      "sha": "4cf01c40c0c40c6bf669d537b663dc135078d060",
+      "mode": "100644",
+      "size": 9432
+    },
+    "Headers/PCIDriverKit/PCIDriverKit.h": {
+      "sha": "733af62ccbb43d1cd502710ad0f60a4f796c0798",
+      "mode": "100644",
+      "size": 1489
+    },
+    "Headers/TargetConditionals.h": {
+      "sha": "dff3df1cd3f023af1c873f7c9db8b254cb8952f2",
+      "mode": "100644",
+      "size": 20570
+    },
+    "Headers/USBDriverKit/AppleUSBDefinitions.h": {
+      "sha": "257b46f4abc129db3482b191fb803982a2b635eb",
+      "mode": "100644",
+      "size": 47426
+    },
+    "Headers/USBDriverKit/AppleUSBDescriptorParsing.h": {
+      "sha": "6d0d85d8ed362290c907e30aa81cb29c01d8e19c",
+      "mode": "100644",
+      "size": 19973
+    },
+    "Headers/USBDriverKit/IOUSBHostDevice.h": {
+      "sha": "a2e8d2102c4adc2823f94eba97942a3479bf7d8f",
+      "mode": "100644",
+      "size": 36015
+    },
+    "Headers/USBDriverKit/IOUSBHostDevice.iig": {
+      "sha": "bf819ca79a76e3aa1b6531ff0fcfe1dfe0e0dae3",
+      "mode": "100644",
+      "size": 20146
+    },
+    "Headers/USBDriverKit/IOUSBHostFamilyDefinitions.h": {
+      "sha": "f552863bcf0dae663345055a836744b834307a68",
+      "mode": "100644",
+      "size": 22072
+    },
+    "Headers/USBDriverKit/IOUSBHostInterface.h": {
+      "sha": "facb1301f0d2326fd688e1a2eca2cbc59b335dbc",
+      "mode": "100644",
+      "size": 25693
+    },
+    "Headers/USBDriverKit/IOUSBHostInterface.iig": {
+      "sha": "8e07580098b4562ea3448c9bcf5ea7a87264c72e",
+      "mode": "100644",
+      "size": 14590
+    },
+    "Headers/USBDriverKit/IOUSBHostPipe.h": {
+      "sha": "95334e2a230caabd9ab643ff64e3bf33c3dfe25e",
+      "mode": "100644",
+      "size": 32318
+    },
+    "Headers/USBDriverKit/IOUSBHostPipe.iig": {
+      "sha": "22ca9778f0dc94a6aa0eb013ee3ce5723f52372e",
+      "mode": "100644",
+      "size": 18438
+    },
+    "Headers/USBDriverKit/USBDriverKit.h": {
+      "sha": "1a66e33c98c3af01ab6280e80c7489d8c205b717",
+      "mode": "100644",
+      "size": 1723
+    },
+    "Headers/USBDriverKit/USBDriverKitDefs.h": {
+      "sha": "5dc1d94ca07ddd7057cc1cdf360935f734c26f31",
+      "mode": "100644",
+      "size": 2664
+    },
+    "Headers/UserNotification/KUNCUserNotifications.h": {
+      "sha": "4ced0a7b74d8c19820b86b02a3746859c9033abb",
+      "mode": "100644",
+      "size": 8725
+    },
+    "Headers/UserNotification/UNDReply.defs": {
+      "sha": "49e00ec23864493a1a619e1a3d6a96432150fca1",
+      "mode": "100644",
+      "size": 1739
+    },
+    "Headers/UserNotification/UNDRequest.defs": {
+      "sha": "bfe925c803652911c4226d815e50c85a6ef49678",
+      "mode": "100644",
+      "size": 3961
+    },
+    "Headers/UserNotification/UNDTypes.defs": {
+      "sha": "0a040bee3cec43d70816fd4a2073e75b977c2ab8",
+      "mode": "100644",
+      "size": 2111
+    },
+    "Headers/UserNotification/UNDTypes.h": {
+      "sha": "f36da2d28be9473cb212fbce8e7115aab7ed47ae",
+      "mode": "100644",
+      "size": 1917
+    },
+    "Headers/architecture/byte_order.h": {
+      "sha": "72507854a922046b2a04770e0d3ee08561036937",
+      "mode": "100644",
+      "size": 7006
+    },
+    "Headers/architecture/i386/asm_help.h": {
+      "sha": "8ac0c8c2f7c782a965ad8286819b454951c40317",
+      "mode": "100644",
+      "size": 9894
+    },
+    "Headers/architecture/i386/cpu.h": {
+      "sha": "0432ef9af7174b5536dc7802403f3d3daf306627",
+      "mode": "100644",
+      "size": 1710
+    },
+    "Headers/architecture/i386/desc.h": {
+      "sha": "a13a5590efc3cf226b06de9cee52b8b150343baf",
+      "mode": "100644",
+      "size": 3449
+    },
+    "Headers/architecture/i386/io.h": {
+      "sha": "840faf1cddd7e75a26d5eb28d34dcde5be7cb180",
+      "mode": "100644",
+      "size": 1552
+    },
+    "Headers/architecture/i386/pio.h": {
+      "sha": "c1f3760b5dc3a1f97c06451343e18eec3227788d",
+      "mode": "100644",
+      "size": 3526
+    },
+    "Headers/architecture/i386/reg_help.h": {
+      "sha": "af56a36f74edb8ea661dcae61b4ec87cf5aeab49",
+      "mode": "100644",
+      "size": 3647
+    },
+    "Headers/architecture/i386/sel.h": {
+      "sha": "9b35c3f5a3af914ffa6b3bc503a642e9912f8903",
+      "mode": "100644",
+      "size": 1807
+    },
+    "Headers/architecture/i386/table.h": {
+      "sha": "11647535ab3f084256e13da4bdc25e1189b1aba0",
+      "mode": "100644",
+      "size": 2540
+    },
+    "Headers/architecture/i386/tss.h": {
+      "sha": "cfc1f9b40c21ee68e7f26853323a84d7a09ba2bd",
+      "mode": "100644",
+      "size": 2946
+    },
+    "Headers/atm/atm_notification.defs": {
+      "sha": "256f99f615e7c6835fcc3bc5fab496dc5c3961f5",
+      "mode": "100644",
+      "size": 2159
+    },
+    "Headers/atm/atm_types.defs": {
+      "sha": "e2654eb9bbc32834ca98ee914dfd4bac257730da",
+      "mode": "100644",
+      "size": 1770
+    },
+    "Headers/atm/atm_types.h": {
+      "sha": "6008a71ab48ab40697974c949b0ad5019fae0bb6",
+      "mode": "100644",
+      "size": 2935
+    },
+    "Headers/bank/bank_types.h": {
+      "sha": "4541b31f9af7bcee3f3a28c37167fa6073b14cfa",
+      "mode": "100644",
+      "size": 2289
+    },
+    "Headers/bsm/audit.h": {
+      "sha": "895a72b35a047cc4e51bfd61a77090734ef2aa4f",
+      "mode": "100644",
+      "size": 10601
+    },
+    "Headers/console/serial_protos.h": {
+      "sha": "1e2bcbbcacbf6b7bceb4ce420ee85c59ebf3d22b",
+      "mode": "100644",
+      "size": 2308
+    },
+    "Headers/console/video_console.h": {
+      "sha": "ccebe8575991af391fc89828ebc8f2b8940ea89f",
+      "mode": "100644",
+      "size": 2357
+    },
+    "Headers/corecrypto/cc.h": {
+      "sha": "4b2a6dec239f80557b4897cf6672a4e246982b37",
+      "mode": "100644",
+      "size": 6242
+    },
+    "Headers/corecrypto/cc_config.h": {
+      "sha": "5fb1832884add5c815938e38237f9b5533efcc5d",
+      "mode": "100644",
+      "size": 16568
+    },
+    "Headers/corecrypto/cc_debug.h": {
+      "sha": "8cd85e2796266a1e4d1e318947647090b3a7aed5",
+      "mode": "100644",
+      "size": 1800
+    },
+    "Headers/corecrypto/cc_error.h": {
+      "sha": "b382cc5c1cc8ed4d5c7e2f872427d5a766f6f9df",
+      "mode": "100644",
+      "size": 4339
+    },
+    "Headers/corecrypto/cc_macros.h": {
+      "sha": "f678f944d07cf0e69d90006c84431d3391a70373",
+      "mode": "100644",
+      "size": 5024
+    },
+    "Headers/corecrypto/cc_priv.h": {
+      "sha": "6a201eade4b59191d874ffcae755cca6ec000b9c",
+      "mode": "100644",
+      "size": 20621
+    },
+    "Headers/corecrypto/cc_runtime_config.h": {
+      "sha": "996accee162f2af7a3bb31f9edfa925d35cae3fb",
+      "mode": "100644",
+      "size": 2023
+    },
+    "Headers/corecrypto/ccaes.h": {
+      "sha": "9c664b842c22d6952151783f22fbe6cc1c909feb",
+      "mode": "100644",
+      "size": 4508
+    },
+    "Headers/corecrypto/ccasn1.h": {
+      "sha": "75aac6e6826eebc607ea4b32cdf61cc65a9da08d",
+      "mode": "100644",
+      "size": 2602
+    },
+    "Headers/corecrypto/ccchacha20poly1305.h": {
+      "sha": "4ca59e63beb08be5df4ba837f00462f463ff3f88",
+      "mode": "100644",
+      "size": 9668
+    },
+    "Headers/corecrypto/cccmac.h": {
+      "sha": "e29e543dd16257d6f2a36d35dca595ab9045d268",
+      "mode": "100644",
+      "size": 5867
+    },
+    "Headers/corecrypto/ccder.h": {
+      "sha": "5bd102962f1d7ba1c4610c8b5712cee73804e851",
+      "mode": "100644",
+      "size": 12633
+    },
+    "Headers/corecrypto/ccdes.h": {
+      "sha": "31b5dadbf908a965e16f6c03b39acaa2f8180042",
+      "mode": "100644",
+      "size": 1807
+    },
+    "Headers/corecrypto/ccdigest.h": {
+      "sha": "fa2b765f937fa86476655ec730519c4810dceb21",
+      "mode": "100644",
+      "size": 4977
+    },
+    "Headers/corecrypto/ccdigest_priv.h": {
+      "sha": "8061c5faf94930533e8a9cdebde61dc64363fdc7",
+      "mode": "100644",
+      "size": 875
+    },
+    "Headers/corecrypto/ccdrbg.h": {
+      "sha": "14db0a16bc7de4d53c84d1524429aa5ab619ddd1",
+      "mode": "100644",
+      "size": 3500
+    },
+    "Headers/corecrypto/ccdrbg_impl.h": {
+      "sha": "499f58792d20be2bb1f9332aa0bb59ecb402ce32",
+      "mode": "100644",
+      "size": 2005
+    },
+    "Headers/corecrypto/cchmac.h": {
+      "sha": "3b6ac339b7a6ba8da0f1dc8803c42544af633b92",
+      "mode": "100644",
+      "size": 3067
+    },
+    "Headers/corecrypto/cckprng.h": {
+      "sha": "edcff9a61f7c9f292d7c23fff174444445c8aae8",
+      "mode": "100644",
+      "size": 11782
+    },
+    "Headers/corecrypto/ccmd5.h": {
+      "sha": "7e97a76f22b60771f2fed881841a3410fc0782d1",
+      "mode": "100644",
+      "size": 489
+    },
+    "Headers/corecrypto/ccmode.h": {
+      "sha": "f4aa20a9911c4c9b4f7be4276f9da29cfe2e5364",
+      "mode": "100644",
+      "size": 31514
+    },
+    "Headers/corecrypto/ccmode_factory.h": {
+      "sha": "aa8cb052772d10924b58d66355be498ee70c2893",
+      "mode": "100644",
+      "size": 6369
+    },
+    "Headers/corecrypto/ccmode_impl.h": {
+      "sha": "a0c6e24bc67fc5892f9ce1ae43aaa7d2a3ef0e84",
+      "mode": "100644",
+      "size": 8115
+    },
+    "Headers/corecrypto/ccmode_siv.h": {
+      "sha": "1b05c638ea2eb2a6b67c5740d8c34051700bf0c5",
+      "mode": "100644",
+      "size": 4036
+    },
+    "Headers/corecrypto/ccmode_siv_hmac.h": {
+      "sha": "2cbc9a131629fdd3bfa8bd8749b7258d45b67d51",
+      "mode": "100644",
+      "size": 9992
+    },
+    "Headers/corecrypto/ccn.h": {
+      "sha": "778f3e5cf6f2c69ae1ca4870cf50232467add3af",
+      "mode": "100644",
+      "size": 24599
+    },
+    "Headers/corecrypto/ccpad.h": {
+      "sha": "5f8e3c38c1cfc6147e67b6ec81d7407af25b56fe",
+      "mode": "100644",
+      "size": 4272
+    },
+    "Headers/corecrypto/ccpbkdf2.h": {
+      "sha": "bf1cd8f5a333749899dec0081609fa501af73c03",
+      "mode": "100644",
+      "size": 1577
+    },
+    "Headers/corecrypto/ccrc4.h": {
+      "sha": "eaf644d1db8471deeb49ef4b3ddd828298195839",
+      "mode": "100644",
+      "size": 864
+    },
+    "Headers/corecrypto/ccrng.h": {
+      "sha": "731f3e7bca8564d4873d7af20cc370f6c0877da8",
+      "mode": "100644",
+      "size": 2350
+    },
+    "Headers/corecrypto/ccrsa.h": {
+      "sha": "a2baa932be4e3d380d0f0b91c295d01982c38f6d",
+      "mode": "100644",
+      "size": 22133
+    },
+    "Headers/corecrypto/ccsha1.h": {
+      "sha": "4dc3c51942675a81b4a40008d0470e95540835de",
+      "mode": "100644",
+      "size": 894
+    },
+    "Headers/corecrypto/ccsha2.h": {
+      "sha": "e80c70e9e26891cb607006d1b798609f6ecf0265",
+      "mode": "100644",
+      "size": 2076
+    },
+    "Headers/corecrypto/cczp.h": {
+      "sha": "e77f6b863bddfe60e8659aef2f0c38f8a10f5625",
+      "mode": "100644",
+      "size": 4531
+    },
+    "Headers/corecrypto/fipspost_trace.h": {
+      "sha": "c236bebd7b70ee2bc103f03f104c8bcf7ec04152",
+      "mode": "100644",
+      "size": 1250
+    },
+    "Headers/corpses/task_corpse.h": {
+      "sha": "3482ff2ad7385fa669f987d3ca23fa58d7054321",
+      "mode": "100644",
+      "size": 1993
+    },
+    "Headers/default_pager/default_pager_types.h": {
+      "sha": "3e8fd8924730fc9a61048aff6ed0f6ae350e0bcf",
+      "mode": "100644",
+      "size": 2030
+    },
+    "Headers/device/device.defs": {
+      "sha": "29608375830e2c41a2cd400272194d92f25165f0",
+      "mode": "100644",
+      "size": 20776
+    },
+    "Headers/device/device_port.h": {
+      "sha": "2b0eaa18c93df84db9feec9a4a7afe95b34e193d",
+      "mode": "100644",
+      "size": 2979
+    },
+    "Headers/device/device_types.defs": {
+      "sha": "f88b7ae335bfcfd0c737e579035bc148361c0bd0",
+      "mode": "100644",
+      "size": 3659
+    },
+    "Headers/device/device_types.h": {
+      "sha": "ab1f78c137000be4ff77b985ba8cbb37987922e2",
+      "mode": "100644",
+      "size": 3613
+    },
+    "Headers/gssd/gssd_mach.defs": {
+      "sha": "845f3c534d4943761ca3124ff8d433f61018a8b4",
+      "mode": "100644",
+      "size": 5711
+    },
+    "Headers/gssd/gssd_mach.h": {
+      "sha": "c1c99639efbad49321de2a8679d793f710d5c4a4",
+      "mode": "100644",
+      "size": 19687
+    },
+    "Headers/gssd/gssd_mach_types.h": {
+      "sha": "d6468d645de73daa74605bcb24dc3d734f0aee5b",
+      "mode": "100644",
+      "size": 3094
+    },
+    "Headers/hfs/hfs_encodings.h": {
+      "sha": "02b13367a73a6c6c5ee9143459a9ba04b1c857c5",
+      "mode": "100644",
+      "size": 3218
+    },
+    "Headers/hfs/hfs_format.h": {
+      "sha": "89df0dc69b7770050b94faf7583739b1b8b696b0",
+      "mode": "100644",
+      "size": 31897
+    },
+    "Headers/hfs/hfs_mount.h": {
+      "sha": "929be66cf2b9425c9d1d61c245592b06e1db78ee",
+      "mode": "100644",
+      "size": 3073
+    },
+    "Headers/hfs/hfs_unistr.h": {
+      "sha": "5b300a28d1acc7023a7fca371a15e820aa8b19f8",
+      "mode": "100644",
+      "size": 2090
+    },
+    "Headers/i386/_limits.h": {
+      "sha": "0d46e8511fc15e3102853baa9c400620311d6793",
+      "mode": "100644",
+      "size": 1085
+    },
+    "Headers/i386/_mcontext.h": {
+      "sha": "ee3dfe990d010218e72343a815dacf3ef42bd95a",
+      "mode": "100644",
+      "size": 6172
+    },
+    "Headers/i386/_param.h": {
+      "sha": "3a0ac8bba7abbbbb5c0c174b14cd1424f1664878",
+      "mode": "100644",
+      "size": 2022
+    },
+    "Headers/i386/_types.h": {
+      "sha": "b115ed12daab546980669bc928e56b7850bc5a90",
+      "mode": "100644",
+      "size": 4964
+    },
+    "Headers/i386/asm.h": {
+      "sha": "50905a62e69503076ab975b11945312fbbfc137f",
+      "mode": "100644",
+      "size": 10653
+    },
+    "Headers/i386/cpu_topology.h": {
+      "sha": "50ea829c98e9dee597a3c2e0b90e0689fd5bc452",
+      "mode": "100644",
+      "size": 10635
+    },
+    "Headers/i386/cpuid.h": {
+      "sha": "2f8a5415313c358d4bf659dcae83a6a6490c1efa",
+      "mode": "100644",
+      "size": 21962
+    },
+    "Headers/i386/eflags.h": {
+      "sha": "1ac8b7268014fc428eb55e579a7743a770ff79b1",
+      "mode": "100644",
+      "size": 4000
+    },
+    "Headers/i386/endian.h": {
+      "sha": "34f936830a801d420f272e3012b175f991c7fdc8",
+      "mode": "100644",
+      "size": 4180
+    },
+    "Headers/i386/limits.h": {
+      "sha": "9bc2e5718409aa2460b035d66089ab88f4b771c9",
+      "mode": "100644",
+      "size": 5060
+    },
+    "Headers/i386/locks.h": {
+      "sha": "dc5239ab58ae8baa4944ebc657aa820560d83df7",
+      "mode": "100644",
+      "size": 1683
+    },
+    "Headers/i386/machine_routines.h": {
+      "sha": "23c4553fd0e93eec619bf7beb7748d05e07aad33",
+      "mode": "100644",
+      "size": 2171
+    },
+    "Headers/i386/param.h": {
+      "sha": "3c483d04a81ac02b590fec7c02437c342ae813e1",
+      "mode": "100644",
+      "size": 6740
+    },
+    "Headers/i386/pmCPU.h": {
+      "sha": "7328dbf3d730d165c7ae747972928d000570ed26",
+      "mode": "100644",
+      "size": 7706
+    },
+    "Headers/i386/proc_reg.h": {
+      "sha": "2146c776da4105946c96f6ae2dabad3515f13e97",
+      "mode": "100644",
+      "size": 23991
+    },
+    "Headers/i386/profile.h": {
+      "sha": "d2075608598c4b57e72ed9cba62eaaa6ee41d733",
+      "mode": "100644",
+      "size": 2031
+    },
+    "Headers/i386/signal.h": {
+      "sha": "1843b79e5119c837b8da0ae652aa3ca0721307da",
+      "mode": "100644",
+      "size": 1570
+    },
+    "Headers/i386/types.h": {
+      "sha": "eec4d62d6d8aa7f7012371824f81352fea54f96a",
+      "mode": "100644",
+      "size": 6324
+    },
+    "Headers/i386/vmparam.h": {
+      "sha": "abade89258ef0e5644373663c88327c85747cbda",
+      "mode": "100644",
+      "size": 2188
+    },
+    "Headers/i386/vmx.h": {
+      "sha": "894590d2dd674f1ee1f896cb3950b0b60339d303",
+      "mode": "100644",
+      "size": 1779
+    },
+    "Headers/ipc/ipc_types.h": {
+      "sha": "338f3913bf5e8e96c3fe53be96701b752679d61c",
+      "mode": "100644",
+      "size": 2026
+    },
+    "Headers/kdp/kdp_callout.h": {
+      "sha": "eb0431b9553cdab7e28c5ddf7586720a5629d588",
+      "mode": "100644",
+      "size": 1987
+    },
+    "Headers/kdp/kdp_en_debugger.h": {
+      "sha": "ea5d3d5000dc44692d71fbca47e81079a22122e9",
+      "mode": "100644",
+      "size": 1725
+    },
+    "Headers/kdp/kdp_support.h": {
+      "sha": "e1ebf6845cc5dca522627084fcb88ea0a569d0ff",
+      "mode": "100644",
+      "size": 20243
+    },
+    "Headers/kern/arcade.h": {
+      "sha": "e7390d2afc80ffa7d27b282117e7b6b8a1631f68",
+      "mode": "100644",
+      "size": 1498
+    },
+    "Headers/kern/arithmetic_128.h": {
+      "sha": "550e5546ac966fbf1a05ab90d732ae226a5e0a62",
+      "mode": "100644",
+      "size": 2847
+    },
+    "Headers/kern/assert.h": {
+      "sha": "73b701baa37d1bc7f2d08d6ea58171f4c4e9d2be",
+      "mode": "100644",
+      "size": 5304
+    },
+    "Headers/kern/backtrace.h": {
+      "sha": "4123482e1988abf9a8f644b3e5d299f71bd58839",
+      "mode": "100644",
+      "size": 5272
+    },
+    "Headers/kern/bits.h": {
+      "sha": "45ca44b265c152c7e337905a917553a9c65b279b",
+      "mode": "100644",
+      "size": 7829
+    },
+    "Headers/kern/block_hint.h": {
+      "sha": "cc84276848d375361faf896db361ac25a6ce1f92",
+      "mode": "100644",
+      "size": 2421
+    },
+    "Headers/kern/btlog.h": {
+      "sha": "a4893af14c351b3b4e461d17f44f7684b8199bd7",
+      "mode": "100644",
+      "size": 1529
+    },
+    "Headers/kern/call_entry.h": {
+      "sha": "90304a733884f396a6dde73581c8c02e4529a620",
+      "mode": "100644",
+      "size": 1474
+    },
+    "Headers/kern/circle_queue.h": {
+      "sha": "8d9453f5f3d8ccc6bd0b194ff6c2c5a6432d80f0",
+      "mode": "100644",
+      "size": 9320
+    },
+    "Headers/kern/clock.h": {
+      "sha": "d429f1aa1935a377bb0c6236c1569ebec9f54a7d",
+      "mode": "100644",
+      "size": 4779
+    },
+    "Headers/kern/coalition.h": {
+      "sha": "ea2a45479f5eeb2990b1522f29215a5b9819a720",
+      "mode": "100644",
+      "size": 1454
+    },
+    "Headers/kern/cpu_quiesce.h": {
+      "sha": "6ae840fe229229848c8350cae384c8b14fd3ee20",
+      "mode": "100644",
+      "size": 1415
+    },
+    "Headers/kern/cs_blobs.h": {
+      "sha": "5a26da66734e35b93223847e7eb620aa7522d66a",
+      "mode": "100644",
+      "size": 10919
+    },
+    "Headers/kern/debug.h": {
+      "sha": "c6120bddc740edce31140e014a95c44fba362dbb",
+      "mode": "100644",
+      "size": 17723
+    },
+    "Headers/kern/ecc.h": {
+      "sha": "399836b84fc16d26cb61e3117e48313230b04aac",
+      "mode": "100644",
+      "size": 1765
+    },
+    "Headers/kern/energy_perf.h": {
+      "sha": "c9dd7b2aa8faf647a0439d261a9e84d175ce2769",
+      "mode": "100644",
+      "size": 4073
+    },
+    "Headers/kern/exc_guard.h": {
+      "sha": "972b57bbba2975b46294e280c9a63dc66ee18c10",
+      "mode": "100644",
+      "size": 5654
+    },
+    "Headers/kern/exc_resource.h": {
+      "sha": "a7955c20b5ae2025994926cd7b03009b3d1cca6a",
+      "mode": "100644",
+      "size": 8655
+    },
+    "Headers/kern/extmod_statistics.h": {
+      "sha": "e518e3e5c1720aa573120039e48db90b92d4a861",
+      "mode": "100644",
+      "size": 1834
+    },
+    "Headers/kern/host.h": {
+      "sha": "0be00601d1687119fc40b2365e4abb3652bf5b0f",
+      "mode": "100644",
+      "size": 2817
+    },
+    "Headers/kern/hv_support.h": {
+      "sha": "a945a18b967fc29f129c7e9ffd7e1f913b7f0735",
+      "mode": "100644",
+      "size": 2939
+    },
+    "Headers/kern/ipc_kobject.h": {
+      "sha": "dc3ed6ebb8c809e99d631c03ea7d2d802bf97e9b",
+      "mode": "100644",
+      "size": 2874
+    },
+    "Headers/kern/ipc_mig.h": {
+      "sha": "53d8f7b94abacae0117c60af1be4d97359326589",
+      "mode": "100644",
+      "size": 2614
+    },
+    "Headers/kern/kcdata.h": {
+      "sha": "f00a3be8fd027cf46a406a76998602f06ec80dec",
+      "mode": "100644",
+      "size": 49130
+    },
+    "Headers/kern/kern_cdata.h": {
+      "sha": "8312aa14ba016d5dc7e1e31b56e92126cf13e859",
+      "mode": "100644",
+      "size": 3829
+    },
+    "Headers/kern/kern_types.h": {
+      "sha": "9d32780d2804b22f3101d0b98b49d8b2ba9f601e",
+      "mode": "100644",
+      "size": 8233
+    },
+    "Headers/kern/kext_alloc.h": {
+      "sha": "79bbbb8d30fb6e1608269af96c8fafd914a2c2bd",
+      "mode": "100644",
+      "size": 1640
+    },
+    "Headers/kern/kpc.h": {
+      "sha": "a7d964472449eaaa8fb603776b4ded436c8b1447",
+      "mode": "100644",
+      "size": 12133
+    },
+    "Headers/kern/ledger.h": {
+      "sha": "6a88705dea8f697732f0c217e75a8294ef71dc96",
+      "mode": "100644",
+      "size": 2457
+    },
+    "Headers/kern/lock_group.h": {
+      "sha": "024092523d954ebec7803ed46a249885ff8d99b0",
+      "mode": "100644",
+      "size": 2302
+    },
+    "Headers/kern/lock_stat.h": {
+      "sha": "a70e1a2222627443205360ec16ff4ae754b66869",
+      "mode": "100644",
+      "size": 5783
+    },
+    "Headers/kern/locks.h": {
+      "sha": "3dbfbb15ba2329d053031d135f8651049cbed692",
+      "mode": "100644",
+      "size": 10095
+    },
+    "Headers/kern/macro_help.h": {
+      "sha": "03d52e5a998e4d0acf87db96c59fdf1871080a89",
+      "mode": "100644",
+      "size": 2921
+    },
+    "Headers/kern/monotonic.h": {
+      "sha": "1ef3cd48d269486ebbb8ae74622a95a0f6914859",
+      "mode": "100644",
+      "size": 1927
+    },
+    "Headers/kern/mpqueue.h": {
+      "sha": "46ac66890efa7b0d5659ee78a7e40bde133ca77d",
+      "mode": "100644",
+      "size": 130
+    },
+    "Headers/kern/mpsc_queue.h": {
+      "sha": "7ad00003177b6c451028cc32ea5eb40c6418313f",
+      "mode": "100644",
+      "size": 5109
+    },
+    "Headers/kern/policy_internal.h": {
+      "sha": "52863b52ea9276a91e6f936836be0f9cde74e8da",
+      "mode": "100644",
+      "size": 1520
+    },
+    "Headers/kern/priority_queue.h": {
+      "sha": "fc35f70a3182de987a82a24b002242ccde9f51d7",
+      "mode": "100644",
+      "size": 34074
+    },
+    "Headers/kern/processor.h": {
+      "sha": "4bf603468fa11333422793e98adc6cfe0c4cdae8",
+      "mode": "100644",
+      "size": 2819
+    },
+    "Headers/kern/queue.h": {
+      "sha": "ebb2dfa98326c98d918356c691247984fb25acd2",
+      "mode": "100644",
+      "size": 32654
+    },
+    "Headers/kern/remote_time.h": {
+      "sha": "020e845b476bb7bc9f392d1cf87e69855bfaf718",
+      "mode": "100644",
+      "size": 2493
+    },
+    "Headers/kern/restartable.h": {
+      "sha": "37cfe14b78c7ed8edbee9e638f9ab7ad54a6d51c",
+      "mode": "100644",
+      "size": 3530
+    },
+    "Headers/kern/sched_amp_common.h": {
+      "sha": "e29cf07f3e348e6499fde5a486ae4369f04aa4b7",
+      "mode": "100644",
+      "size": 3549
+    },
+    "Headers/kern/sched_clutch.h": {
+      "sha": "b934bebdfef41d71dbcae8c29efa4dc4be395cac",
+      "mode": "100644",
+      "size": 11707
+    },
+    "Headers/kern/sched_prim.h": {
+      "sha": "3c338726ff96ba009af261eeefea256ef966dcf5",
+      "mode": "100644",
+      "size": 5203
+    },
+    "Headers/kern/sfi.h": {
+      "sha": "6bc25a06e098766494d3602fe5efce0ba4070e92",
+      "mode": "100644",
+      "size": 2189
+    },
+    "Headers/kern/task.h": {
+      "sha": "3433b91676a2d3eb4f0977c0feed95c1d711522b",
+      "mode": "100644",
+      "size": 5321
+    },
+    "Headers/kern/telemetry.h": {
+      "sha": "28e1f7439b31112d7959bd8490bb3da7ec97ae3b",
+      "mode": "100644",
+      "size": 1809
+    },
+    "Headers/kern/thread.h": {
+      "sha": "ddafde78a287d25f0815278e64097b9dd4e04e4c",
+      "mode": "100644",
+      "size": 6242
+    },
+    "Headers/kern/thread_call.h": {
+      "sha": "09cf94f2a28583f93c90c0dc858e9bb077e34e64",
+      "mode": "100644",
+      "size": 10949
+    },
+    "Headers/kern/thread_group.h": {
+      "sha": "2ceea2a393610b45e4811cc944aecc9aefca1077",
+      "mode": "100644",
+      "size": 4660
+    },
+    "Headers/kern/timer_call.h": {
+      "sha": "b03f2682709314aaefd0974c1d9bf9552ed333b0",
+      "mode": "100644",
+      "size": 1540
+    },
+    "Headers/kern/trustcache.h": {
+      "sha": "c12f2874caea38d5d1c76100c642a05799286ed6",
+      "mode": "100644",
+      "size": 2914
+    },
+    "Headers/kern/turnstile.h": {
+      "sha": "cfbf7337aa81ba1ce1affabcbf072aa10f0dc91c",
+      "mode": "100644",
+      "size": 1478
+    },
+    "Headers/kern/ux_handler.h": {
+      "sha": "6784c71250e41efb7e1fea3bbab068e8bfc5da30",
+      "mode": "100644",
+      "size": 1603
+    },
+    "Headers/kern/waitq.h": {
+      "sha": "2e7f092d55cf1c00d73715d9c9bff7f5e78c4da7",
+      "mode": "100644",
+      "size": 1395
+    },
+    "Headers/kern/work_interval.h": {
+      "sha": "494377e3f9b91cf31534527575bb1566f511a843",
+      "mode": "100644",
+      "size": 2490
+    },
+    "Headers/kextd/kextd_mach.defs": {
+      "sha": "9597f4a24fb8dc208544cc04e66308ea94bbb767",
+      "mode": "100644",
+      "size": 1595
+    },
+    "Headers/kextd/kextd_mach.h": {
+      "sha": "6e24a2ac5cd02b029fd676e2ed2660ceecedc435",
+      "mode": "100644",
+      "size": 4382
+    },
+    "Headers/libkern/Block.h": {
+      "sha": "6272d40f30fe5d9a17b31f20da9e26113ae843eb",
+      "mode": "100644",
+      "size": 1718
+    },
+    "Headers/libkern/OSAtomic.h": {
+      "sha": "f6f9735bd6cc60aa3b70ad34ddfde3c2b855d930",
+      "mode": "100644",
+      "size": 25322
+    },
+    "Headers/libkern/OSBase.h": {
+      "sha": "9a34bd5198e1f920e9a52bd605886e76947aa764",
+      "mode": "100644",
+      "size": 2724
+    },
+    "Headers/libkern/OSByteOrder.h": {
+      "sha": "d9712031e5103030390c0f0bccb88a00d017f440",
+      "mode": "100644",
+      "size": 10502
+    },
+    "Headers/libkern/OSDebug.h": {
+      "sha": "14d65743c6ac1939bb92527b4568108da03d1f95",
+      "mode": "100644",
+      "size": 2503
+    },
+    "Headers/libkern/OSKextLib.h": {
+      "sha": "71252530e7c1225afbb3df7630803231f933023d",
+      "mode": "100644",
+      "size": 36790
+    },
+    "Headers/libkern/OSMalloc.h": {
+      "sha": "33604f9673b119c1722422e7405c414bd36f5c78",
+      "mode": "100644",
+      "size": 6985
+    },
+    "Headers/libkern/OSReturn.h": {
+      "sha": "6a407e65c1ef524a15af655820f202c32900e430",
+      "mode": "100644",
+      "size": 6293
+    },
+    "Headers/libkern/OSTypes.h": {
+      "sha": "98270d13b8b6287591ded1f66176c75fb90e20e3",
+      "mode": "100644",
+      "size": 3388
+    },
+    "Headers/libkern/_OSByteOrder.h": {
+      "sha": "89c2714b3bae33af1d1ecdbfc1eae973dbb57442",
+      "mode": "100644",
+      "size": 4240
+    },
+    "Headers/libkern/c++/OSArray.h": {
+      "sha": "73edeb601b9ed838378294d78679cc8ab79ebd80",
+      "mode": "100644",
+      "size": 22438
+    },
+    "Headers/libkern/c++/OSBoolean.h": {
+      "sha": "67e3b840beb17ad42d9831f9f718f1c2f93288f1",
+      "mode": "100644",
+      "size": 7490
+    },
+    "Headers/libkern/c++/OSCPPDebug.h": {
+      "sha": "11e45a375157389ef80d6b9769233d137913ef1a",
+      "mode": "100644",
+      "size": 1830
+    },
+    "Headers/libkern/c++/OSCollection.h": {
+      "sha": "f8f82f5747e5252e20e997418db4d2f0689ea172",
+      "mode": "100644",
+      "size": 14932
+    },
+    "Headers/libkern/c++/OSCollectionIterator.h": {
+      "sha": "eb57231d99ce36b9eaa5b8eaff62509c03e39ff7",
+      "mode": "100644",
+      "size": 6341
+    },
+    "Headers/libkern/c++/OSContainers.h": {
+      "sha": "f3e07940ef634cd78f0daaafb7aa52b56daa0468",
+      "mode": "100644",
+      "size": 1947
+    },
+    "Headers/libkern/c++/OSData.h": {
+      "sha": "4e99282936cf93a8ed796d795c1416de5dceebcb",
+      "mode": "100644",
+      "size": 21355
+    },
+    "Headers/libkern/c++/OSDictionary.h": {
+      "sha": "651938aac08aa537fa8d2f557269ecab1ed0d2ed",
+      "mode": "100644",
+      "size": 30908
+    },
+    "Headers/libkern/c++/OSEndianTypes.h": {
+      "sha": "487eb3ec7cc340ac978e45700bdf6a37db003fba",
+      "mode": "100644",
+      "size": 6894
+    },
+    "Headers/libkern/c++/OSIterator.h": {
+      "sha": "a9c049b8721a83398ba08d2681b7e011edc51d0f",
+      "mode": "100644",
+      "size": 4148
+    },
+    "Headers/libkern/c++/OSKext.h": {
+      "sha": "e0b04a339e53c3f84798801171cdab402e5528e2",
+      "mode": "100644",
+      "size": 18396
+    },
+    "Headers/libkern/c++/OSLib.h": {
+      "sha": "ba2e3d460843e2e1842afa980630e7932eddb574",
+      "mode": "100644",
+      "size": 1715
+    },
+    "Headers/libkern/c++/OSMetaClass.h": {
+      "sha": "29da4ed9c82e896fc5be3cd4d965207f4ad94a08",
+      "mode": "100644",
+      "size": 71194
+    },
+    "Headers/libkern/c++/OSNumber.h": {
+      "sha": "34a9472d57fe093741e81c6d9cb50863539de02b",
+      "mode": "100644",
+      "size": 12206
+    },
+    "Headers/libkern/c++/OSObject.h": {
+      "sha": "ff89e38e2baad5f37c092a2a51d16eb2a3db586f",
+      "mode": "100644",
+      "size": 14473
+    },
+    "Headers/libkern/c++/OSOrderedSet.h": {
+      "sha": "dc1a61d20a143c211b8a0a11fb65801ee59c1207",
+      "mode": "100644",
+      "size": 24257
+    },
+    "Headers/libkern/c++/OSPtr.h": {
+      "sha": "a3042c950889e37e106871b9611475b3a0a37acd",
+      "mode": "100644",
+      "size": 2474
+    },
+    "Headers/libkern/c++/OSSerialize.h": {
+      "sha": "c99c1e9147e031d4a454112a461ce020ccfe470f",
+      "mode": "100644",
+      "size": 10101
+    },
+    "Headers/libkern/c++/OSSet.h": {
+      "sha": "9c7718807a0e7b8b7e9501a2cd8af3ebb7deb370",
+      "mode": "100644",
+      "size": 24191
+    },
+    "Headers/libkern/c++/OSString.h": {
+      "sha": "a5b384addd5c55fcc497897616ef8fdd16fc1631",
+      "mode": "100644",
+      "size": 12928
+    },
+    "Headers/libkern/c++/OSSymbol.h": {
+      "sha": "418d66ed8844bc941071d65b6c5793076d8de7d0",
+      "mode": "100644",
+      "size": 12386
+    },
+    "Headers/libkern/c++/OSUnserialize.h": {
+      "sha": "7545bd08c28db3b185f0ad8ac037da6fbca005c8",
+      "mode": "100644",
+      "size": 3752
+    },
+    "Headers/libkern/copyio.h": {
+      "sha": "fc782cf05be0debf11a09967df909e30460dd084",
+      "mode": "100644",
+      "size": 2523
+    },
+    "Headers/libkern/crc.h": {
+      "sha": "f34eab1473455fdb777c8de4f45c98c9fdf21338",
+      "mode": "100644",
+      "size": 1611
+    },
+    "Headers/libkern/crypto/Makefile": {
+      "sha": "f5544e8cf6517b969e2c86bd74c410f62660bbac",
+      "mode": "100644",
+      "size": 643
+    },
+    "Headers/libkern/crypto/aes.h": {
+      "sha": "bd8c84c63dafa936dbf323c219171d1794a21423",
+      "mode": "100644",
+      "size": 5299
+    },
+    "Headers/libkern/crypto/aesxts.h": {
+      "sha": "3246e7892f455e93369988f55936105c1b96f442",
+      "mode": "100644",
+      "size": 2830
+    },
+    "Headers/libkern/crypto/chacha20poly1305.h": {
+      "sha": "58620a792de26c35c2c35a38a69dbc13f351c6a2",
+      "mode": "100644",
+      "size": 2323
+    },
+    "Headers/libkern/crypto/crypto_internal.h": {
+      "sha": "3abbe5dd27a4d228a786ae681f7c281b65de84b2",
+      "mode": "100644",
+      "size": 1640
+    },
+    "Headers/libkern/crypto/des.h": {
+      "sha": "a3efc08def95be72357bb8e458abaa88f7fc402c",
+      "mode": "100644",
+      "size": 2698
+    },
+    "Headers/libkern/crypto/md5.h": {
+      "sha": "87102b3d3b61f14c4c23d6b5bae1ee1acbb44cde",
+      "mode": "100644",
+      "size": 2874
+    },
+    "Headers/libkern/crypto/rand.h": {
+      "sha": "8d99cf7b99522b76737622caabf3d558674491f4",
+      "mode": "100644",
+      "size": 1571
+    },
+    "Headers/libkern/crypto/register_crypto.h": {
+      "sha": "d804f53ac08e3c452449d12cde360359f6b69784",
+      "mode": "100644",
+      "size": 8083
+    },
+    "Headers/libkern/crypto/rsa.h": {
+      "sha": "d8a6a541fa3348522c36768767e1961a74039eec",
+      "mode": "100644",
+      "size": 1895
+    },
+    "Headers/libkern/crypto/sha1.h": {
+      "sha": "58f2265b2f0b9f9aa9e1a98a62a17a1ac4b1b017",
+      "mode": "100644",
+      "size": 2437
+    },
+    "Headers/libkern/crypto/sha2.h": {
+      "sha": "2e93f35d7cc6766f0996014362a7b6c57fa14f19",
+      "mode": "100644",
+      "size": 2932
+    },
+    "Headers/libkern/i386/OSByteOrder.h": {
+      "sha": "84c632bb521ac4c787183d71aede0fb8cfdb8d28",
+      "mode": "100644",
+      "size": 2844
+    },
+    "Headers/libkern/i386/_OSByteOrder.h": {
+      "sha": "e95c3975d46035313c3928d467613da48ff32483",
+      "mode": "100644",
+      "size": 2704
+    },
+    "Headers/libkern/libkern.h": {
+      "sha": "c4347d013e40ac40c721de03b6f8f6499b9dff25",
+      "mode": "100644",
+      "size": 7414
+    },
+    "Headers/libkern/locks.h": {
+      "sha": "cde5b13939d598a796f0e142502cb006bf3068f4",
+      "mode": "100644",
+      "size": 1492
+    },
+    "Headers/libkern/machine/OSByteOrder.h": {
+      "sha": "6fd731437448d19167e90966d31d45ad45df7f9e",
+      "mode": "100644",
+      "size": 3585
+    },
+    "Headers/libkern/sysctl.h": {
+      "sha": "7951128e2ef2bd8dcbf4be4626d0b889f719e5b8",
+      "mode": "100644",
+      "size": 6362
+    },
+    "Headers/libkern/tree.h": {
+      "sha": "5cf38cbc036bc279b5f3ca57c6d10dc8dfd01ddd",
+      "mode": "100644",
+      "size": 50288
+    },
+    "Headers/libkern/version.h": {
+      "sha": "1642365c37875ccfbeb061fce037bdcb41da38e6",
+      "mode": "100644",
+      "size": 3622
+    },
+    "Headers/libkern/zconf.h": {
+      "sha": "919a81322b57e661c3fd9352e9956c5b949a2fd6",
+      "mode": "100644",
+      "size": 10805
+    },
+    "Headers/libkern/zlib.h": {
+      "sha": "791c4b66414d24a28faf719fd621d30157a76697",
+      "mode": "100644",
+      "size": 59401
+    },
+    "Headers/lockd/lockd_mach.defs": {
+      "sha": "b28f2d036ffbcbb8d13beded6077aaa92600ba16",
+      "mode": "100644",
+      "size": 2136
+    },
+    "Headers/lockd/lockd_mach.h": {
+      "sha": "7f7728bead3c038ae10fe8ca6776c97fe558be1f",
+      "mode": "100644",
+      "size": 6142
+    },
+    "Headers/lockd/lockd_mach_types.h": {
+      "sha": "4196b720b192617ffd61ddc117752af506919d88",
+      "mode": "100644",
+      "size": 1889
+    },
+    "Headers/mach-o/fat.h": {
+      "sha": "e2bcf433d518ee192244d31ce063611ec2f9d3fa",
+      "mode": "100644",
+      "size": 2534
+    },
+    "Headers/mach-o/loader.h": {
+      "sha": "b40dba1c791d3878af17c1d020b05b1e9af0e2a8",
+      "mode": "100644",
+      "size": 71984
+    },
+    "Headers/mach-o/nlist.h": {
+      "sha": "96b0cd5d56cccac3932c64fa0ef23ea2dce079ef",
+      "mode": "100644",
+      "size": 13984
+    },
+    "Headers/mach-o/reloc.h": {
+      "sha": "d5741efa3fe1428fd36eb26f6c494ce425d4dd92",
+      "mode": "100644",
+      "size": 10506
+    },
+    "Headers/mach/arcade_upcall_server.h": {
+      "sha": "dbe72654fe740377e5aa1dde36722b4c28c1c669",
+      "mode": "100644",
+      "size": 4661
+    },
+    "Headers/mach/audit_triggers.defs": {
+      "sha": "1d6e279b688f0799a7a64eba890d4cc25127bd60",
+      "mode": "100644",
+      "size": 1947
+    },
+    "Headers/mach/audit_triggers_server.h": {
+      "sha": "dd4ec37c52478c28144063d1ac405a611d23362b",
+      "mode": "100644",
+      "size": 4403
+    },
+    "Headers/mach/boolean.h": {
+      "sha": "6ef6d4bcd578cd5211e881e337cde6a6400e8395",
+      "mode": "100644",
+      "size": 2823
+    },
+    "Headers/mach/clock.defs": {
+      "sha": "440042c862b786e2c774d3db39ed99345506997c",
+      "mode": "100644",
+      "size": 2454
+    },
+    "Headers/mach/clock.h": {
+      "sha": "81e90eea3bbe632a6bb4f0b96bb8198d8556558b",
+      "mode": "100644",
+      "size": 6105
+    },
+    "Headers/mach/clock_priv.defs": {
+      "sha": "b3854a4ece77feb00bf242b09898c4d8b6b2dde9",
+      "mode": "100644",
+      "size": 2143
+    },
+    "Headers/mach/clock_priv.h": {
+      "sha": "ec6a65840d967e5a5178755378138b6e80764423",
+      "mode": "100644",
+      "size": 5163
+    },
+    "Headers/mach/clock_reply.defs": {
+      "sha": "9646f90da077a8b3740fc93033806795163454b8",
+      "mode": "100644",
+      "size": 1925
+    },
+    "Headers/mach/clock_reply_server.h": {
+      "sha": "f74b3f9b113b5c83b13b9758520b851b19357718",
+      "mode": "100644",
+      "size": 4475
+    },
+    "Headers/mach/clock_types.defs": {
+      "sha": "4dbacfcf1b151584067208a035476ac60dfb9285",
+      "mode": "100644",
+      "size": 2386
+    },
+    "Headers/mach/clock_types.h": {
+      "sha": "9b3d49a94b7847f3442d3b266df535166cd3370e",
+      "mode": "100644",
+      "size": 5469
+    },
+    "Headers/mach/coalition_notification_server.h": {
+      "sha": "dedbb20704e57d48bf45650c0e062caeb7fba065",
+      "mode": "100644",
+      "size": 4735
+    },
+    "Headers/mach/dyld_kernel.h": {
+      "sha": "b28e45f1996ba16062a693653dc61ef95251dd0c",
+      "mode": "100644",
+      "size": 2623
+    },
+    "Headers/mach/error.h": {
+      "sha": "50c77b9cdad55080858899a4336c78f2c1eb5534",
+      "mode": "100644",
+      "size": 4181
+    },
+    "Headers/mach/exc.defs": {
+      "sha": "734e7408fea00b96523a9348aa38195ef823a09e",
+      "mode": "100644",
+      "size": 4020
+    },
+    "Headers/mach/exc_server.h": {
+      "sha": "5745a348941c1cc6c95ccd926ee0e1c02e41a048",
+      "mode": "100644",
+      "size": 7545
+    },
+    "Headers/mach/exception.h": {
+      "sha": "7baea7034391eac897db535fb10256b8b56667c6",
+      "mode": "100644",
+      "size": 2521
+    },
+    "Headers/mach/exception_types.h": {
+      "sha": "ccbcf0bb42b636077162eb4d23bdd153c203f579",
+      "mode": "100644",
+      "size": 7887
+    },
+    "Headers/mach/fairplayd_notification_server.h": {
+      "sha": "512d5bd44dd8e51c180e4924b84987789f0f0a4c",
+      "mode": "100644",
+      "size": 4481
+    },
+    "Headers/mach/host_info.h": {
+      "sha": "648d25ca796675c7d21e656a875bede81dd72289",
+      "mode": "100644",
+      "size": 10486
+    },
+    "Headers/mach/host_notify.h": {
+      "sha": "cda654bf4c33866c55262dfd99b1324d0ad6413d",
+      "mode": "100644",
+      "size": 1672
+    },
+    "Headers/mach/host_notify_reply.defs": {
+      "sha": "469777cb5e6c5fb65a22dcbf95fb85621057e7b0",
+      "mode": "100644",
+      "size": 1640
+    },
+    "Headers/mach/host_priv.defs": {
+      "sha": "83f601b5a39e6a49be5c382ae4a935df394f240c",
+      "mode": "100644",
+      "size": 10863
+    },
+    "Headers/mach/host_priv.h": {
+      "sha": "33d87f2f2318ddce5f09b05c0810517492df1b16",
+      "mode": "100644",
+      "size": 28317
+    },
+    "Headers/mach/host_reboot.h": {
+      "sha": "02d8d089abf498e1e52109a01e0eab12c325bdb4",
+      "mode": "100644",
+      "size": 1568
+    },
+    "Headers/mach/host_security.defs": {
+      "sha": "4098df44ec9de643952e45f3899f13b1fccd997f",
+      "mode": "100644",
+      "size": 3260
+    },
+    "Headers/mach/host_security.h": {
+      "sha": "a7928db8efdb482ea0bbd22d5140cedab08e7b62",
+      "mode": "100644",
+      "size": 6216
+    },
+    "Headers/mach/host_special_ports.h": {
+      "sha": "d09b44b6b624b9fe1dcf928953ddd0819390130d",
+      "mode": "100644",
+      "size": 11841
+    },
+    "Headers/mach/i386/_structs.h": {
+      "sha": "c9cc8992cf26c33f5fd9038981785f84e5270723",
+      "mode": "100644",
+      "size": 41447
+    },
+    "Headers/mach/i386/asm.h": {
+      "sha": "50905a62e69503076ab975b11945312fbbfc137f",
+      "mode": "100644",
+      "size": 10653
+    },
+    "Headers/mach/i386/boolean.h": {
+      "sha": "189bccfe66752db2c94be8f89116423033b020cf",
+      "mode": "100644",
+      "size": 2590
+    },
+    "Headers/mach/i386/exception.h": {
+      "sha": "44b5272d30ea60792e215896663cc90ef95b4308",
+      "mode": "100644",
+      "size": 4730
+    },
+    "Headers/mach/i386/fp_reg.h": {
+      "sha": "3593705935d99f4e8afa49be65033f1b069d5c7f",
+      "mode": "100644",
+      "size": 5268
+    },
+    "Headers/mach/i386/kern_return.h": {
+      "sha": "5caefe8a6f937390584268ff7b0116171ef3f938",
+      "mode": "100644",
+      "size": 2735
+    },
+    "Headers/mach/i386/ndr_def.h": {
+      "sha": "0e36b2ff75b72f080db1c1e2dcb155f10688881e",
+      "mode": "100644",
+      "size": 1657
+    },
+    "Headers/mach/i386/processor_info.h": {
+      "sha": "a1930895ec15be2e773f99da5ed6b105eb038708",
+      "mode": "100644",
+      "size": 1561
+    },
+    "Headers/mach/i386/rpc.h": {
+      "sha": "396bdea32cbc457dedca48f0c333112ee3c55a19",
+      "mode": "100644",
+      "size": 1447
+    },
+    "Headers/mach/i386/sdt_isa.h": {
+      "sha": "8c48f7b0c4017336a21dd9d537cf0190deafabec",
+      "mode": "100644",
+      "size": 16362
+    },
+    "Headers/mach/i386/thread_state.h": {
+      "sha": "759489dcf7bc4f492e13a931e2c3fc26488ca07a",
+      "mode": "100644",
+      "size": 1714
+    },
+    "Headers/mach/i386/thread_status.h": {
+      "sha": "105fe352df7e04da320246ce46db4a4d7e9d56e0",
+      "mode": "100644",
+      "size": 11976
+    },
+    "Headers/mach/i386/vm_param.h": {
+      "sha": "fc37cd1d805c32be7fa69f15d227e3e312d12618",
+      "mode": "100644",
+      "size": 6513
+    },
+    "Headers/mach/i386/vm_types.h": {
+      "sha": "f75fd05a919a2ac2814d887b3f1143577293f836",
+      "mode": "100644",
+      "size": 4873
+    },
+    "Headers/mach/kern_return.h": {
+      "sha": "cbc29d937418d6716a04b7b9b3944649886e8500",
+      "mode": "100644",
+      "size": 9620
+    },
+    "Headers/mach/kmod.h": {
+      "sha": "d23086b52f800e4ab96ec8d34d684cbaa39ee480",
+      "mode": "100644",
+      "size": 6533
+    },
+    "Headers/mach/ktrace_background.h": {
+      "sha": "668e35d46ede40107642c43c3e1abe97efd32d94",
+      "mode": "100644",
+      "size": 4410
+    },
+    "Headers/mach/lock_set.defs": {
+      "sha": "d4cb9abb61587f096d3f9239354fe58b390d2465",
+      "mode": "100644",
+      "size": 2262
+    },
+    "Headers/mach/lock_set.h": {
+      "sha": "e4dcf8a829aaaadb88f2eb654137df7e56264bbb",
+      "mode": "100644",
+      "size": 7997
+    },
+    "Headers/mach/mach_exc.defs": {
+      "sha": "5ce6427bc7b09c2ca5d149b44f58bc5367fd1849",
+      "mode": "100644",
+      "size": 4087
+    },
+    "Headers/mach/mach_exc_server.h": {
+      "sha": "f7d36aa796154f8e451c290b0286554421528d91",
+      "mode": "100644",
+      "size": 7824
+    },
+    "Headers/mach/mach_host.defs": {
+      "sha": "0362360b588b7dc25c6f645c06b1d6c4a0a74577",
+      "mode": "100644",
+      "size": 8698
+    },
+    "Headers/mach/mach_host.h": {
+      "sha": "fba930b71087ae782ae45d8f72e9cb0b14130d6e",
+      "mode": "100644",
+      "size": 33551
+    },
+    "Headers/mach/mach_interface.h": {
+      "sha": "418661a60a9f147e3b4735f890aef60ffc1dc041",
+      "mode": "100644",
+      "size": 1918
+    },
+    "Headers/mach/mach_param.h": {
+      "sha": "fb426130163ba48b4099d22436a8098be42fde0a",
+      "mode": "100644",
+      "size": 2776
+    },
+    "Headers/mach/mach_port.defs": {
+      "sha": "ab9df200240eae057cda51861d61b7c1a27cdad2",
+      "mode": "100644",
+      "size": 19103
+    },
+    "Headers/mach/mach_port.h": {
+      "sha": "844c347e3917d1d36230188923fc925cbeae9165",
+      "mode": "100644",
+      "size": 43669
+    },
+    "Headers/mach/mach_time.h": {
+      "sha": "79f2ca49f1785ece416471a70d6dd82a8c4196f8",
+      "mode": "100644",
+      "size": 2360
+    },
+    "Headers/mach/mach_types.defs": {
+      "sha": "b8dddaa35881edc0847a052dcb475ef76f634759",
+      "mode": "100644",
+      "size": 19751
+    },
+    "Headers/mach/mach_types.h": {
+      "sha": "3d7d9629a451e4098061d5d7de52010179f938bf",
+      "mode": "100644",
+      "size": 10086
+    },
+    "Headers/mach/mach_vm.defs": {
+      "sha": "682d2417cdf509be0bd5814b7bf5b62269f40dca",
+      "mode": "100644",
+      "size": 16466
+    },
+    "Headers/mach/mach_vm.h": {
+      "sha": "288b8cee8c52ec89d2c928b8158edf76696323ed",
+      "mode": "100644",
+      "size": 25906
+    },
+    "Headers/mach/mach_voucher.defs": {
+      "sha": "6d370a5b25609c51fbaf3bd6b178783e81cab42a",
+      "mode": "100644",
+      "size": 2768
+    },
+    "Headers/mach/mach_voucher.h": {
+      "sha": "8c49b6820229023eb8c6d9e92280245ef680d0dd",
+      "mode": "100644",
+      "size": 9287
+    },
+    "Headers/mach/mach_voucher_attr_control.defs": {
+      "sha": "89fb66cc89e8124e14df1dad13e1df392d728cad",
+      "mode": "100644",
+      "size": 2053
+    },
+    "Headers/mach/mach_voucher_attr_control.h": {
+      "sha": "78b1810cb72febad91d4461e2c78e88ae5ce911e",
+      "mode": "100644",
+      "size": 6382
+    },
+    "Headers/mach/mach_voucher_types.h": {
+      "sha": "73ae77eafda1e379c876779dcd75c7e413f41967",
+      "mode": "100644",
+      "size": 10421
+    },
+    "Headers/mach/machine.h": {
+      "sha": "a209623264446a33a1186abe7171a3dbc9cdc23b",
+      "mode": "100644",
+      "size": 15744
+    },
+    "Headers/mach/machine/_structs.h": {
+      "sha": "e0bdc10828dbf88d0e0677b90dc5a398df7887a3",
+      "mode": "100644",
+      "size": 1555
+    },
+    "Headers/mach/machine/asm.h": {
+      "sha": "1cdbb8109d9c578f4d7487206cc259565e713937",
+      "mode": "100644",
+      "size": 1541
+    },
+    "Headers/mach/machine/boolean.h": {
+      "sha": "6423078b8bf98ed633e24986f72c8730da56eba4",
+      "mode": "100644",
+      "size": 1556
+    },
+    "Headers/mach/machine/exception.h": {
+      "sha": "5a85bd37f3035a3f66ff0db374b3cd1b61cc1156",
+      "mode": "100644",
+      "size": 1564
+    },
+    "Headers/mach/machine/kern_return.h": {
+      "sha": "276656cbc54da0bba272e945d0d70ecd34298703",
+      "mode": "100644",
+      "size": 1572
+    },
+    "Headers/mach/machine/machine_types.defs": {
+      "sha": "f481394870b56a7500040b65fec7d51b83ea3126",
+      "mode": "100644",
+      "size": 3738
+    },
+    "Headers/mach/machine/ndr_def.h": {
+      "sha": "26b9099ce5a52e7b75718d40b204f03cca688d45",
+      "mode": "100644",
+      "size": 1553
+    },
+    "Headers/mach/machine/processor_info.h": {
+      "sha": "da865d7fc5c9a7c7f6e73db0e32716e79945b931",
+      "mode": "100644",
+      "size": 1584
+    },
+    "Headers/mach/machine/rpc.h": {
+      "sha": "196a1546d6c1b0a0ca883bb6d74fdda383ff00ba",
+      "mode": "100644",
+      "size": 1541
+    },
+    "Headers/mach/machine/sdt.h": {
+      "sha": "16ba8cfc1bf1fe2371f60e3e76bc376f7e7f86f5",
+      "mode": "100644",
+      "size": 23323
+    },
+    "Headers/mach/machine/sdt_isa.h": {
+      "sha": "edd26dcc2c6d696906f4662c14fac17f69a971f5",
+      "mode": "100644",
+      "size": 1558
+    },
+    "Headers/mach/machine/thread_state.h": {
+      "sha": "7dbfecefc3d787788545e4ce75b9b2cdb0aceafa",
+      "mode": "100644",
+      "size": 1576
+    },
+    "Headers/mach/machine/thread_status.h": {
+      "sha": "1c389658b03dff4b7a19145513c60b3b8d9b1959",
+      "mode": "100644",
+      "size": 1580
+    },
+    "Headers/mach/machine/vm_param.h": {
+      "sha": "08f4ac5fc91f0ce5def98b57ffb4fe8dc043d468",
+      "mode": "100644",
+      "size": 1560
+    },
+    "Headers/mach/machine/vm_types.h": {
+      "sha": "66cbebfda9a105b013a20eaa8b701b558311bc30",
+      "mode": "100644",
+      "size": 1560
+    },
+    "Headers/mach/memory_entry.defs": {
+      "sha": "bcc83f26c2a3f5bf6dd9d478928ffd0d0cf11e5a",
+      "mode": "100644",
+      "size": 1993
+    },
+    "Headers/mach/memory_entry.h": {
+      "sha": "6c51e8883c0214a7dab6059f77cb5e29841b7fb2",
+      "mode": "100644",
+      "size": 6731
+    },
+    "Headers/mach/memory_object_control.h": {
+      "sha": "afc0c2c25260d30d1aad50872bc83655cf6a2954",
+      "mode": "100644",
+      "size": 17138
+    },
+    "Headers/mach/memory_object_default_server.h": {
+      "sha": "0af5f2328b38df1ebe8b2a59a364a395844f190d",
+      "mode": "100644",
+      "size": 4864
+    },
+    "Headers/mach/memory_object_types.h": {
+      "sha": "e8a385886d69ce6bd7e0ee4b0d3241092c5c717a",
+      "mode": "100644",
+      "size": 18279
+    },
+    "Headers/mach/message.h": {
+      "sha": "6faddad06832deb5a65db4b2442be405d391aa67",
+      "mode": "100644",
+      "size": 33926
+    },
+    "Headers/mach/mig.h": {
+      "sha": "066ffa75b4848265709eef63d6135b1703659cbd",
+      "mode": "100644",
+      "size": 6329
+    },
+    "Headers/mach/mig_errors.h": {
+      "sha": "418a05da3a885147a7c805edcc45cf183b7f96c7",
+      "mode": "100644",
+      "size": 4614
+    },
+    "Headers/mach/mig_strncpy_zerofill_support.h": {
+      "sha": "92d0ff8e445c02b88258f41f9eb7d0c13b4b94f5",
+      "mode": "100644",
+      "size": 1750
+    },
+    "Headers/mach/mig_voucher_support.h": {
+      "sha": "27e6b601cf67c049e20a84ea4f1918fcb4d2cbb1",
+      "mode": "100644",
+      "size": 1700
+    },
+    "Headers/mach/ndr.h": {
+      "sha": "61c00ff1d3ccebda9d7e2908f594ab24fd1eeb52",
+      "mode": "100644",
+      "size": 6775
+    },
+    "Headers/mach/notify.defs": {
+      "sha": "4aece97bf3f8787dfcc2914c7566d6db5186cc19",
+      "mode": "100644",
+      "size": 4142
+    },
+    "Headers/mach/notify.h": {
+      "sha": "5737dbc9defa2d1d61eac28996c22865add9b4a3",
+      "mode": "100644",
+      "size": 5121
+    },
+    "Headers/mach/notify_server.h": {
+      "sha": "996ef9ed4f86859c7c853505f178807d6a04701f",
+      "mode": "100644",
+      "size": 7985
+    },
+    "Headers/mach/policy.h": {
+      "sha": "836b95f7471c6ac7be6314a1d7433b7543fcc2cb",
+      "mode": "100644",
+      "size": 7826
+    },
+    "Headers/mach/port.h": {
+      "sha": "894432bd174be272717fa54eac9f37d94f562752",
+      "mode": "100644",
+      "size": 18406
+    },
+    "Headers/mach/processor.defs": {
+      "sha": "1503c313c06ebfb5e9cd92c7ebc4d4b941424295",
+      "mode": "100644",
+      "size": 3917
+    },
+    "Headers/mach/processor.h": {
+      "sha": "a1b9c3ba565eb1d0803d7839af6b884613ba7450",
+      "mode": "100644",
+      "size": 8897
+    },
+    "Headers/mach/processor_info.h": {
+      "sha": "85537607993745a98033ce267159c88bdd0fa598",
+      "mode": "100644",
+      "size": 6001
+    },
+    "Headers/mach/processor_set.defs": {
+      "sha": "dc0f40774f4e4452ceba5d5d430907de58db8e52",
+      "mode": "100644",
+      "size": 4761
+    },
+    "Headers/mach/processor_set.h": {
+      "sha": "c306155ff2b1a5523108bd42f617a896f85f2c74",
+      "mode": "100644",
+      "size": 13616
+    },
+    "Headers/mach/rpc.h": {
+      "sha": "f3361d76900e20258609d5a4811ca4d025f8440a",
+      "mode": "100644",
+      "size": 5195
+    },
+    "Headers/mach/sdt.h": {
+      "sha": "dd604aeacc9002afae06317a0b1636c18ce80a6d",
+      "mode": "100644",
+      "size": 1047
+    },
+    "Headers/mach/semaphore.h": {
+      "sha": "a4d7e5a244787500be1437052b460a05b7645a0a",
+      "mode": "100644",
+      "size": 2517
+    },
+    "Headers/mach/shared_memory_server.h": {
+      "sha": "71170fa5f4651b933cac74e812a7f3d5141f7dcd",
+      "mode": "100644",
+      "size": 3949
+    },
+    "Headers/mach/shared_region.h": {
+      "sha": "2ddcd650a24c4473374359e75396d20296528e4f",
+      "mode": "100644",
+      "size": 5478
+    },
+    "Headers/mach/std_types.defs": {
+      "sha": "0b483836f39dfe0aeb310728fdf1c670e710c402",
+      "mode": "100644",
+      "size": 4965
+    },
+    "Headers/mach/std_types.h": {
+      "sha": "5815302d424fa4f1a955ebcc95ff2aaafb3a1df0",
+      "mode": "100644",
+      "size": 2741
+    },
+    "Headers/mach/sync_policy.h": {
+      "sha": "ff487f6a80497fd9df66725a43de45c8308be8bb",
+      "mode": "100644",
+      "size": 1857
+    },
+    "Headers/mach/sysdiagnose_notification_server.h": {
+      "sha": "d7f528f2bcd8b468feba2a360c225a08e331f048",
+      "mode": "100644",
+      "size": 6005
+    },
+    "Headers/mach/task.defs": {
+      "sha": "8723a5255d784bc4755bc4b877747b92738952bc",
+      "mode": "100644",
+      "size": 13476
+    },
+    "Headers/mach/task.h": {
+      "sha": "e6e4099920afb4b25668b9112dbf790a7484ee23",
+      "mode": "100644",
+      "size": 59206
+    },
+    "Headers/mach/task_access.defs": {
+      "sha": "1696fd3cf235ccbc1d0fc9662cea5e6f572a4be1",
+      "mode": "100644",
+      "size": 1992
+    },
+    "Headers/mach/task_access.h": {
+      "sha": "047e5055aac8ac31b43e9e8ec510eafb3ee500d3",
+      "mode": "100644",
+      "size": 5129
+    },
+    "Headers/mach/task_access_server.h": {
+      "sha": "86e97f77caa3ab3c03eceb8de1cef35b29452569",
+      "mode": "100644",
+      "size": 5365
+    },
+    "Headers/mach/task_info.h": {
+      "sha": "86cfdb3492d541302dd7866402bf9c5bd9942ffc",
+      "mode": "100644",
+      "size": 19507
+    },
+    "Headers/mach/task_inspect.h": {
+      "sha": "b13310f75e1cd4c2d5a8e0441d3ae550585751e4",
+      "mode": "100644",
+      "size": 2006
+    },
+    "Headers/mach/task_policy.h": {
+      "sha": "04970a5b636a9ca8fe249c7462b03f06a0418288",
+      "mode": "100644",
+      "size": 7176
+    },
+    "Headers/mach/task_special_ports.h": {
+      "sha": "ded90941a442efe8b9be648cbc0aa13bb85558f5",
+      "mode": "100644",
+      "size": 4855
+    },
+    "Headers/mach/telemetry_notification.defs": {
+      "sha": "4b9f8a59050d67ecc267ea18498cfbec9fd81d70",
+      "mode": "100644",
+      "size": 399
+    },
+    "Headers/mach/telemetry_notification_server.h": {
+      "sha": "5b35355f680a4de0b45452e1b50f8e83d1684f45",
+      "mode": "100644",
+      "size": 4706
+    },
+    "Headers/mach/thread_act.defs": {
+      "sha": "218cd70e0a7058014910f1ea522b74ad3ce4b9e2",
+      "mode": "100644",
+      "size": 10103
+    },
+    "Headers/mach/thread_act.h": {
+      "sha": "237eff66b7d12afca09a0e6d786f9c32dc40d752",
+      "mode": "100644",
+      "size": 31224
+    },
+    "Headers/mach/thread_info.h": {
+      "sha": "c31a27b0242b8b8a70ecc9459fa4bbad23811aa6",
+      "mode": "100644",
+      "size": 8114
+    },
+    "Headers/mach/thread_policy.h": {
+      "sha": "d5c8c1bafabd9ba0dc5183e1754194778c990889",
+      "mode": "100644",
+      "size": 9027
+    },
+    "Headers/mach/thread_special_ports.h": {
+      "sha": "02199835a4d2504c392c5b8a4f76fcf26cc8d6d7",
+      "mode": "100644",
+      "size": 3175
+    },
+    "Headers/mach/thread_status.h": {
+      "sha": "a91b936ebade78aae44ee2e826661685d59dfef9",
+      "mode": "100644",
+      "size": 3671
+    },
+    "Headers/mach/time_value.h": {
+      "sha": "8cfd37d74051c8139046081841ae38a7421393d7",
+      "mode": "100644",
+      "size": 3570
+    },
+    "Headers/mach/upl.h": {
+      "sha": "98e6abb09a8a72ea67744daa0917b1475370cb65",
+      "mode": "100644",
+      "size": 6818
+    },
+    "Headers/mach/vfs_nspace.h": {
+      "sha": "3c40a0cca105ffaa273382824125c81a929e35a1",
+      "mode": "100644",
+      "size": 6195
+    },
+    "Headers/mach/vfs_nspace_server.h": {
+      "sha": "3f2713f89b6e9bb47e000179f2df1ddbf6347af2",
+      "mode": "100644",
+      "size": 6437
+    },
+    "Headers/mach/vm_attributes.h": {
+      "sha": "bac0993cb32d23a7d613d0f1293474ef19e4daac",
+      "mode": "100644",
+      "size": 3812
+    },
+    "Headers/mach/vm_behavior.h": {
+      "sha": "727980d51e3063b48f8e5c0e36b3a7f4bd0de247",
+      "mode": "100644",
+      "size": 3046
+    },
+    "Headers/mach/vm_inherit.h": {
+      "sha": "528d6917985e719e0d27a591968f2bae0ec8aa73",
+      "mode": "100644",
+      "size": 3254
+    },
+    "Headers/mach/vm_map.defs": {
+      "sha": "3237521653227d3524972691922aa1db6799f370",
+      "mode": "100644",
+      "size": 15600
+    },
+    "Headers/mach/vm_map.h": {
+      "sha": "7fbe5be3d2ccf9b2a17db666a7ea7e6a9f0c6f1d",
+      "mode": "100644",
+      "size": 32459
+    },
+    "Headers/mach/vm_param.h": {
+      "sha": "f0fe710a2b1a87867d799738da57f2e1cd3711bc",
+      "mode": "100644",
+      "size": 9560
+    },
+    "Headers/mach/vm_prot.h": {
+      "sha": "8914da2372dd972e5e60c58dabfa8b2c399bcbf2",
+      "mode": "100644",
+      "size": 5294
+    },
+    "Headers/mach/vm_purgable.h": {
+      "sha": "80ea756d9d63c4e1800c4f7da94b2d35ea413061",
+      "mode": "100644",
+      "size": 7241
+    },
+    "Headers/mach/vm_region.h": {
+      "sha": "f6f371fa443568135d007d1d763d70edd0809f60",
+      "mode": "100644",
+      "size": 13538
+    },
+    "Headers/mach/vm_statistics.h": {
+      "sha": "eb172f77f08ea0d22d9d9a5f00111d2bbc213061",
+      "mode": "100644",
+      "size": 18724
+    },
+    "Headers/mach/vm_sync.h": {
+      "sha": "8dccb9c2c9a295d233ba5d8ea56211aebde9c371",
+      "mode": "100644",
+      "size": 3047
+    },
+    "Headers/mach/vm_types.h": {
+      "sha": "8cb982cedb9d8e9b1695093a0d377020fde2bdea",
+      "mode": "100644",
+      "size": 3206
+    },
+    "Headers/mach_debug/hash_info.h": {
+      "sha": "ba4bd39e8531d4cdc677078ea84f5be5b5ae59a0",
+      "mode": "100644",
+      "size": 2844
+    },
+    "Headers/mach_debug/ipc_info.h": {
+      "sha": "520830894a95b65f8a67cc268eec5e077716b5a1",
+      "mode": "100644",
+      "size": 4466
+    },
+    "Headers/mach_debug/lockgroup_info.h": {
+      "sha": "ee744bb5763ddd1cdb7a65edaf3c651cf652e947",
+      "mode": "100644",
+      "size": 2681
+    },
+    "Headers/mach_debug/mach_debug.h": {
+      "sha": "db22d6616cd55b0f91e7b5a01380e12232e0f117",
+      "mode": "100644",
+      "size": 1945
+    },
+    "Headers/mach_debug/mach_debug_types.defs": {
+      "sha": "d5cfc89c3ebac8b6693be91c82006fca6e0f84e4",
+      "mode": "100644",
+      "size": 4441
+    },
+    "Headers/mach_debug/mach_debug_types.h": {
+      "sha": "8781b108e7f4e733853bf20a546476f28aea5be3",
+      "mode": "100644",
+      "size": 3391
+    },
+    "Headers/mach_debug/page_info.h": {
+      "sha": "b0b5db38726ae83ce7858794b95f6488611261bc",
+      "mode": "100644",
+      "size": 2577
+    },
+    "Headers/mach_debug/vm_info.h": {
+      "sha": "8e2eb5f0591b8185580cc4bf07dc1d5808bc2e8b",
+      "mode": "100644",
+      "size": 6030
+    },
+    "Headers/mach_debug/zone_info.h": {
+      "sha": "1022eca68c662a889004b6b032357f4de62c1ecb",
+      "mode": "100644",
+      "size": 7423
+    },
+    "Headers/machine/_limits.h": {
+      "sha": "1d9a73190d102b7f0a1ac0f924ee37ec9b00b5b8",
+      "mode": "100644",
+      "size": 1547
+    },
+    "Headers/machine/_mcontext.h": {
+      "sha": "27ac45190e48314ae8448f7c2e413b6eee8927e4",
+      "mode": "100644",
+      "size": 1447
+    },
+    "Headers/machine/_param.h": {
+      "sha": "c8e35a1c293450dc610782850f6ba68936280df4",
+      "mode": "100644",
+      "size": 1444
+    },
+    "Headers/machine/_types.h": {
+      "sha": "2873a84a85a6f20302c59c99161e10d671d1862f",
+      "mode": "100644",
+      "size": 1543
+    },
+    "Headers/machine/atomic.h": {
+      "sha": "061071e5a419b22c881a02fced21ea8939c85632",
+      "mode": "100644",
+      "size": 21878
+    },
+    "Headers/machine/atomic_impl.h": {
+      "sha": "9e646f80eadad12ff01df3dcb6468019c51fac57",
+      "mode": "100644",
+      "size": 9005
+    },
+    "Headers/machine/byte_order.h": {
+      "sha": "394320c3592bc2ad545d198df1a25f2fd323dbb3",
+      "mode": "100644",
+      "size": 1525
+    },
+    "Headers/machine/config.h": {
+      "sha": "7cf50949676a3ec136a6c3c6695c7e151f5894e5",
+      "mode": "100644",
+      "size": 1499
+    },
+    "Headers/machine/disklabel.h": {
+      "sha": "c45f02c985e7963cf3ec7034071963d114c5432c",
+      "mode": "100644",
+      "size": 1537
+    },
+    "Headers/machine/endian.h": {
+      "sha": "4bbc8c4df898ddc1777161fc0cae593d8baa799e",
+      "mode": "100644",
+      "size": 1609
+    },
+    "Headers/machine/limits.h": {
+      "sha": "bfe42ba6496b336e1a98dd9aaa6e2fdcff1613a2",
+      "mode": "100644",
+      "size": 340
+    },
+    "Headers/machine/locks.h": {
+      "sha": "21cd88617b827787e470c8d5dbb470bee62fde58",
+      "mode": "100644",
+      "size": 1528
+    },
+    "Headers/machine/machine_kpc.h": {
+      "sha": "59547421b5331b2d06f4920e5be614c55aec72c6",
+      "mode": "100644",
+      "size": 1524
+    },
+    "Headers/machine/machine_remote_time.h": {
+      "sha": "cc75abe8d48f780ea91f81638d9822592bbd1b7e",
+      "mode": "100644",
+      "size": 1604
+    },
+    "Headers/machine/machine_routines.h": {
+      "sha": "304a5ff0e60c277172d2b00de09dc04bf86c1550",
+      "mode": "100644",
+      "size": 1568
+    },
+    "Headers/machine/memory_types.h": {
+      "sha": "e27d95e417e30655a6b88c4b602989adcfc32fed",
+      "mode": "100644",
+      "size": 1547
+    },
+    "Headers/machine/monotonic.h": {
+      "sha": "a2c63ba9b9d935536f1b75d0ff89a775f1466c53",
+      "mode": "100644",
+      "size": 2716
+    },
+    "Headers/machine/pal_hibernate.h": {
+      "sha": "70ccd26586f97e88f584c8bef0456909f116d8d2",
+      "mode": "100644",
+      "size": 1551
+    },
+    "Headers/machine/pal_routines.h": {
+      "sha": "48121cdc9001ff866b2e1ad7a8770149b453f7ab",
+      "mode": "100644",
+      "size": 1547
+    },
+    "Headers/machine/param.h": {
+      "sha": "10f8f6332e061b78b10dbde92c0e0588af6b580f",
+      "mode": "100644",
+      "size": 1605
+    },
+    "Headers/machine/profile.h": {
+      "sha": "33983b7c8292daa9ab8087864858969419ee5fe6",
+      "mode": "100644",
+      "size": 1615
+    },
+    "Headers/machine/signal.h": {
+      "sha": "def4d744b76b14e49f307884c6f6b4756f77247e",
+      "mode": "100644",
+      "size": 1543
+    },
+    "Headers/machine/smp.h": {
+      "sha": "86e9ed24747aee4b93f7ae6409568252ea6cb8dd",
+      "mode": "100644",
+      "size": 1491
+    },
+    "Headers/machine/types.h": {
+      "sha": "a991f733e5fa428666b2b7075ab1c97717fbb096",
+      "mode": "100644",
+      "size": 1605
+    },
+    "Headers/machine/vmparam.h": {
+      "sha": "e22002aba98d7c0405bc781c38d672cd092778f1",
+      "mode": "100644",
+      "size": 1547
+    },
+    "Headers/math.h": {
+      "sha": "535d7b5976e11949c14d187b6f49a570b6f3e270",
+      "mode": "100644",
+      "size": 32279
+    },
+    "Headers/miscfs/devfs/devfs.h": {
+      "sha": "ff3a570eaa113cd755192da2166d32c8ac69dc74",
+      "mode": "100644",
+      "size": 5123
+    },
+    "Headers/miscfs/fifofs/fifo.h": {
+      "sha": "e722e42a4aa3ada66233fb4759fbbcb224f92af6",
+      "mode": "100644",
+      "size": 5415
+    },
+    "Headers/miscfs/specfs/specdev.h": {
+      "sha": "3b714ac41d054ef3d2c7726705ce75e41b01c4ad",
+      "mode": "100644",
+      "size": 7374
+    },
+    "Headers/miscfs/union/union.h": {
+      "sha": "8b29ce7f340832ddb36b39342a5cd6f1f11ccca4",
+      "mode": "100644",
+      "size": 3476
+    },
+    "Headers/net/bpf.h": {
+      "sha": "eb14e76edcdbb66b939417c4e5886d306fad3983",
+      "mode": "100644",
+      "size": 45077
+    },
+    "Headers/net/dlil.h": {
+      "sha": "c932550e8da630906bc381ed61e649b6f2f3c36a",
+      "mode": "100644",
+      "size": 2386
+    },
+    "Headers/net/ethernet.h": {
+      "sha": "d2c9a6f275af72cdbaa59d828748ff3b80d2a34a",
+      "mode": "100644",
+      "size": 4104
+    },
+    "Headers/net/if.h": {
+      "sha": "9f7198a06a0ac864520e15663dfca1d10013debd",
+      "mode": "100644",
+      "size": 16013
+    },
+    "Headers/net/if_arp.h": {
+      "sha": "02e87a40071368aadcd71997b27adff444248c67",
+      "mode": "100644",
+      "size": 7041
+    },
+    "Headers/net/if_dl.h": {
+      "sha": "2fde7618cb1d78287efe01b55339d70551d2d9ec",
+      "mode": "100644",
+      "size": 5042
+    },
+    "Headers/net/if_ether.h": {
+      "sha": "c9fe45c9bc0bc2af8c79271aacaf8f1018fec13b",
+      "mode": "100644",
+      "size": 2692
+    },
+    "Headers/net/if_llc.h": {
+      "sha": "f2ccb92bcba1897cf8bd4b160917ebdc0121fcb9",
+      "mode": "100644",
+      "size": 6327
+    },
+    "Headers/net/if_media.h": {
+      "sha": "3792eb4143b81239361e6d7696d1a6c4c0f65a17",
+      "mode": "100644",
+      "size": 29818
+    },
+    "Headers/net/if_mib.h": {
+      "sha": "3225d6381d78305bef774ff2ee10341fd06daad0",
+      "mode": "100644",
+      "size": 7862
+    },
+    "Headers/net/if_types.h": {
+      "sha": "e4d3bcf5f96db845cd3727537590fce199b6e157",
+      "mode": "100644",
+      "size": 7508
+    },
+    "Headers/net/if_utun.h": {
+      "sha": "1dd9f633db1a38f621a9602bf6826480a248b065",
+      "mode": "100644",
+      "size": 3651
+    },
+    "Headers/net/if_var.h": {
+      "sha": "f54ae85835525ab84a6f5a801db72a6ad08c3ee1",
+      "mode": "100644",
+      "size": 10349
+    },
+    "Headers/net/init.h": {
+      "sha": "7cabbeae7150a3a6a11e1ad0831ae36cd8a2a170",
+      "mode": "100644",
+      "size": 2653
+    },
+    "Headers/net/kext_net.h": {
+      "sha": "f5c6e72996d69d023142c1f0ad600326d44bbdd7",
+      "mode": "100644",
+      "size": 2217
+    },
+    "Headers/net/kpi_interface.h": {
+      "sha": "5ac9a69179f31756abf1baa408625a3c6e343c0b",
+      "mode": "100644",
+      "size": 88167
+    },
+    "Headers/net/kpi_interfacefilter.h": {
+      "sha": "36115222a20b761305d33ac24753842f968d8e7b",
+      "mode": "100644",
+      "size": 10687
+    },
+    "Headers/net/kpi_protocol.h": {
+      "sha": "0538b33f730a618d9cb2c79184bd19bee2a1c99a",
+      "mode": "100644",
+      "size": 6115
+    },
+    "Headers/net/ndrv.h": {
+      "sha": "879563b363fc42a89019f869119428b6b82336c7",
+      "mode": "100644",
+      "size": 5958
+    },
+    "Headers/net/net_kev.h": {
+      "sha": "4bb71821fb49862d0a9e29a1ad2562c600a55c57",
+      "mode": "100644",
+      "size": 4734
+    },
+    "Headers/net/pfkeyv2.h": {
+      "sha": "7cc38a648b8b2328956bc4bff32b489ef2934c78",
+      "mode": "100644",
+      "size": 15555
+    },
+    "Headers/net/radix.h": {
+      "sha": "f59a42f60c0e037dca4dd91b5bea1ba128ea5cff",
+      "mode": "100644",
+      "size": 3373
+    },
+    "Headers/net/route.h": {
+      "sha": "49a4d469f6fd120c359d33dc63833976eec23914",
+      "mode": "100644",
+      "size": 12501
+    },
+    "Headers/netinet/bootp.h": {
+      "sha": "a423b2ad43a9b5504a11a1daf1e046990e8f5e0d",
+      "mode": "100644",
+      "size": 4448
+    },
+    "Headers/netinet/icmp6.h": {
+      "sha": "2ca51b423fc9aae970414823d04a929044a4a16e",
+      "mode": "100644",
+      "size": 27829
+    },
+    "Headers/netinet/icmp_var.h": {
+      "sha": "a15789fee28d4a793f032e03b1db8fdecf16a018",
+      "mode": "100644",
+      "size": 4718
+    },
+    "Headers/netinet/if_ether.h": {
+      "sha": "f413022bccde718c23447f72219dd24bd2502657",
+      "mode": "100644",
+      "size": 6136
+    },
+    "Headers/netinet/igmp.h": {
+      "sha": "8c3d71a71fbd226265bfe9f38a83077eea264873",
+      "mode": "100644",
+      "size": 7872
+    },
+    "Headers/netinet/igmp_var.h": {
+      "sha": "15a2a8e7e64122d90b24b596ff027651444419b4",
+      "mode": "100644",
+      "size": 6007
+    },
+    "Headers/netinet/in.h": {
+      "sha": "6f63c2db637943ffca3f4f3ea0836ae52d85bb75",
+      "mode": "100644",
+      "size": 30563
+    },
+    "Headers/netinet/in_arp.h": {
+      "sha": "ff6995677d52aeb3dac51b44cfdfca5e7d209db0",
+      "mode": "100644",
+      "size": 5059
+    },
+    "Headers/netinet/in_pcb.h": {
+      "sha": "67b206c145bb9f9e95d2700b4f59ae698f267543",
+      "mode": "100644",
+      "size": 10043
+    },
+    "Headers/netinet/in_systm.h": {
+      "sha": "65ef8b1fa3b2e9d1cbbae1eab09087aee94ee7cb",
+      "mode": "100644",
+      "size": 4037
+    },
+    "Headers/netinet/in_var.h": {
+      "sha": "8c6ba3f22d2eb5005d6dbd7cc4eab4fa503515f4",
+      "mode": "100644",
+      "size": 4895
+    },
+    "Headers/netinet/ip.h": {
+      "sha": "297e3616d77ff708302737f59573f30959c45ad9",
+      "mode": "100644",
+      "size": 9300
+    },
+    "Headers/netinet/ip6.h": {
+      "sha": "f584cb9bf973137505395d4557f92a5f285d837d",
+      "mode": "100644",
+      "size": 11824
+    },
+    "Headers/netinet/ip_icmp.h": {
+      "sha": "d0ea9648e8dce0400a9b66dc5f3826602bf078d3",
+      "mode": "100644",
+      "size": 10978
+    },
+    "Headers/netinet/ip_var.h": {
+      "sha": "9b35a4090e306559b6f944088468514539990cf6",
+      "mode": "100644",
+      "size": 7272
+    },
+    "Headers/netinet/kpi_ipfilter.h": {
+      "sha": "993dec107dc67be083a5bb4860afb22b8a5c461a",
+      "mode": "100644",
+      "size": 9379
+    },
+    "Headers/netinet/tcp.h": {
+      "sha": "4a716d498b71258c60cfff1ee846690be4a77c0c",
+      "mode": "100644",
+      "size": 13215
+    },
+    "Headers/netinet/tcp_fsm.h": {
+      "sha": "97c25dc8251668b1038da7ee93e2413af2dc018b",
+      "mode": "100644",
+      "size": 5722
+    },
+    "Headers/netinet/tcp_seq.h": {
+      "sha": "d7778a3cf85ef53a66c9f92d86ac054c5773e3d9",
+      "mode": "100644",
+      "size": 4540
+    },
+    "Headers/netinet/tcp_timer.h": {
+      "sha": "01b0d3c8e7a00cd7887c13ca949eca00871d8f0a",
+      "mode": "100644",
+      "size": 6891
+    },
+    "Headers/netinet/tcp_var.h": {
+      "sha": "70a52d2f616e690890935425856bb3759dfb16e0",
+      "mode": "100644",
+      "size": 33950
+    },
+    "Headers/netinet/tcpip.h": {
+      "sha": "6ebc69cdf4d488593904b17c9735386b5997efa0",
+      "mode": "100644",
+      "size": 4437
+    },
+    "Headers/netinet/udp.h": {
+      "sha": "a454b1f727573f1ea8bc6d41d88195acd3d27ea0",
+      "mode": "100644",
+      "size": 3781
+    },
+    "Headers/netinet/udp_var.h": {
+      "sha": "d885bd74205a8231e14a5d0174b7c8110502199c",
+      "mode": "100644",
+      "size": 5947
+    },
+    "Headers/netinet6/ah.h": {
+      "sha": "5019deda53b74ba1796c58b9f581b4ca2377ecc4",
+      "mode": "100644",
+      "size": 2571
+    },
+    "Headers/netinet6/esp.h": {
+      "sha": "ecff1b94306b1b1dfd8bdedd925a32b1f60a9cfe",
+      "mode": "100644",
+      "size": 4131
+    },
+    "Headers/netinet6/in6.h": {
+      "sha": "9bd75350c2d8f17f84180d6185f16e26b6ff2804",
+      "mode": "100644",
+      "size": 27487
+    },
+    "Headers/netinet6/in6_var.h": {
+      "sha": "a15eafdc700fedd2e908c14be05269655375f74d",
+      "mode": "100644",
+      "size": 19991
+    },
+    "Headers/netinet6/ipcomp.h": {
+      "sha": "ad996afcd0bb31ed71c4d92215f5ac7ac8bef01d",
+      "mode": "100644",
+      "size": 2358
+    },
+    "Headers/netinet6/ipsec.h": {
+      "sha": "14c5274abfc11e103b902f9b4f25d7b2ae655be1",
+      "mode": "100644",
+      "size": 6176
+    },
+    "Headers/netinet6/nd6.h": {
+      "sha": "fb3d13bd360239619cd446467d2fa5525d5c6205",
+      "mode": "100644",
+      "size": 9233
+    },
+    "Headers/netinet6/raw_ip6.h": {
+      "sha": "f865cef7b1dcff9f2f74323b731be201695ed5c8",
+      "mode": "100644",
+      "size": 3688
+    },
+    "Headers/netinet6/scope6_var.h": {
+      "sha": "1a630c0aaeed021deeb49159e402270bacfb3c2f",
+      "mode": "100644",
+      "size": 3172
+    },
+    "Headers/netkey/keysock.h": {
+      "sha": "ec5a7da3a996f3b4a9e4ec4f5653c80bdfd4dc2b",
+      "mode": "100644",
+      "size": 3064
+    },
+    "Headers/os/availability.h": {
+      "sha": "1b3f5d9ddd95d22d9e9bc995cc275fc035b68fba",
+      "mode": "100644",
+      "size": 7035
+    },
+    "Headers/os/base.h": {
+      "sha": "ab4b437397e70209c09689282d4df49c9fd40722",
+      "mode": "100644",
+      "size": 10894
+    },
+    "Headers/os/cpp_util.h": {
+      "sha": "dc7236bff098212b1fe7a64b9568e119c97acb16",
+      "mode": "100644",
+      "size": 1157
+    },
+    "Headers/os/log.h": {
+      "sha": "eaa0fc8e4e4bf40e3a15447d08f35fd17236c5fa",
+      "mode": "100644",
+      "size": 22244
+    },
+    "Headers/os/object.h": {
+      "sha": "16cfea0f0343a53a556f2d5d0118f79f22eb8c75",
+      "mode": "100644",
+      "size": 5706
+    },
+    "Headers/os/overflow.h": {
+      "sha": "f00a6024fe37a803a803f4310449f2ffe0367256",
+      "mode": "100644",
+      "size": 4137
+    },
+    "Headers/os/smart_ptr.h": {
+      "sha": "5f89c7fec4a0f711412d5e9b81d1bca8fae69be5",
+      "mode": "100644",
+      "size": 10592
+    },
+    "Headers/os/trace.h": {
+      "sha": "318c21c87e3a5ffbc938627c7ed90ba3a325aa5d",
+      "mode": "100644",
+      "size": 36469
+    },
+    "Headers/pexpert/boot.h": {
+      "sha": "2966d1f88ef3a0ed92e0b7a70e0ff2825647f6ea",
+      "mode": "100644",
+      "size": 1446
+    },
+    "Headers/pexpert/device_tree.h": {
+      "sha": "427f3a12c032a9536cbf4b259dd533a8c1677089",
+      "mode": "100644",
+      "size": 9486
+    },
+    "Headers/pexpert/i386/boot.h": {
+      "sha": "0476e8d333f3182916c337e6d884d29b926a0072",
+      "mode": "100644",
+      "size": 6963
+    },
+    "Headers/pexpert/i386/efi.h": {
+      "sha": "3ab0f1f38c6290cf351d53f5e152462979e16348",
+      "mode": "100644",
+      "size": 14948
+    },
+    "Headers/pexpert/i386/protos.h": {
+      "sha": "fb4c5f3dc7b58b95d4e0fbd5fc4c03bd3fb37450",
+      "mode": "100644",
+      "size": 2683
+    },
+    "Headers/pexpert/machine/boot.h": {
+      "sha": "fcb6d5b8a9cfaaabf118e4f1df93ec1f4a6b2673",
+      "mode": "100644",
+      "size": 1552
+    },
+    "Headers/pexpert/machine/protos.h": {
+      "sha": "c7df72c1b491c7b47a0068535c4c044442f7ba7e",
+      "mode": "100644",
+      "size": 1560
+    },
+    "Headers/pexpert/pexpert.h": {
+      "sha": "3d31fa937391630d8d8301d9081d18d9c53e0e32",
+      "mode": "100644",
+      "size": 8692
+    },
+    "Headers/pexpert/protos.h": {
+      "sha": "a4ec45da1c32c1fae7e7c9b336f44c05485cd987",
+      "mode": "100644",
+      "size": 1418
+    },
+    "Headers/ptrauth.h": {
+      "sha": "e7d7dfd9b0c110f6c127f4f32f4b60213807d097",
+      "mode": "100644",
+      "size": 15870
+    },
+    "Headers/security/_label.h": {
+      "sha": "2070bf3bd0288d4bc9aee29a997a9d13960315a4",
+      "mode": "100644",
+      "size": 3770
+    },
+    "Headers/security/audit/audit_ioctl.h": {
+      "sha": "a300394f784cc65ac4849301b6b9ecf5be71ec21",
+      "mode": "100644",
+      "size": 5129
+    },
+    "Headers/security/mac_framework.h": {
+      "sha": "e3575ac45dc1f81961405942846d5bea0eba07f5",
+      "mode": "100644",
+      "size": 31207
+    },
+    "Headers/security/mac_policy.h": {
+      "sha": "4241d45acde7d334153c62d978e35a6da10bed2f",
+      "mode": "100644",
+      "size": 248022
+    },
+    "Headers/skywalk/channel/channel_var.h": {
+      "sha": "68e042897f1b3db83347341ec0dff897e6008d21",
+      "mode": "100644",
+      "size": 41686
+    },
+    "Headers/skywalk/channel/os_channel.h": {
+      "sha": "0f35adf2bad50aac7a522e9f3b878ea4bcbd0b77",
+      "mode": "100644",
+      "size": 12948
+    },
+    "Headers/skywalk/channel/os_channel_event.h": {
+      "sha": "a4162fa532a9f827030c38a30e2e61db40b8d854",
+      "mode": "100644",
+      "size": 2371
+    },
+    "Headers/skywalk/channel/os_channel_private.h": {
+      "sha": "34d594a99b6ca0379f5aacb3c8a43b4a94e4f31f",
+      "mode": "100644",
+      "size": 25069
+    },
+    "Headers/skywalk/core/skywalk_common.h": {
+      "sha": "4fcb70b03611d0fe304907c2f81249c14815df23",
+      "mode": "100644",
+      "size": 33642
+    },
+    "Headers/skywalk/core/skywalk_var.h": {
+      "sha": "4a95b344f1f6d115011eae9e762fafc67cee929d",
+      "mode": "100644",
+      "size": 20573
+    },
+    "Headers/skywalk/lib/cuckoo_hashtable.h": {
+      "sha": "fa6578f6f3a06f2629e0f804ce83dbba6f53dc7a",
+      "mode": "100644",
+      "size": 3985
+    },
+    "Headers/skywalk/lib/net_filter_event.h": {
+      "sha": "96b962f3daac9983f6b0d26393a97acf1a3daf4c",
+      "mode": "100644",
+      "size": 2121
+    },
+    "Headers/skywalk/mem/skmem_arena_var.h": {
+      "sha": "e3bcca15a86bbd8323d1a254990ab24236dd31f2",
+      "mode": "100644",
+      "size": 9992
+    },
+    "Headers/skywalk/mem/skmem_cache_var.h": {
+      "sha": "c832193e83e32473c113b8161de3ce42f887cf47",
+      "mode": "100644",
+      "size": 16606
+    },
+    "Headers/skywalk/mem/skmem_region_var.h": {
+      "sha": "264de210003534f042f43d4c64eca359bb91e28f",
+      "mode": "100644",
+      "size": 15699
+    },
+    "Headers/skywalk/mem/skmem_var.h": {
+      "sha": "b9259abb419c783b04e8db6539f8272637df40dc",
+      "mode": "100644",
+      "size": 3694
+    },
+    "Headers/skywalk/namespace/netns.h": {
+      "sha": "cd15560ebaff496b4c1a9060480680e7a7a3439d",
+      "mode": "100644",
+      "size": 11577
+    },
+    "Headers/skywalk/namespace/protons.h": {
+      "sha": "87740e702595ccf702844efd8ed5371464d80e6b",
+      "mode": "100644",
+      "size": 2404
+    },
+    "Headers/skywalk/nexus/flowswitch/flow/flow_var.h": {
+      "sha": "de7a70f9a0a79b5bcf2ff9af5fc34afb70640a6d",
+      "mode": "100644",
+      "size": 36549
+    },
+    "Headers/skywalk/nexus/flowswitch/fsw_var.h": {
+      "sha": "63be40aee9565183cc97876e25b7d56f68856428",
+      "mode": "100644",
+      "size": 10185
+    },
+    "Headers/skywalk/nexus/flowswitch/nx_flowswitch.h": {
+      "sha": "89e4435a27ef7360ca69cd8fe9e828600912f481",
+      "mode": "100644",
+      "size": 12706
+    },
+    "Headers/skywalk/nexus/kpipe/nx_kernel_pipe.h": {
+      "sha": "7e1d1f1d0625d9909745dc1e9ac9a397a604ef8b",
+      "mode": "100644",
+      "size": 3569
+    },
+    "Headers/skywalk/nexus/monitor/nx_monitor.h": {
+      "sha": "892fd1336b0e0793a16d88ae85bd2b263cf9cdb6",
+      "mode": "100644",
+      "size": 3677
+    },
+    "Headers/skywalk/nexus/netif/nx_netif.h": {
+      "sha": "8892fdeee552630cf42c8ade95733ee1bb071e47",
+      "mode": "100644",
+      "size": 29550
+    },
+    "Headers/skywalk/nexus/netif/nx_netif_compat.h": {
+      "sha": "88e104567ecd5d0b02cb07cf9c9bcbe328414f64",
+      "mode": "100644",
+      "size": 3665
+    },
+    "Headers/skywalk/nexus/netif/nx_netif_host.h": {
+      "sha": "e7e36137a5be17a2df6b66e71d6a423bb9cf5e16",
+      "mode": "100644",
+      "size": 2162
+    },
+    "Headers/skywalk/nexus/nexus_adapter.h": {
+      "sha": "9fcc4948aea5c3b451fd14104cf8d204570d8df4",
+      "mode": "100644",
+      "size": 22724
+    },
+    "Headers/skywalk/nexus/nexus_common.h": {
+      "sha": "800f261c6e14404ec99fd937b241450287af5caf",
+      "mode": "100644",
+      "size": 11677
+    },
+    "Headers/skywalk/nexus/nexus_mbq.h": {
+      "sha": "1e6ea59725b757e3862b3059609dfb6581138fec",
+      "mode": "100644",
+      "size": 7611
+    },
+    "Headers/skywalk/nexus/nexus_pktq.h": {
+      "sha": "d910a413d3a1920ce50ae6e31ede5e4de532fc27",
+      "mode": "100644",
+      "size": 6520
+    },
+    "Headers/skywalk/nexus/nexus_var.h": {
+      "sha": "cd8766f65094266bddb3122f0c1e8f564bf1223f",
+      "mode": "100644",
+      "size": 25382
+    },
+    "Headers/skywalk/nexus/os_nexus.h": {
+      "sha": "7860e60b7c104f598256916a7f55ea4590f36106",
+      "mode": "100644",
+      "size": 35153
+    },
+    "Headers/skywalk/nexus/os_nexus_private.h": {
+      "sha": "bdcd2a102682663f5a650947c488e406d2b727ee",
+      "mode": "100644",
+      "size": 26651
+    },
+    "Headers/skywalk/nexus/upipe/nx_user_pipe.h": {
+      "sha": "70687b295baf9432b2c68127545be724c11d536c",
+      "mode": "100644",
+      "size": 4363
+    },
+    "Headers/skywalk/os_skywalk.h": {
+      "sha": "f8cfc7d030350dd7af054eb86e5fada1d07ac93e",
+      "mode": "100644",
+      "size": 3919
+    },
+    "Headers/skywalk/os_skywalk_private.h": {
+      "sha": "1f36a6d5bfc5083953613b01afbdc9dbf3d42431",
+      "mode": "100644",
+      "size": 14268
+    },
+    "Headers/skywalk/os_stats_private.h": {
+      "sha": "98cdb95cf712adfce742890b6a8f228ddb57d341",
+      "mode": "100644",
+      "size": 98234
+    },
+    "Headers/skywalk/os_sysctls_private.h": {
+      "sha": "0a1cee50b3c162c5e9de792b8b94beb170bcd4a3",
+      "mode": "100644",
+      "size": 11414
+    },
+    "Headers/skywalk/packet/os_packet.h": {
+      "sha": "508887c1287ac3ff11c683d51aa8bfbe261b7660",
+      "mode": "100644",
+      "size": 27905
+    },
+    "Headers/skywalk/packet/os_packet_private.h": {
+      "sha": "60225dc1a54bb7883639e81ba1cb6b0f1cf0d6c8",
+      "mode": "100644",
+      "size": 35114
+    },
+    "Headers/skywalk/packet/packet_common.h": {
+      "sha": "396a64512a74d391495e0bf6b0d47803b0777fe1",
+      "mode": "100644",
+      "size": 46836
+    },
+    "Headers/skywalk/packet/packet_queue.h": {
+      "sha": "c244144db2e6d73fd27b43908f6bd6457b113507",
+      "mode": "100644",
+      "size": 7401
+    },
+    "Headers/skywalk/packet/packet_var.h": {
+      "sha": "4b00fabe80af6d0e15faf2bfd3810120c41a9785",
+      "mode": "100644",
+      "size": 38001
+    },
+    "Headers/skywalk/packet/pbufpool_var.h": {
+      "sha": "8e535fdbb0748c77ef84c72c3c3a269eae18fc2e",
+      "mode": "100644",
+      "size": 8407
+    },
+    "Headers/stdarg.h": {
+      "sha": "2957bf058ea8ff35fc275df0857aaaf3a5c85789",
+      "mode": "100644",
+      "size": 2064
+    },
+    "Headers/stdatomic.h": {
+      "sha": "73105214769c119d2120a8c4f37f2944d5f808b2",
+      "mode": "100644",
+      "size": 7609
+    },
+    "Headers/stdbool.h": {
+      "sha": "be545ce1a1ad51fa276ed32ad8991599a5cef207",
+      "mode": "100644",
+      "size": 1752
+    },
+    "Headers/stddef.h": {
+      "sha": "9678b998fa4d9828b7464b522f4a7ab8f8dbf626",
+      "mode": "100644",
+      "size": 2195
+    },
+    "Headers/stdint.h": {
+      "sha": "38385154338e6574f78dfa1663e4e974988229f2",
+      "mode": "100644",
+      "size": 6100
+    },
+    "Headers/string.h": {
+      "sha": "02078f1e81614e16e33ae80cd93558b8f2a3a9be",
+      "mode": "100644",
+      "size": 5972
+    },
+    "Headers/sys/_endian.h": {
+      "sha": "f297332cccefbfec0880aec34e6907850f14428e",
+      "mode": "100644",
+      "size": 6138
+    },
+    "Headers/sys/_select.h": {
+      "sha": "567d621856230f718eff4d9fac1f305a89de4c8a",
+      "mode": "100644",
+      "size": 2288
+    },
+    "Headers/sys/_structs.h": {
+      "sha": "5fab28aaa16575fbaa2b79f24f8cfac1f6213176",
+      "mode": "100644",
+      "size": 1373
+    },
+    "Headers/sys/_types.h": {
+      "sha": "4b13dca690e5d3246a58f27b15170f49e48390d9",
+      "mode": "100644",
+      "size": 3888
+    },
+    "Headers/sys/_types/_blkcnt_t.h": {
+      "sha": "9d4d1ee883ca61db48051fddd4004a674ba01872",
+      "mode": "100644",
+      "size": 1476
+    },
+    "Headers/sys/_types/_blksize_t.h": {
+      "sha": "82931f7bfa103d69b8dc6eda81ce0aab7004e654",
+      "mode": "100644",
+      "size": 1482
+    },
+    "Headers/sys/_types/_caddr_t.h": {
+      "sha": "159e186d39fd097b3dfeb88cbbee90810c55742b",
+      "mode": "100644",
+      "size": 1409
+    },
+    "Headers/sys/_types/_clock_t.h": {
+      "sha": "991d2cd5289a9e7a553cb046c7d036df008419ae",
+      "mode": "100644",
+      "size": 1472
+    },
+    "Headers/sys/_types/_ct_rune_t.h": {
+      "sha": "3878dff806c20ad42c62f475bdf511af0d830a73",
+      "mode": "100644",
+      "size": 1474
+    },
+    "Headers/sys/_types/_dev_t.h": {
+      "sha": "be5c73ee50adc40a85692e212dbf3eaa640bb3d7",
+      "mode": "100644",
+      "size": 1481
+    },
+    "Headers/sys/_types/_errno_t.h": {
+      "sha": "557282a2d371dad35aebc7a0c86f5799f0eb4f5e",
+      "mode": "100644",
+      "size": 1422
+    },
+    "Headers/sys/_types/_fd_clr.h": {
+      "sha": "eeb65b362738000d0bac829eabc7496ed2b2d8fb",
+      "mode": "100644",
+      "size": 1406
+    },
+    "Headers/sys/_types/_fd_copy.h": {
+      "sha": "d0e9c1ec9aaa790bf2a487b42efdd9fbac6e3670",
+      "mode": "100644",
+      "size": 1409
+    },
+    "Headers/sys/_types/_fd_def.h": {
+      "sha": "b33fcd4b3433bb1377a9c91f61f27a2f1c387575",
+      "mode": "100644",
+      "size": 3488
+    },
+    "Headers/sys/_types/_fd_isset.h": {
+      "sha": "e3b3d98561128d98370da7bbf174f23fccad385f",
+      "mode": "100644",
+      "size": 1412
+    },
+    "Headers/sys/_types/_fd_set.h": {
+      "sha": "67f4fa4df33d728dba24047b0217b22153a14bde",
+      "mode": "100644",
+      "size": 1406
+    },
+    "Headers/sys/_types/_fd_setsize.h": {
+      "sha": "c5c3ec9d8f756b18e9b7d3975e55555afa8c7697",
+      "mode": "100644",
+      "size": 1412
+    },
+    "Headers/sys/_types/_fd_zero.h": {
+      "sha": "8363df3bd729507b2800d1691df7d38d06b59091",
+      "mode": "100644",
+      "size": 1406
+    },
+    "Headers/sys/_types/_filesec_t.h": {
+      "sha": "6812eba467b7356aa9192025b666b23dd634c4e6",
+      "mode": "100644",
+      "size": 1440
+    },
+    "Headers/sys/_types/_fsblkcnt_t.h": {
+      "sha": "a80d02f671c9c5c2e63c140eb46523333eaf9723",
+      "mode": "100644",
+      "size": 1492
+    },
+    "Headers/sys/_types/_fsfilcnt_t.h": {
+      "sha": "be5e9b4aba358cc0e9323af98ec029a008343edc",
+      "mode": "100644",
+      "size": 1492
+    },
+    "Headers/sys/_types/_fsid_t.h": {
+      "sha": "d4e70f29974703d03b54381ec744a702d33788ad",
+      "mode": "100644",
+      "size": 1494
+    },
+    "Headers/sys/_types/_fsobj_id_t.h": {
+      "sha": "a396cdff9ef00feb587f838814a39df3984e432c",
+      "mode": "100644",
+      "size": 1528
+    },
+    "Headers/sys/_types/_gid_t.h": {
+      "sha": "ebf497068955d30b6a8f68986c2bf3de7eff0434",
+      "mode": "100644",
+      "size": 1438
+    },
+    "Headers/sys/_types/_guid_t.h": {
+      "sha": "df29f9ca3938db6e4c28f522105c0952021d1a70",
+      "mode": "100644",
+      "size": 1642
+    },
+    "Headers/sys/_types/_id_t.h": {
+      "sha": "9af9610a2762f949855b74ddf8e47f22261259de",
+      "mode": "100644",
+      "size": 1494
+    },
+    "Headers/sys/_types/_in_addr_t.h": {
+      "sha": "edcf66e507d2cc8b30414b52e5c0c1d5be06633b",
+      "mode": "100644",
+      "size": 1508
+    },
+    "Headers/sys/_types/_in_port_t.h": {
+      "sha": "8b102566c9057ea99a4d7cab4e64a39d6d8c332b",
+      "mode": "100644",
+      "size": 1474
+    },
+    "Headers/sys/_types/_ino64_t.h": {
+      "sha": "c142b1baec971edf0b2d574683fd8522ef861e7b",
+      "mode": "100644",
+      "size": 1502
+    },
+    "Headers/sys/_types/_ino_t.h": {
+      "sha": "2a693ddbfdc29fdac4197a04d1e008e6e1df5d8d",
+      "mode": "100644",
+      "size": 1488
+    },
+    "Headers/sys/_types/_int16_t.h": {
+      "sha": "3bf3da06816f0f236fc9df2ccdcce3b8bde46138",
+      "mode": "100644",
+      "size": 1417
+    },
+    "Headers/sys/_types/_int32_t.h": {
+      "sha": "9b1d72ba7490896f66b25c19b56926786846ac0b",
+      "mode": "100644",
+      "size": 1417
+    },
+    "Headers/sys/_types/_int64_t.h": {
+      "sha": "4f3e7de38a6bfb8410a8ef137a9e03558625edc9",
+      "mode": "100644",
+      "size": 1417
+    },
+    "Headers/sys/_types/_int8_t.h": {
+      "sha": "9176298a5fe7cd913657caf2a25e590895c17db1",
+      "mode": "100644",
+      "size": 1413
+    },
+    "Headers/sys/_types/_intptr_t.h": {
+      "sha": "0f494b9e5c2f37d781322063d14452880c396918",
+      "mode": "100644",
+      "size": 1478
+    },
+    "Headers/sys/_types/_iovec_t.h": {
+      "sha": "f89c7306f2000b99c9ba7427003cae75b71ea87f",
+      "mode": "100644",
+      "size": 1601
+    },
+    "Headers/sys/_types/_key_t.h": {
+      "sha": "ec093d7699df78050106b152808569898d6a6e61",
+      "mode": "100644",
+      "size": 1489
+    },
+    "Headers/sys/_types/_mach_port_t.h": {
+      "sha": "fa96565f66e56cc7fa32c6dce498c870263a6b0b",
+      "mode": "100644",
+      "size": 2098
+    },
+    "Headers/sys/_types/_mbstate_t.h": {
+      "sha": "771728bfa7279721e77ba972f9490c28ec7f20fb",
+      "mode": "100644",
+      "size": 1473
+    },
+    "Headers/sys/_types/_mode_t.h": {
+      "sha": "36f8d2b324a485cda50cf0ccc6c029dbea3a68e7",
+      "mode": "100644",
+      "size": 1465
+    },
+    "Headers/sys/_types/_nlink_t.h": {
+      "sha": "c3f83365ffc2aef85e9b92f1df3121ca6a7d4916",
+      "mode": "100644",
+      "size": 1483
+    },
+    "Headers/sys/_types/_null.h": {
+      "sha": "9c21571ea479c7bae1272b105aaecb6977287542",
+      "mode": "100644",
+      "size": 1429
+    },
+    "Headers/sys/_types/_o_dsync.h": {
+      "sha": "bd4f2884fa57dd9cd16b5f001e834fe3a30c27e9",
+      "mode": "100644",
+      "size": 1441
+    },
+    "Headers/sys/_types/_o_sync.h": {
+      "sha": "a3952cc35f529b1cb1698d1cdb51d967bab1f830",
+      "mode": "100644",
+      "size": 1439
+    },
+    "Headers/sys/_types/_off_t.h": {
+      "sha": "bdc3d5e3835ba75497f9ad8e62b1915b92127bc3",
+      "mode": "100644",
+      "size": 1460
+    },
+    "Headers/sys/_types/_offsetof.h": {
+      "sha": "fa831a51101b7998b043a801d00e11ad0dc46df3",
+      "mode": "100644",
+      "size": 1418
+    },
+    "Headers/sys/_types/_os_inline.h": {
+      "sha": "fd68cff47a57f2cfef94db5e7b4653c01b1f5e6e",
+      "mode": "100644",
+      "size": 1533
+    },
+    "Headers/sys/_types/_pid_t.h": {
+      "sha": "994f84e87db780b812a19c046992f507a4d6fdbf",
+      "mode": "100644",
+      "size": 1458
+    },
+    "Headers/sys/_types/_posix_vdisable.h": {
+      "sha": "970f1b5d73cbad34ee0cbfd1680f04ec2cb12589",
+      "mode": "100644",
+      "size": 1433
+    },
+    "Headers/sys/_types/_ptrdiff_t.h": {
+      "sha": "31a065770fd189653d2654d388ee22c12165f07d",
+      "mode": "100644",
+      "size": 1473
+    },
+    "Headers/sys/_types/_rsize_t.h": {
+      "sha": "6aa2f6b320f2e940838ad2ae6501acb53a092955",
+      "mode": "100644",
+      "size": 1471
+    },
+    "Headers/sys/_types/_rune_t.h": {
+      "sha": "bd10ef1ba5e1d319e5aaa06a96c5d90e88db20e4",
+      "mode": "100644",
+      "size": 1455
+    },
+    "Headers/sys/_types/_s_ifmt.h": {
+      "sha": "1139cb25b76e22215df0f6b98905a85f2f76015f",
+      "mode": "100644",
+      "size": 3677
+    },
+    "Headers/sys/_types/_sa_family_t.h": {
+      "sha": "857cdd09c3930109911f7de0842cbd9c3c0ae7ac",
+      "mode": "100644",
+      "size": 1482
+    },
+    "Headers/sys/_types/_seek_set.h": {
+      "sha": "f55175ad1f23f6118a1086356133d71c723d238d",
+      "mode": "100644",
+      "size": 2053
+    },
+    "Headers/sys/_types/_sigaltstack.h": {
+      "sha": "8c343058423ebdc178fb0006f0bb1f5f4075ba0b",
+      "mode": "100644",
+      "size": 1992
+    },
+    "Headers/sys/_types/_sigset_t.h": {
+      "sha": "51844dddbb0ed1c217d6a8878ac435c7790744e7",
+      "mode": "100644",
+      "size": 1483
+    },
+    "Headers/sys/_types/_size_t.h": {
+      "sha": "a14a8885fa6c4ae0141158fd40af6777ae15f747",
+      "mode": "100644",
+      "size": 1468
+    },
+    "Headers/sys/_types/_socklen_t.h": {
+      "sha": "a7b8431561178de40569cae9892cdc2b3b61676b",
+      "mode": "100644",
+      "size": 1465
+    },
+    "Headers/sys/_types/_ssize_t.h": {
+      "sha": "056607814d2f52126f84970e880d742545d0474f",
+      "mode": "100644",
+      "size": 1473
+    },
+    "Headers/sys/_types/_suseconds_t.h": {
+      "sha": "3980dfedf5cffff046de282ef5c8d7710e49f6dc",
+      "mode": "100644",
+      "size": 1490
+    },
+    "Headers/sys/_types/_time_t.h": {
+      "sha": "2a91ef225a65a99891cb3b0d1cc1013fe3dbe22d",
+      "mode": "100644",
+      "size": 1468
+    },
+    "Headers/sys/_types/_timespec.h": {
+      "sha": "82cc723ec604ab0dddd06c8c88cf22b6c5387e77",
+      "mode": "100644",
+      "size": 1552
+    },
+    "Headers/sys/_types/_timeval.h": {
+      "sha": "1b9a000a6be78efe2f68b326051010994af8cdb2",
+      "mode": "100644",
+      "size": 1667
+    },
+    "Headers/sys/_types/_timeval32.h": {
+      "sha": "71518173a398ffc385c8af7c7078f0dc49941ab8",
+      "mode": "100644",
+      "size": 1618
+    },
+    "Headers/sys/_types/_timeval64.h": {
+      "sha": "2eb3c434fb3f249a6e79f577953d8161918efcd4",
+      "mode": "100644",
+      "size": 1590
+    },
+    "Headers/sys/_types/_u_char.h": {
+      "sha": "b6add3feb3b9cc37601695ea611ed23ae7764cba",
+      "mode": "100644",
+      "size": 1405
+    },
+    "Headers/sys/_types/_u_int.h": {
+      "sha": "161b3baf14192e3b90c355409581d89dd83f1457",
+      "mode": "100644",
+      "size": 1401
+    },
+    "Headers/sys/_types/_u_int16_t.h": {
+      "sha": "5a01fc450b5695853cc26744c63f820dcc73ca16",
+      "mode": "100644",
+      "size": 1433
+    },
+    "Headers/sys/_types/_u_int32_t.h": {
+      "sha": "4f01b22bd2b12665ae3dd5be0c6a03a33aefb218",
+      "mode": "100644",
+      "size": 1425
+    },
+    "Headers/sys/_types/_u_int64_t.h": {
+      "sha": "bd866cbc2a1bda9ae60a25c74fdbb3c44f9597b4",
+      "mode": "100644",
+      "size": 1425
+    },
+    "Headers/sys/_types/_u_int8_t.h": {
+      "sha": "ac9bf77111116f226c4aaab2916d1139a1a963b3",
+      "mode": "100644",
+      "size": 1421
+    },
+    "Headers/sys/_types/_u_short.h": {
+      "sha": "58816d3576a9bee9d8a4523bcdcce021a1f04c79",
+      "mode": "100644",
+      "size": 1409
+    },
+    "Headers/sys/_types/_ucontext.h": {
+      "sha": "65184e44e4b9401d3863119ba76dbf66792c61ce",
+      "mode": "100644",
+      "size": 2403
+    },
+    "Headers/sys/_types/_ucontext64.h": {
+      "sha": "028f77a5d2c5c679f6677708f8abc339b19210a1",
+      "mode": "100644",
+      "size": 2303
+    },
+    "Headers/sys/_types/_uid_t.h": {
+      "sha": "a9769db30db26c48c8a3b157fcc5127bb1721df2",
+      "mode": "100644",
+      "size": 1458
+    },
+    "Headers/sys/_types/_uintptr_t.h": {
+      "sha": "c22d02b1ccbbebb6dca0b3755b99c904ba206e51",
+      "mode": "100644",
+      "size": 1430
+    },
+    "Headers/sys/_types/_useconds_t.h": {
+      "sha": "1b020a3bd2b306010e208db0cb5ed26dcfd01685",
+      "mode": "100644",
+      "size": 1484
+    },
+    "Headers/sys/_types/_user32_itimerval.h": {
+      "sha": "31ae046277952d68ccbe478c69d8c0d33f827b48",
+      "mode": "100644",
+      "size": 1619
+    },
+    "Headers/sys/_types/_user32_ntptimeval.h": {
+      "sha": "f5f5e4babb762e7cd6cb8ce04ff39df8115bac3b",
+      "mode": "100644",
+      "size": 1612
+    },
+    "Headers/sys/_types/_user32_timespec.h": {
+      "sha": "78b2d9694aaf25fa46a264f1be30b64d39c14efb",
+      "mode": "100644",
+      "size": 1580
+    },
+    "Headers/sys/_types/_user32_timeval.h": {
+      "sha": "ef090986ac24badab271320af701c23b91bb203d",
+      "mode": "100644",
+      "size": 1601
+    },
+    "Headers/sys/_types/_user32_timex.h": {
+      "sha": "b6357833815471e63bd30485c30bdf1b438c8a1b",
+      "mode": "100644",
+      "size": 1890
+    },
+    "Headers/sys/_types/_user64_itimerval.h": {
+      "sha": "5d40eb76df57f420273a1b000874d621b74b96ca",
+      "mode": "100644",
+      "size": 1621
+    },
+    "Headers/sys/_types/_user64_ntptimeval.h": {
+      "sha": "12c536cd2f33b1c455ab837476e68460c76345ac",
+      "mode": "100644",
+      "size": 1612
+    },
+    "Headers/sys/_types/_user64_timespec.h": {
+      "sha": "b9a30260d53db81e4e2bdd1abd880c751c53f89c",
+      "mode": "100644",
+      "size": 1580
+    },
+    "Headers/sys/_types/_user64_timeval.h": {
+      "sha": "e9fcb8a5910fdb86451a188e09c2e6450ce1095e",
+      "mode": "100644",
+      "size": 1601
+    },
+    "Headers/sys/_types/_user64_timex.h": {
+      "sha": "6a9f4e12d8c383f42958715b68e98986eda8c943",
+      "mode": "100644",
+      "size": 1890
+    },
+    "Headers/sys/_types/_user_timespec.h": {
+      "sha": "5825824160badac2b58d141bd6dff873733ef7f3",
+      "mode": "100644",
+      "size": 1737
+    },
+    "Headers/sys/_types/_user_timeval.h": {
+      "sha": "33fb9b8bd59bb2cd324647cfbc988c57a4d275e8",
+      "mode": "100644",
+      "size": 1593
+    },
+    "Headers/sys/_types/_uuid_t.h": {
+      "sha": "66e7da794913c541476cf4aaafb8dd87f5882100",
+      "mode": "100644",
+      "size": 1456
+    },
+    "Headers/sys/_types/_va_list.h": {
+      "sha": "f7687baea9ee2daec9bdaefb683bc99f3445d96a",
+      "mode": "100644",
+      "size": 1467
+    },
+    "Headers/sys/_types/_wchar_t.h": {
+      "sha": "d67cfcdd23d5afa6b9ee00c32fcdcb68898e7bd9",
+      "mode": "100644",
+      "size": 1547
+    },
+    "Headers/sys/_types/_wint_t.h": {
+      "sha": "caad07fdb0a474d482d8c023429f8ca26ac7708b",
+      "mode": "100644",
+      "size": 1456
+    },
+    "Headers/sys/appleapiopts.h": {
+      "sha": "92e9fd6919bbc97d4923d15a5c36015d050b8193",
+      "mode": "100644",
+      "size": 2065
+    },
+    "Headers/sys/attr.h": {
+      "sha": "eaf0b7fd6be8720ec1b00883a8456f4a3b615b00",
+      "mode": "100644",
+      "size": 26046
+    },
+    "Headers/sys/buf.h": {
+      "sha": "2ba1a4991dd198a62bad63d5facdb7fc195892ad",
+      "mode": "100644",
+      "size": 48280
+    },
+    "Headers/sys/cdefs.h": {
+      "sha": "273962f09aae521cb5170bb77baa5aada57f69cf",
+      "mode": "100644",
+      "size": 30143
+    },
+    "Headers/sys/commpage.h": {
+      "sha": "a2a39bab832cc93c970e64535445a4b7976447d5",
+      "mode": "100644",
+      "size": 1369
+    },
+    "Headers/sys/conf.h": {
+      "sha": "638cdc357976bf3bd274e565896ab1d18e75119f",
+      "mode": "100644",
+      "size": 8029
+    },
+    "Headers/sys/dir.h": {
+      "sha": "046ee436855666d547d1a5a70eb656e138c01c10",
+      "mode": "100644",
+      "size": 3985
+    },
+    "Headers/sys/dirent.h": {
+      "sha": "83dbb3b082ad79e32e14d4d53891ca5d01a3b2ba",
+      "mode": "100644",
+      "size": 5655
+    },
+    "Headers/sys/disk.h": {
+      "sha": "87f2624a442745a55c7cbc55d84d1dec8f87246c",
+      "mode": "100644",
+      "size": 10812
+    },
+    "Headers/sys/disklabel.h": {
+      "sha": "1f5c5f1ce59ae7f09ba293a6449c65f6a86c53e6",
+      "mode": "100644",
+      "size": 14143
+    },
+    "Headers/sys/dkstat.h": {
+      "sha": "e0ae9d1ca92324b3209b41eeba3a0a929c43f81c",
+      "mode": "100644",
+      "size": 3657
+    },
+    "Headers/sys/domain.h": {
+      "sha": "151a7550280663d70eb6c7603b7330c6be915a8a",
+      "mode": "100644",
+      "size": 3490
+    },
+    "Headers/sys/errno.h": {
+      "sha": "d142ca994e0ec29f2ed0f0aea10cdd4bef7223c5",
+      "mode": "100644",
+      "size": 12375
+    },
+    "Headers/sys/ev.h": {
+      "sha": "a277693bc06a88873c5f5c352622fa40b2b4cda0",
+      "mode": "100644",
+      "size": 2186
+    },
+    "Headers/sys/event.h": {
+      "sha": "be849574675ff6a2c439ef15a5507d142a961509",
+      "mode": "100644",
+      "size": 17115
+    },
+    "Headers/sys/fcntl.h": {
+      "sha": "efcaf25ee475023007fab9a07b678221d7040440",
+      "mode": "100644",
+      "size": 24687
+    },
+    "Headers/sys/file.h": {
+      "sha": "c4eada79d93eff0689d483ee451b73a986c645ff",
+      "mode": "100644",
+      "size": 3959
+    },
+    "Headers/sys/filio.h": {
+      "sha": "81e4b894742d0fc53860966ce9052875671d454c",
+      "mode": "100644",
+      "size": 4306
+    },
+    "Headers/sys/imgact.h": {
+      "sha": "ca681fc2bbf87f1fd11ed85d180c771d4e164d9c",
+      "mode": "100644",
+      "size": 7918
+    },
+    "Headers/sys/ioccom.h": {
+      "sha": "cabce8cf7ed27759326b8ea9e38b1069d4d653c4",
+      "mode": "100644",
+      "size": 4672
+    },
+    "Headers/sys/ioctl.h": {
+      "sha": "280c5e6191871ffc3d5e9aa7fee1d387cd5b2eb9",
+      "mode": "100644",
+      "size": 4394
+    },
+    "Headers/sys/ioctl_compat.h": {
+      "sha": "729e3e33a3093a4fb022d09292dd59cc3bcb46bb",
+      "mode": "100644",
+      "size": 10271
+    },
+    "Headers/sys/ipc.h": {
+      "sha": "3b3dbd2dcfcc5d53ec10a45afcbf075c773f5938",
+      "mode": "100644",
+      "size": 6699
+    },
+    "Headers/sys/kauth.h": {
+      "sha": "4bf230036c0d31fb5d535f99eac74849a843c049",
+      "mode": "100644",
+      "size": 28535
+    },
+    "Headers/sys/kdebug.h": {
+      "sha": "ba09d846a5de5f6f4e9e4f3f3f023b11c11b7a60",
+      "mode": "100644",
+      "size": 43966
+    },
+    "Headers/sys/kdebug_kernel.h": {
+      "sha": "244dfddeb181159988a594f309468b3388197609",
+      "mode": "100644",
+      "size": 13746
+    },
+    "Headers/sys/kdebug_private.h": {
+      "sha": "5ce1c3833f059bd7c26fecc369edfd5a5ceb1a5c",
+      "mode": "100644",
+      "size": 13471
+    },
+    "Headers/sys/kdebugevents.h": {
+      "sha": "c01f3bd33c4b3fe48fb7cdbfdffa01cb6962bcf2",
+      "mode": "100644",
+      "size": 117504
+    },
+    "Headers/sys/kern_control.h": {
+      "sha": "19b9f8f8ccd78c7876b8bf2145caf9463d7b7624",
+      "mode": "100644",
+      "size": 20429
+    },
+    "Headers/sys/kern_event.h": {
+      "sha": "24605b20ad8d3b43ac6aa32e83492838b19ca00f",
+      "mode": "100644",
+      "size": 11021
+    },
+    "Headers/sys/kernel.h": {
+      "sha": "235ccd52d8048ec9deb082410e39b000830bd22e",
+      "mode": "100644",
+      "size": 3706
+    },
+    "Headers/sys/kernel_types.h": {
+      "sha": "c7bc8a8fe482841815eff5d0ad3435cb96f8580f",
+      "mode": "100644",
+      "size": 3783
+    },
+    "Headers/sys/kpi_mbuf.h": {
+      "sha": "b67ad6123641938fec9f64049888f725ecfaaed9",
+      "mode": "100644",
+      "size": 67431
+    },
+    "Headers/sys/kpi_socket.h": {
+      "sha": "ec549d59c9d621df8e68ca9aeeb088e52dbb5bd9",
+      "mode": "100644",
+      "size": 16046
+    },
+    "Headers/sys/kpi_socketfilter.h": {
+      "sha": "615fcce6b60f27dcd6a4e855af2e415e7ea0a2d1",
+      "mode": "100644",
+      "size": 33406
+    },
+    "Headers/sys/lock.h": {
+      "sha": "5bff0f0baeb3eaa8905386906183d41ac3ff0d63",
+      "mode": "100644",
+      "size": 3638
+    },
+    "Headers/sys/lockf.h": {
+      "sha": "52a8cde7309dc455e6f647e6d3eb1541cefb4619",
+      "mode": "100644",
+      "size": 4814
+    },
+    "Headers/sys/malloc.h": {
+      "sha": "06f09c4c14f848dd8769bb6793d5d549a94f59b0",
+      "mode": "100644",
+      "size": 5506
+    },
+    "Headers/sys/mbuf.h": {
+      "sha": "7bd43bffaa81d7d76d1212a1d01d8a5bb7ffc3bc",
+      "mode": "100644",
+      "size": 9306
+    },
+    "Headers/sys/md5.h": {
+      "sha": "3e7c05866a722a64f804840e766c89ae13d1472f",
+      "mode": "100644",
+      "size": 1668
+    },
+    "Headers/sys/mman.h": {
+      "sha": "1ecc8a11f64031242cbf7abc8ad17698850d5f2c",
+      "mode": "100644",
+      "size": 9187
+    },
+    "Headers/sys/mount.h": {
+      "sha": "1c71dc40f8cfb7e682e6e3f712b52c3711a6a320",
+      "mode": "100644",
+      "size": 53143
+    },
+    "Headers/sys/msg.h": {
+      "sha": "3919819fe33ad6308a24cb768c844652a1ebe50c",
+      "mode": "100644",
+      "size": 13543
+    },
+    "Headers/sys/namei.h": {
+      "sha": "60e879f014b206091d520f30dc3ce4a98ddd47d0",
+      "mode": "100644",
+      "size": 3572
+    },
+    "Headers/sys/netport.h": {
+      "sha": "14ebe566be2c8d93210853ecfee73a048f26ca40",
+      "mode": "100644",
+      "size": 1887
+    },
+    "Headers/sys/param.h": {
+      "sha": "50dc35c8f7ce6fa4d3f75f581908f9f19301aff8",
+      "mode": "100644",
+      "size": 10832
+    },
+    "Headers/sys/paths.h": {
+      "sha": "3a2f1bb053830ff8520e8404855073de40569324",
+      "mode": "100644",
+      "size": 1752
+    },
+    "Headers/sys/posix_sem.h": {
+      "sha": "793511a70dda1e92a56b2ebd64d921762132fc44",
+      "mode": "100644",
+      "size": 2465
+    },
+    "Headers/sys/posix_shm.h": {
+      "sha": "72e7b0c01f080b9405b456262e1da72080e44ccc",
+      "mode": "100644",
+      "size": 2110
+    },
+    "Headers/sys/proc.h": {
+      "sha": "cb759648a2d9132a81f5bbf6daa3e3ef5f8de67e",
+      "mode": "100644",
+      "size": 8915
+    },
+    "Headers/sys/protosw.h": {
+      "sha": "5a06029d4a428103bfc6fc04315b43b2cc04e941",
+      "mode": "100644",
+      "size": 5593
+    },
+    "Headers/sys/queue.h": {
+      "sha": "4ae79ffc2392bb9115014e7b1c05a6e9fb9ba8d1",
+      "mode": "100644",
+      "size": 42618
+    },
+    "Headers/sys/random.h": {
+      "sha": "8bfb748fce963ef459016a6a38dea2e0f017e8c3",
+      "mode": "100644",
+      "size": 1712
+    },
+    "Headers/sys/resource.h": {
+      "sha": "009d360d44d7ee75b02606f4cca71f26c1432622",
+      "mode": "100644",
+      "size": 17699
+    },
+    "Headers/sys/sbuf.h": {
+      "sha": "9b5e13420c565b82eaaf5330386de92399b956ba",
+      "mode": "100644",
+      "size": 3747
+    },
+    "Headers/sys/select.h": {
+      "sha": "913bfff389620924c153e1345544245a5ee46417",
+      "mode": "100644",
+      "size": 5055
+    },
+    "Headers/sys/sem.h": {
+      "sha": "bcf88beaa69335b6027f421314314b31b4bd0171",
+      "mode": "100644",
+      "size": 6850
+    },
+    "Headers/sys/shm.h": {
+      "sha": "9052715eadbaea949f440599000af2278cb96bfa",
+      "mode": "100644",
+      "size": 6900
+    },
+    "Headers/sys/signal.h": {
+      "sha": "e64964a4e880b63aa1d35b16bae2df747d554a80",
+      "mode": "100644",
+      "size": 16274
+    },
+    "Headers/sys/socket.h": {
+      "sha": "9b083f1fe659117e912cd24fd577ee448e8bc40a",
+      "mode": "100644",
+      "size": 30624
+    },
+    "Headers/sys/socketvar.h": {
+      "sha": "c1292843fbdd34793d3c592ddbf78f5bf8f544e4",
+      "mode": "100644",
+      "size": 6014
+    },
+    "Headers/sys/sockio.h": {
+      "sha": "a67833e0c7757de3366c594384681005b2272deb",
+      "mode": "100644",
+      "size": 9487
+    },
+    "Headers/sys/spawn.h": {
+      "sha": "498e6a94765230ef957fb6381dbc0a322acee4a5",
+      "mode": "100644",
+      "size": 3250
+    },
+    "Headers/sys/stat.h": {
+      "sha": "0298640bcf5ba81daba6750ba9d39ecc63bf6f36",
+      "mode": "100644",
+      "size": 17203
+    },
+    "Headers/sys/stdio.h": {
+      "sha": "bde0e7f293175f612e114e1b13490e995008f044",
+      "mode": "100644",
+      "size": 1417
+    },
+    "Headers/sys/sys_domain.h": {
+      "sha": "5933a7c40790987e0ae7b832c7085c68aa8c3c16",
+      "mode": "100644",
+      "size": 2094
+    },
+    "Headers/sys/syscall.h": {
+      "sha": "59075c66e3ad61338ea264ec6832e819e52d1de0",
+      "mode": "100644",
+      "size": 18015
+    },
+    "Headers/sys/sysctl.h": {
+      "sha": "8c02a44806e456fde10cd92f5fd012a28b2401ea",
+      "mode": "100644",
+      "size": 43675
+    },
+    "Headers/sys/syslimits.h": {
+      "sha": "28424700fab815e94864cf5a9c79209a976b5b32",
+      "mode": "100644",
+      "size": 6013
+    },
+    "Headers/sys/syslog.h": {
+      "sha": "ab3a5116c0fbf7323d445843525c771df2862f18",
+      "mode": "100644",
+      "size": 11909
+    },
+    "Headers/sys/sysproto.h": {
+      "sha": "257da17541db0702fcf23a886f9dd2dab68ba35f",
+      "mode": "100644",
+      "size": 149171
+    },
+    "Headers/sys/systm.h": {
+      "sha": "ceb0ccae094d10622b7ccde4ba098fd33ccf858f",
+      "mode": "100644",
+      "size": 7965
+    },
+    "Headers/sys/termios.h": {
+      "sha": "1e6200c6d0a87b8173eb2f975ec716000e8f8bd3",
+      "mode": "100644",
+      "size": 15539
+    },
+    "Headers/sys/time.h": {
+      "sha": "34c5f69e9ddb9d5afe3e81e31a5cbf545b0ec0a9",
+      "mode": "100644",
+      "size": 8827
+    },
+    "Headers/sys/timex.h": {
+      "sha": "b51a4c1ee5553e076ce4c2e77c1b82fb696d94f0",
+      "mode": "100644",
+      "size": 8969
+    },
+    "Headers/sys/ttycom.h": {
+      "sha": "617f597ac732b2891179255021b52d58fe6ece7c",
+      "mode": "100644",
+      "size": 11030
+    },
+    "Headers/sys/types.h": {
+      "sha": "448c2cec34dc3a3656344d05da508f6a4cc32016",
+      "mode": "100644",
+      "size": 8230
+    },
+    "Headers/sys/ubc.h": {
+      "sha": "c889fd0d2306a9bf485731d5b26868fa97dfa09e",
+      "mode": "100644",
+      "size": 4901
+    },
+    "Headers/sys/ucontext.h": {
+      "sha": "08497a4d3c85ca176963f791697a55b25db9dd8f",
+      "mode": "100644",
+      "size": 2618
+    },
+    "Headers/sys/ucred.h": {
+      "sha": "0da4baad26fe0c194ba393ffc0ee963863784a4a",
+      "mode": "100644",
+      "size": 6688
+    },
+    "Headers/sys/uio.h": {
+      "sha": "b818e419c33bab3a6ef3f36dec0b9dfc13b88d12",
+      "mode": "100644",
+      "size": 8972
+    },
+    "Headers/sys/un.h": {
+      "sha": "d52a81edc070bbe2a232cb6ea0f7df5ebad885b3",
+      "mode": "100644",
+      "size": 4339
+    },
+    "Headers/sys/unistd.h": {
+      "sha": "cc4799acfe72b7a1ceba6d8a1f05948a18ec2b34",
+      "mode": "100644",
+      "size": 7900
+    },
+    "Headers/sys/unpcb.h": {
+      "sha": "b1749f03ae694be50b7b42070f3e932543b55cab",
+      "mode": "100644",
+      "size": 5148
+    },
+    "Headers/sys/utfconv.h": {
+      "sha": "4fd6c78e2d38660bbab80e61f1ff1c9fe419cfdd",
+      "mode": "100644",
+      "size": 7000
+    },
+    "Headers/sys/vm.h": {
+      "sha": "8816acb7c6b0db609c74dcd2db4a8bb0338012ea",
+      "mode": "100644",
+      "size": 3836
+    },
+    "Headers/sys/vmparam.h": {
+      "sha": "81bfe320ed9e586d643d341af1aea321dceeba60",
+      "mode": "100644",
+      "size": 1753
+    },
+    "Headers/sys/vnode.h": {
+      "sha": "217716dc2bd75e7375d45d062c874d7d289098ec",
+      "mode": "100644",
+      "size": 82202
+    },
+    "Headers/sys/vnode_if.h": {
+      "sha": "2e8a8137eb0378553d7e27e0527de17fd6f87c1d",
+      "mode": "100644",
+      "size": 59001
+    },
+    "Headers/sys/wait.h": {
+      "sha": "f68f5fc0772a5527fa35ab7d2b86355ec3b6f1a7",
+      "mode": "100644",
+      "size": 9880
+    },
+    "Headers/sys/xattr.h": {
+      "sha": "bb25cbd77178d9a1e5d76890518dd2137ba395b9",
+      "mode": "100644",
+      "size": 2548
+    },
+    "Headers/uuid/uuid.h": {
+      "sha": "28f231f8b4f54963d5cabb40eab84b577809da1d",
+      "mode": "100644",
+      "size": 2756
+    },
+    "Headers/vecLib/vBasicOps.h": {
+      "sha": "67c2b08249c2bdd9391c282863045bb84cb5088b",
+      "mode": "100644",
+      "size": 13220
+    },
+    "Headers/vecLib/vDSP.h": {
+      "sha": "f018f683c2c06b5797ec93a566a61edec54f0827",
+      "mode": "100644",
+      "size": 38436
+    },
+    "Headers/vecLib/vForce.h": {
+      "sha": "0b2678b68d24f1c0f68c9ff1cab4e08a39c17b07",
+      "mode": "100644",
+      "size": 2692
+    },
+    "Headers/vecLib/vecLib.h": {
+      "sha": "d4b108c185a0cc27cc5d419544a399323a41bdf0",
+      "mode": "100644",
+      "size": 664
+    },
+    "Headers/vecLib/vecLibTypes.h": {
+      "sha": "da698bcc02059cb674cd3b289474b8f255a489b4",
+      "mode": "100644",
+      "size": 1515
+    },
+    "Headers/vfs/vfs_support.h": {
+      "sha": "e47a467237f745c7ffce1f9409a129220560abcf",
+      "mode": "100644",
+      "size": 6352
+    },
+    "Headers/vm/WKdm_new.h": {
+      "sha": "ed93911c8869035c150a0559a8059a89c4cdc0a8",
+      "mode": "100644",
+      "size": 3232
+    },
+    "Headers/vm/memory_types.h": {
+      "sha": "a918462754fff7432be3508ce80dfe74de89a554",
+      "mode": "100644",
+      "size": 1851
+    },
+    "Headers/vm/pmap.h": {
+      "sha": "81b8f15e0c00f6cd0db4b79e7a574d0bc364241c",
+      "mode": "100644",
+      "size": 2872
+    },
+    "Headers/vm/vm_compressor_algorithms.h": {
+      "sha": "91d93862f8a945da5e1b50abd607aa00aa3b5b4c",
+      "mode": "100644",
+      "size": 1340
+    },
+    "Headers/vm/vm_fault.h": {
+      "sha": "75a89d6c2c8fc79192613c87ecaff987b27d0de7",
+      "mode": "100644",
+      "size": 2736
+    },
+    "Headers/vm/vm_kern.h": {
+      "sha": "472a75e81025af7a3a4ac8fad08ae653b1922c13",
+      "mode": "100644",
+      "size": 3221
+    },
+    "Headers/vm/vm_map.h": {
+      "sha": "9d4b1b27bd798d0f3f9734078078a5cf80324d75",
+      "mode": "100644",
+      "size": 2950
+    },
+    "Headers/vm/vm_options.h": {
+      "sha": "43a37d0a842a2d83831f85a973fffd56351b9653",
+      "mode": "100644",
+      "size": 1786
+    },
+    "Headers/vm/vm_pageout.h": {
+      "sha": "2285405467254052c6d36243f191894839388930",
+      "mode": "100644",
+      "size": 2617
+    },
+    "Headers/vm/vm_shared_region.h": {
+      "sha": "0626302f00916ea05e8d5b2eac00863c844d2c7a",
+      "mode": "100644",
+      "size": 1162
+    },
+    "Headers/voucher/ipc_pthread_priority_types.h": {
+      "sha": "00b0187692ce54ed8026466759a9858a0184578c",
+      "mode": "100644",
+      "size": 1854
+    },
+    "Headers/x86_64/machine_kpc.h": {
+      "sha": "16ca39df29deb176760b36a7ea51f6bfe985f66d",
+      "mode": "100644",
+      "size": 1694
+    },
+    "Headers/x86_64/machine_remote_time.h": {
+      "sha": "818aa0d96295495dba53f885bfa6d1972fb6118c",
+      "mode": "100644",
+      "size": 1672
+    },
+    "Headers/x86_64/monotonic.h": {
+      "sha": "cf0d9cc5a0270db5bda21d3990566558291a30e4",
+      "mode": "100644",
+      "size": 1612
+    },
+    "LICENSE.txt": {
+      "sha": "fe81a60cae982c042a69f97623b427666c455093",
+      "mode": "100644",
+      "size": 19829
+    },
+    "Library/kmod/README": {
+      "sha": "f42e502fd813572ece09b1983b347cb83b6e3ed1",
+      "mode": "100644",
+      "size": 1295
+    },
+    "Library/kmod/c_start.c": {
+      "sha": "a694750e4d8051088b72e69bcb91d001ed136715",
+      "mode": "100644",
+      "size": 3892
+    },
+    "Library/kmod/c_stop.c": {
+      "sha": "e78fc71a04f0a968f8dc1b0dd1b96ca856bd9b46",
+      "mode": "100644",
+      "size": 2942
+    },
+    "Library/kmod/cplus_start.c": {
+      "sha": "c0baeb35d6cffeff07bbaeab8eb6f2b33c07a6bd",
+      "mode": "100644",
+      "size": 4450
+    },
+    "Library/kmod/cplus_stop.c": {
+      "sha": "ab5fdc8bb9b0f47d45bb815d02013bba8da0cb60",
+      "mode": "100644",
+      "size": 3309
+    },
+    "Library/kmod/i386_builtins.c": {
+      "sha": "e3e3ffa56bbfc193d25940219924406431af25bc",
+      "mode": "100644",
+      "size": 8962
+    },
+    "Library/kmod/libkmod.xcodeproj/project.pbxproj": {
+      "sha": "a820b1829c8ef1e0ba7f861ce707b26e75f91e71",
+      "mode": "100644",
+      "size": 18585
+    },
+    "Library/kmod/libkmodtest/libkmodtest-Info.plist": {
+      "sha": "7092cb6b132e3f53fdfcb1e6396c94e342d22f87",
+      "mode": "100644",
+      "size": 1507
+    },
+    "Library/kmod/libkmodtest/libkmodtest.cpp": {
+      "sha": "73c9e96f038514b3cfec8b0436b19f9cf640a3d8",
+      "mode": "100644",
+      "size": 1559
+    },
+    "Library/kmod/libkmodtest/libkmodtest.h": {
+      "sha": "bfe0e2e27b8fa2e1a755c28296757fc237ac7ced",
+      "mode": "100644",
+      "size": 1531
+    },
+    "Library/universal/libkmod.a": {
+      "sha": "13341ef61811019c3b2fa20d90666cc7d720d562",
+      "mode": "100644",
+      "size": 5568
+    },
+    "Library/universal/libkmodc++.a": {
+      "sha": "ac91f5a72bc357356a41292d8269712980abe8c3",
+      "mode": "100644",
+      "size": 5168
+    },
+    "Library/x86_64/libkmod.a": {
+      "sha": "9fd5a28bf4f447215070487f3cf6967f669163d6",
+      "mode": "100644",
+      "size": 1408
+    },
+    "README.md": {
+      "sha": "7fceac107c004a06964d41f061791e263340ba69",
+      "mode": "100644",
+      "size": 6063
+    }
+  }
+}

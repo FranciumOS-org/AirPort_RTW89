@@ -1,0 +1,243 @@
+{
+  "note": "SDK source snapshot, not asserted to be Lilu 1.7.3 source. Host loaded Lilu UUID is pinned separately. Blob hashes identify exact fetched public SDK content.",
+  "files": [
+    {
+      "path": "vendor/Lilu/Headers/plugin_start.hpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Headers/plugin_start.hpp",
+      "git_blob_sha": "a86c3b85a2a26a4f79d10ed8f02f6d7c71da65ae",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "9613e8a95fc8340a128b2f6248c423e2b63ac8bc4935918800156b76aa8b78bf",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/kern_api.hpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Headers/kern_api.hpp",
+      "git_blob_sha": "2306964ed558d962ac92fab2912ea7e557f1512f",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "68704ec79a8829981634b543f08f86bec3c5a3d91fdb4c11318c2fcaeb827be2",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/kern_patcher.hpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Headers/kern_patcher.hpp",
+      "git_blob_sha": "afbc6ef48d788a510d324459e4769eea1b612574",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "27461a4f6b2ec7f37205d23e15f25fc2581fd5835694615dd01ed0829a3f4ce1",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/kern_util.hpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Headers/kern_util.hpp",
+      "git_blob_sha": "0cef9de655b44afaa65196176a8725b8872b9913",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "fba7159efed51076004d65b98972fb032a20ac056aece74b5e0cab13e37cf39d",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/kern_version.hpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Headers/kern_version.hpp",
+      "git_blob_sha": "41cae0ada0eb475d089388af6c74e7f92b4760e0",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "d24303fe6ecd4a13c1acddfe7dbc2359110fb9437c59fbbdff3bd4cc071a052b",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Library/plugin_start.cpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Library/plugin_start.cpp",
+      "git_blob_sha": "fd992771247b582cc834459b151d6931d4520df3",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "9ebc54138b05bebc86d78479209f3a6fdafedeb5b732be190cc449b6b82e6ebf",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/LICENSE.txt",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "LICENSE.txt",
+      "git_blob_sha": "0c9c29f321b2520daecb4f728afb80fdad4a478f",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "74c3ca48189b796b0d262866e67de8efba77a71516667ce68dc3a8f13c2a3c57",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/kern_config.hpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Headers/kern_config.hpp",
+      "git_blob_sha": "d5cdbf2235cfc05c1b9652fea8dd01063edb2bdc",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "e984014182ba3170d7906d8775d09fd522d87de89dcf01bc7d34fc53e0e23f00",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/kern_user.hpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Headers/kern_user.hpp",
+      "git_blob_sha": "ef64a598d1275ddb18e6fc4a00f2e36e205eaefe",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "3b46cba8b6cf988dce98d09672d011c82e6716b03ae67fe4aa2b0ceff9564b5c",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/kern_compat.hpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Headers/kern_compat.hpp",
+      "git_blob_sha": "ff2c1f0a6f8c6bdb4c56ac9f628e7140b69af37a",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "87e70a3912ae13187b48307829aa42455d7fbb8ab00c9bdac46706998e0b81b7",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/kern_mach.hpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Headers/kern_mach.hpp",
+      "git_blob_sha": "38e0846747ed7f6b3a3b6d28ca32e1f147f7910f",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "2a7ded60a06ff4dee6f26832102c7b5e91a7fd5aea46538ce00758ba16c66e20",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/kern_disasm.hpp",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "Lilu/Headers/kern_disasm.hpp",
+      "git_blob_sha": "4eb12a28001e544b5ab9d14f0e433c590fb1bae1",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "6f86eaa09bb848d711a12b57d141e2047730634b5ae2c721b58ea620daf5ad65",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/hde32.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "hde/hde32.h",
+      "git_blob_sha": "fa3ce851cb002460a210f24314e0548b6375d04a",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "d0dbf2065ab9d864697afb3603586ba047ae00461fd5f5150aec419c1dd54f6e",
+      "blob_verified": true,
+      "symlink_blob_sha": "6e926359afd2159aa9c7bb9f1d4a3572514d902c",
+      "symlink_source_path": "Lilu/Headers/hde32.h"
+    },
+    {
+      "path": "vendor/Lilu/Headers/hde64.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "hde/hde64.h",
+      "git_blob_sha": "3e223fde39566077176ff2afe958ee146c0944b7",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "109319ff7ab6b135708fb4ff7d20a7cef4eb30cd4c2048cf8090caaadb53bb1a",
+      "blob_verified": true,
+      "symlink_blob_sha": "6082faea6fb8b66e5194eb2578c6f42155b3de17",
+      "symlink_source_path": "Lilu/Headers/hde64.h"
+    },
+    {
+      "path": "vendor/Lilu/Headers/capstone/arm.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/include/arm.h",
+      "git_blob_sha": "8d544cb2a4c67c9242c0025883b7d9f10a44135b",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "c5f8f576325a4693433a8553f0cf60da7e184fdc3cf4d69565b8f6da6a266290",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/capstone/arm64.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/include/arm64.h",
+      "git_blob_sha": "87504bae98b6a6efc2cfc3f363fb9782a80486c2",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "ea5125a4d828414198689d96bfacbaedd781d105d3c9121e1c1313ada9240ab8",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/capstone/capstone.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/include/capstone.h",
+      "git_blob_sha": "172c7b8cc595b7160729c415571c45bcf933d450",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "f26d73232fdda42951c29bda223668fa7909ded7ae641bec6645af77194fe340",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/capstone/mips.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/include/mips.h",
+      "git_blob_sha": "d238fda5411bc1154054d011b56c1ab924d4eb1f",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "6c36467a1425085a04ce68fbf6dac36c66523a5f47ebb78dd34c7975517d2548",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/capstone/platform.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/include/platform.h",
+      "git_blob_sha": "b0d1a2d8e2ad59309a03203a5b7d62b64aab73c4",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "dfa36d15d3ab16c2c3e7760c9c05974b724161ad77bf4c59a673b95cafc7ed68",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/capstone/ppc.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/include/ppc.h",
+      "git_blob_sha": "b67df6d5e2c1402971de60d083501b594e67a1e0",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "ecd2185d16bba8e8bf273e0b27b89b55c2716e0ee809a24aa5f32ca9138892dd",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/capstone/sparc.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/include/sparc.h",
+      "git_blob_sha": "a1fccfaab4a469201ee30c8bd3b02315e5d46ca7",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "60abc023878586ef923a79461f48dfc0622ac016d5e216f2be27aab46eea72ce",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/capstone/systemz.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/include/systemz.h",
+      "git_blob_sha": "3020bd7ea999e0307ebb1de6b270fda7b5713149",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "951a1e4c64ce2ff0f4d88d698c715ca0e84426d19c405be6d89129aaab3071eb",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/capstone/x86.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/include/x86.h",
+      "git_blob_sha": "2dd162b683cccc5cba50157359282cc71d397ace",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "85744ad3f5e752e8e0cd970e9a4f8db7293560e3e22717a29bb4ad017a0b1dc7",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/Headers/capstone/xcore.h",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/include/xcore.h",
+      "git_blob_sha": "aaf59129914bacf306dcfdf2a20ced768e476641",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "9fd8224a36744e62418af5a4868b05d1ae693741a7e15e2f0e018e56ad57b734",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/CAPSTONE_LICENSE.TXT",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "capstone/LICENSE.TXT",
+      "git_blob_sha": "0dabdc749eee9faeaa358ecd831064463cd756bc",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "sha256": "65e9ed46a59976eda8f5bd1ea79a680dea38dd299c760bc9a8d87a764ef5029b",
+      "blob_verified": true
+    },
+    {
+      "path": "vendor/Lilu/HDE_LICENSE.TXT",
+      "source_repository": "acidanthera/Lilu",
+      "source_path": "hde/LICENSE.txt",
+      "git_blob_sha": "335194d31d59da818d9fcebb11d365d1390d3831",
+      "source_ref": "default branch fetched 2026-11-09 (blob pinned)",
+      "blob_verified": true,
+      "sha256": "aedfabba11f51aecb698f94dcf40d7f35ea14995d2959171d222e671dac01baf"
+    }
+  ]
+}

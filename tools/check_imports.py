@@ -38,7 +38,9 @@ def main():
                  f"(`make link`): **{len(undefined)}**, unresolved: **{len(unresolved)}**.", ""]
         lines += [f"- `{s[1:]}`" + ("  **(not in this kernel)**" if s in unresolved else "")
                   for s in undefined]
-        Path(sys.argv[2]).write_text("\n".join(lines) + "\n")
+        report_path = Path(sys.argv[2])
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("\n".join(lines) + "\n")
 
     print(f"  LINK {obj}: {len(undefined)} kernel imports, {len(unresolved)} unresolved")
     for s in unresolved:

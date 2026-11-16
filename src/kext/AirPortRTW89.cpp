@@ -171,7 +171,10 @@ const OSString *AirPort_RTW89::newVendorString() const
 
 const OSString *AirPort_RTW89::newModelString() const
 {
-    return OSString::withCString(rtw89_chip_name(_deviceID));
+    /* Modified 2026-11-15: display branding; retain the detected Realtek chip. */
+    char model[96];
+    snprintf(model, sizeof(model), "RTLAirLink (%s)", rtw89_chip_name(_deviceID));
+    return OSString::withCString(model);
 }
 
 IOReturn AirPort_RTW89::getHardwareAddress(IOEthernetAddress *addr)
@@ -407,6 +410,12 @@ bool AirPort_RTW89::start(IOService *provider)
     _commandLock = IOLockAlloc();
     if (!_commandLock)
         return false;
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    _owlyRxGateLock = IOLockAlloc();
+    if (!_owlyRxGateLock)
+        return false; /* free() releases _commandLock and surviving resources */
+    owly_abi6_gate_init(&_owlyRxGate); /* CLOSED until front is fully connected */
+#endif
 
     _pci = OSDynamicCast(IOPCIDevice, provider);
     if (!_pci) {
@@ -476,6 +485,16 @@ bool AirPort_RTW89::start(IOService *provider)
     platform.irq_enable = irqEnable;
     platform.link_changed = linkChanged;
     platform.rx_frame = rxFrame;
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    platform.awdl_rx_action = awdlRxAction;
+#if defined(OWLY_ABI6_C3_SCAN_OBSERVER) && OWLY_ABI6_C3_SCAN_OBSERVER
+    platform.awdl_rx_scan_signature = awdlRxScanSignature;
+#endif
+    platform.awdl_rx_ipv6 = awdlRxIPv6;
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    platform.native_rx = nativeRx;
+#endif
+#endif
     platform.tx_wake = txWake;
     platform.scan_done = scanDone;
 
@@ -971,6 +990,12 @@ void AirPort_RTW89::free()
 {
     teardown();
     rtw89_logring_free();
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    if (_owlyRxGateLock) {
+        IOLockFree(_owlyRxGateLock);
+        _owlyRxGateLock = nullptr;
+    }
+#endif
     if (_commandLock) {
         IOLockFree(_commandLock);
         _commandLock = nullptr;

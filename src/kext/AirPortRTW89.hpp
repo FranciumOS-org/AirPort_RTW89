@@ -30,6 +30,9 @@
 
 #include "rtw89_glue.h"
 #include "../front/rtw89_front_api.h"
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+#include "owly_abi6_rx_gate.h"
+#endif
 
 struct apple80211req;
 
@@ -102,6 +105,9 @@ private:
     void nativePowerChanged();
     static bool frontExpected();
     int nativeRequest(bool isSet, int number, void *data);
+    int nativeAwdlSyncRequest(bool isSet, int number, void *data);
+    bool nativeAwdlGetEnvelope(void *interface, void *vif, unsigned long cmd,
+                               void *data, int *result);
     int nativeAssociate(void *data);
     bool nativeJoinEnvelope(struct apple80211req *req, int *result);
     static void scanDone(void *ctx, bool aborted);
@@ -114,6 +120,31 @@ private:
                             bool *handled);
     static int backEnable(void *ctx, bool on);
     static uint32_t backOutput(void *ctx, mbuf_t m);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    static uint32_t backNativeOutput(void *ctx,mbuf_t m);
+    static int backNativeWindow(void *ctx,struct owly_link_window *out);
+    static bool nativeRx(void *ctx,uint32_t kind,const uint8_t *raw,size_t len,
+                         const uint8_t src[6],const uint8_t dst[6],
+                         uint8_t channel,int8_t rssi,uint64_t received_us);
+#endif
+    /* OWLY_NATIVE_IDENTITY_BRIDGE_BEGIN: backend receives only identity events. */
+    static bool backVifEvent(void *ctx, void *vif, uint32_t role, uint32_t event,
+                             const uint8_t request_mac[6]);
+    /* OWLY_NATIVE_IDENTITY_BRIDGE_END */
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    static bool awdlRxAction(void *ctx, const uint8_t source[6],
+                             unsigned int subtype, unsigned int social_mask,
+                             const uint8_t *raw, size_t len);
+#if defined(OWLY_ABI6_C3_SCAN_OBSERVER) && OWLY_ABI6_C3_SCAN_OBSERVER
+    static bool awdlRxScanSignature(void *ctx, const uint8_t source[6],
+                                    const uint8_t *raw, size_t len);
+#endif
+    static bool awdlRxIPv6(void *ctx, const uint8_t dst[6],
+                            const uint8_t src[6], const uint8_t *ip6, size_t len);
+    bool awdlHandoff(uint32_t kind, const uint8_t *raw, size_t len,
+                     const uint8_t src[6], const uint8_t dst[6],
+                     uint8_t channel=0,int8_t rssi=0,uint64_t received_us=0);
+#endif
     static void backPower(void *ctx, bool on);
     /* The radio on, unless the machine is going down or asleep. */
     int radioUp() { return _halting ? -100 : _asleep ? -101 : rtw89_glue_up(); }
@@ -137,6 +168,11 @@ private:
     volatile UInt32 _nativeEvents = 0;
     volatile bool _nativeClosing = false;
     volatile SInt32 _nativeRunning = 0;
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    /* One lock protects admission and the _ns->front callback lifetime. */
+    IOLock *_owlyRxGateLock = nullptr;
+    struct owly_abi6_rx_gate _owlyRxGate = {};
+#endif
     IOService *_front = nullptr;
     NativeState *_ns = nullptr;
 

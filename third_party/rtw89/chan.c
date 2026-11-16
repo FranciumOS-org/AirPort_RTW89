@@ -3398,6 +3398,24 @@ int rtw89_chanctx_ops_assign_vif(struct rtw89_dev *rtwdev,
 	struct rtw89_entity_mgnt *mgnt = &hal->entity_mgnt;
 	struct rtw89_entity_weight w = {};
 	int ret;
+/* OWLY_CORE04E_GUARDED_ASSIGN_BEGIN
+ * Only a P2P shim VIF is affected when trial guard is explicitly enabled.
+ * Failure path restores software accounting and retries previous RF channel.
+ * This cannot guarantee that a failed firmware channel operation left RF sane.
+ */
+#if defined(RTW89_AWDL_CHANCTX_GUARD) && RTW89_AWDL_CHANCTX_GUARD
+	bool owly_trial = rtwvif_to_vif(rtwvif)->p2p;
+	bool owly_role_added = false;
+	bool owly_did_swap = false;
+	enum rtw89_chanctx_idx owly_swap_from = RTW89_CHANCTX_0;
+	enum rtw89_chanctx_idx owly_prev_idx = rtwvif_link->chanctx_idx;
+	int owly_restore_ret;
+
+	/* Scanning and an already-bound link are not safe staging conditions. */
+	if (owly_trial && (rtwdev->scanning || rtwvif_link->chanctx_assigned))
+		return -EBUSY;
+#endif
+/* OWLY_CORE04E_GUARDED_ASSIGN_VARS_END */
 
 	rtwvif_link->chanctx_idx = cfg->idx;
 	rtwvif_link->chanctx_assigned = true;
@@ -3406,8 +3424,13 @@ int rtw89_chanctx_ops_assign_vif(struct rtw89_dev *rtwdev,
 	if (rtwdev->scanning)
 		rtw89_hw_scan_abort(rtwdev, rtwdev->scan_info.scanning_vif);
 
-	if (list_empty(&rtwvif->mgnt_entry))
+	if (list_empty(&rtwvif->mgnt_entry)) {
 		list_add_tail(&rtwvif->mgnt_entry, &mgnt->active_list);
+#if defined(RTW89_AWDL_CHANCTX_GUARD) && RTW89_AWDL_CHANCTX_GUARD
+		if (owly_trial)
+			owly_role_added = true;
+#endif
+	}
 
 	if (cfg->idx == RTW89_CHANCTX_0)
 		goto out;
@@ -3417,12 +3440,41 @@ int rtw89_chanctx_ops_assign_vif(struct rtw89_dev *rtwdev,
 		goto out;
 
 	/* put the first active chanctx at RTW89_CHANCTX_0 */
+#if defined(RTW89_AWDL_CHANCTX_GUARD) && RTW89_AWDL_CHANCTX_GUARD
+	if (owly_trial) {
+		owly_did_swap = true;
+		owly_swap_from = cfg->idx;
+	}
+#endif
 	rtw89_swap_chanctx(rtwdev, cfg->idx, RTW89_CHANCTX_0);
 
 out:
 	ret = rtw89_set_channel(rtwdev);
-	if (ret)
+	if (ret) {
+#if defined(RTW89_AWDL_CHANCTX_GUARD) && RTW89_AWDL_CHANCTX_GUARD
+		if (owly_trial) {
+			/* Software transaction rollback; never touch primary link state. */
+			if (owly_did_swap)
+				rtw89_swap_chanctx(rtwdev, owly_swap_from,
+						    RTW89_CHANCTX_0);
+			rtwvif_link->chanctx_assigned = false;
+			rtwvif_link->chanctx_idx = owly_prev_idx;
+			if (cfg->ref_count)
+				cfg->ref_count--;
+			if (owly_role_added)
+				list_del_init(&rtwvif->mgnt_entry);
+			/* Best-effort RF restoration; report if even restoration fails. */
+			owly_restore_ret = rtw89_set_channel(rtwdev);
+			if (owly_restore_ret)
+				rtw89_warn(rtwdev,
+					   "OWLY 04E: restore channel failed %d\n",
+					   owly_restore_ret);
+			rtw89_warn(rtwdev,
+				   "OWLY 04E: auxiliary ctx rolled back after rc=%d\n", ret);
+		}
+#endif
 		return ret;
+	}
 
 	rtw89_tas_reset(rtwdev, true);
 

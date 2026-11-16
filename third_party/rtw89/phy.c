@@ -8006,7 +8006,7 @@ static void rtw89_phy_tx_path_div_sta_iter(void *data, struct ieee80211_sta *sta
 	if (WARN(ieee80211_vif_is_mld(vif), "MLD mix path_div\n"))
 		return;
 
-	if (sta->tdls)
+	if (rtw89_sta_is_direct_peer(sta))
 		return;
 
 	if (*done)

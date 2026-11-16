@@ -2675,6 +2675,31 @@ static int rtw89_mac_typ_fltr_opt_ax(struct rtw89_dev *rtwdev,
 	return 0;
 }
 
+static u32 rtw89_mac_awdl_rx_fltr(struct rtw89_dev *rtwdev, u8 mac_idx, u32 rx_fltr)
+{
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+	/* Follow rtw89's active OTHER_BSS policy (Ikromov, v5 3/10).
+	 * Relax admission while keeping the station and AWDL ports active.
+	 * The sniffer bit controls passive receive and can suppress Auto-ACK.
+	 */
+	if (mac_idx == RTW89_MAC_0 && rtwdev->chip->chip_id == RTL8852B &&
+	    rtwdev->hal.owly_awdl_scc_rx)
+		rx_fltr &= ~(B_AX_A_A1_MATCH | B_AX_A_BC | B_AX_A_MC |
+			     B_AX_A_UC_CAM_MATCH | B_AX_A_BC_CAM_MATCH |
+			     B_AX_A_MC_LIST_CAM_MATCH | B_AX_A_BCN_CHK_EN |
+			     B_AX_UID_FILTER_MASK);
+	/* A1 admission keeps frames addressed to our real receiver identity.
+	 * Do not reinstate the unicast CAM drop: AWDL No-DS frames are outside
+	 * the AP association, even with an allocated peer CAM/MACID. The stock
+	 * rtw89_roc_start() also clears UC/BC CAM drops on its active receiver.
+	 * Scans retain their broad probe-response policy. No sniffer mode. */
+	if (mac_idx == RTW89_MAC_0 && rtwdev->chip->chip_id == RTL8852B &&
+	    rtwdev->hal.owly_awdl_scc_rx && !rtwdev->scanning)
+		rx_fltr |= B_AX_A_A1_MATCH;
+#endif
+	return rx_fltr;
+}
+
 void rtw89_mac_set_rx_fltr(struct rtw89_dev *rtwdev, u8 mac_idx, u32 rx_fltr)
 {
 	const struct rtw89_mac_gen_def *mac = rtwdev->chip->mac_def;
@@ -2685,6 +2710,7 @@ void rtw89_mac_set_rx_fltr(struct rtw89_dev *rtwdev, u8 mac_idx, u32 rx_fltr)
 
 	val = rtw89_read32(rtwdev, reg);
 	/* B_AX_RX_FLTR_CFG_MASK is not a consecutive bit mask */
+	rx_fltr = rtw89_mac_awdl_rx_fltr(rtwdev, mac_idx, rx_fltr);
 	val = (val & ~B_AX_RX_FLTR_CFG_MASK) | (rx_fltr & B_AX_RX_FLTR_CFG_MASK);
 	rtw89_write32(rtwdev, reg, val);
 }
@@ -2706,7 +2732,7 @@ static int rx_fltr_init_ax(struct rtw89_dev *rtwdev, u8 mac_idx)
 		if (ret)
 			return ret;
 	}
-	mac_ftlr = rtwdev->hal.rx_fltr;
+	mac_ftlr = rtw89_mac_awdl_rx_fltr(rtwdev, mac_idx, rtwdev->hal.rx_fltr);
 	plcp_ftlr = B_AX_CCK_CRC_CHK | B_AX_CCK_SIG_CHK |
 		    B_AX_LSIG_PARITY_CHK_EN | B_AX_SIGA_CRC_CHK |
 		    B_AX_VHT_SU_SIGB_CRC_CHK | B_AX_VHT_MU_SIGB_CRC_CHK |

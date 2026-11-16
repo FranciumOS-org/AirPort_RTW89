@@ -1272,6 +1272,7 @@ struct rtw89_tx_desc_info {
 	bool tx_cnt_lmt_en;
 	u8 sn: 4;
 	u8 tx_cnt_lmt: 6;
+#define RTW89_TX_DATA_CNT_LMT_MAX 0x3f
 	u8 addr_info_nr;
 	u8 sec_keyid;
 	u8 sec_type;
@@ -1294,6 +1295,10 @@ struct rtw89_tx_desc_info {
 	bool stbc;
 	bool ldpc;
 	bool upd_wlan_hdr;
+	/* Raw injected frames own their retry/RTS/sequence policy. */
+	bool no_ack;
+	bool rts_en;
+	bool hw_rts_en;
 	bool mlo;
 	bool sw_mld;
 };
@@ -6387,6 +6392,9 @@ struct rtw89_hal {
 	u8 cv;
 	u8 cid; /* enum rtw89_core_chip_cid */
 	u8 acv;
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+	bool owly_awdl_scc_rx;
+#endif
 	u16 aid; /* enum rtw89_core_chip_aid */
 	u32 antenna_tx;
 	u32 antenna_rx;
@@ -7764,6 +7772,8 @@ struct rtw89_sta {
 	DECLARE_BITMAP(flags, NUM_OF_RTW89_STA_FLAGS);
 
 	bool disassoc;
+	/* Observed AWDL peer; independent CAM/MACID, no AP join. */
+	bool owly_awdl;
 
 	struct sk_buff_head roc_queue;
 
@@ -8536,6 +8546,11 @@ enum nl80211_he_ru_alloc rtw89_he_rua_to_ru_alloc(u16 rua)
 	}
 }
 
+static inline bool rtw89_sta_is_direct_peer(const struct ieee80211_sta *sta)
+{
+	return sta->tdls || sta_to_rtwsta((struct ieee80211_sta *)sta)->owly_awdl;
+}
+
 static inline
 struct rtw89_addr_cam_entry *rtw89_get_addr_cam_of(struct rtw89_vif_link *rtwvif_link,
 						   struct rtw89_sta_link *rtwsta_link)
@@ -8543,7 +8558,7 @@ struct rtw89_addr_cam_entry *rtw89_get_addr_cam_of(struct rtw89_vif_link *rtwvif
 	if (rtwsta_link) {
 		struct ieee80211_sta *sta = rtwsta_link_to_sta(rtwsta_link);
 
-		if (rtwvif_link->net_type == RTW89_NET_TYPE_AP_MODE || sta->tdls)
+		if (rtwvif_link->net_type == RTW89_NET_TYPE_AP_MODE || rtw89_sta_is_direct_peer(sta))
 			return &rtwsta_link->addr_cam;
 	}
 	return &rtwvif_link->addr_cam;

@@ -1297,11 +1297,51 @@ static int test_keep(void)
 }
 
 /* Join the pretend network, playing the AP's side of each exchange. */
+
+/* This template is a TEST fixture, not a captured Apple template or RF proof. */
+static const uint8_t sync_test_template[29]={
+    [0]=5,[1]=21,[24]=21,[25]=2,[27]=0x32,[28]=1
+};
+static int test_software_awdl_sync(void)
+{
+    struct rtw89_glue_awdl_sync_status st;
+    int failures=0,checks=0;
+    uint64_t stopped;
+    if (rtw89_glue_awdl_sync_status(&st) || !st.built) return 0;
+#define S_EXPECT(cond) do { checks++; if (!(cond)) { failures++; printf("== FAIL SOFTWARE AWDL %s\n",#cond); } } while (0)
+    S_EXPECT(!st.active && !st.requested && !st.has_template);
+    S_EXPECT(rtw89_glue_awdl_sync_enable(true)==0);
+    S_EXPECT(rtw89_glue_awdl_sync_status(&st)==0 && st.requested && !st.active);
+    S_EXPECT(rtw89_glue_awdl_sync_template(sync_test_template,sizeof(sync_test_template))==0);
+    S_EXPECT(rtw89_glue_awdl_sync_status(&st)==0 && st.has_template && st.active);
+    for (int i=0;i<100;i++) {
+        rtw89_glue_awdl_sync_status(&st);
+        if (st.handed_off || st.failed) break;
+        usleep(10000);
+    }
+    S_EXPECT(st.handed_off>0 && st.staged>=st.handed_off && !st.failed && st.channel==6);
+    S_EXPECT(rtw89_glue_awdl_sync_template(sync_test_template,1827)!=0);
+    S_EXPECT(rtw89_glue_awdl_sync_status(&st)==0 && st.has_template && st.active);
+    S_EXPECT(rtw89_glue_awdl_sync_enable(false)==0);
+    S_EXPECT(rtw89_glue_awdl_sync_status(&st)==0 && !st.active && !st.requested);
+    stopped=st.handed_off;
+    usleep(200000);
+    S_EXPECT(rtw89_glue_awdl_sync_status(&st)==0 && st.handed_off==stopped && !st.active);
+    S_EXPECT(rtw89_glue_awdl_sync_template(NULL,0)==0 &&
+             rtw89_glue_awdl_sync_status(&st)==0 && !st.has_template);
+#undef S_EXPECT
+    printf("== software AWDL integration: %d check(s), %d failure(s); simulated chip, NO RF proof\n",checks,failures);
+    return failures;
+}
+
 static int test_join(void)
 {
     static const uint8_t gtk1[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
     static const uint8_t gtk2[16] = { 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
     struct rtw89_glue_link link;
+    struct rtw89_glue_awdl_radio_status radio;
+    static const uint8_t radio_mac[6] = { 0x02, 0x6f, 0x77, 0x6c, 0x79, 0x01 };
+    int radio_checks = 0, radio_failures = 0;
     int failures = 0;
 
 #define EXPECT(cond) do { if (!(cond)) { failures++; printf("== FAIL %s\n", #cond); } } while (0)
@@ -1316,6 +1356,26 @@ static int test_join(void)
     EXPECT(rtw89_glue_join((const uint8_t *)"testnet", 7, NULL, 0) == -13);
     EXPECT(rtw89_glue_join((const uint8_t *)"testnet", 7, "short", 5) == -13);
 
+#define RADIO_EXPECT(cond) do { radio_checks++; if (!(cond)) { \
+    radio_failures++; failures++; printf("== FAIL RADIO %s\n", #cond); } } while (0)
+    memset(&radio, 0, sizeof(radio));
+    EXPECT(rtw89_glue_awdl_radio_status(&radio) == 0);
+    const unsigned radio_base_binds=radio.binds, radio_base_releases=radio.releases;
+    const unsigned radio_base_attempts=radio.attempts;
+    const unsigned idle_warmup=OWLY_NATIVE_PEER_DATA ? 1u : 0u;
+    if (radio.enabled) {
+        RADIO_EXPECT(!radio.vif_registered && !radio.channel_bound);
+        /* Native macOS can create its auxiliary VIF before STA connection. */
+        RADIO_EXPECT(rtw89_glue_awdl_vif_create(radio_mac) == 0);
+        RADIO_EXPECT(rtw89_glue_awdl_radio_status(&radio) == 0);
+        if (OWLY_NATIVE_PEER_DATA) {
+            RADIO_EXPECT(radio.vif_registered && radio.channel_bound && radio.freq==2437 &&
+                         radio.attempts==radio_base_attempts+1 && radio.binds==radio_base_binds+1);
+        } else {
+            RADIO_EXPECT(radio.vif_registered && !radio.channel_bound && radio.attempts==radio_base_attempts);
+        }
+    }
+
     /* the normal case: associate, then the complete 4-way handshake */
     EXPECT(join_testnet(AP_PASSWORD, 0));
     EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
@@ -1327,6 +1387,37 @@ static int test_join(void)
     EXPECT(ap_handshake(gtk1, 1) == 0);
     EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
     printf("== connected: 4-way handshake verified by the test authenticator\n");
+    if (radio.enabled) {
+        RADIO_EXPECT(rtw89_glue_awdl_radio_status(&radio) == 0);
+        RADIO_EXPECT(radio.channel_bound && radio.freq == 2437 && radio.binds == radio_base_binds+idle_warmup+1);
+        /* Duplicate create must not add a second channel reference. */
+        RADIO_EXPECT(rtw89_glue_awdl_vif_create(radio_mac) == 0);
+        RADIO_EXPECT(rtw89_glue_awdl_radio_status(&radio) == 0);
+        RADIO_EXPECT(radio.attempts == radio_base_attempts+idle_warmup+1 && radio.binds == radio_base_binds+idle_warmup+1);
+        RADIO_EXPECT(rtw89_glue_awdl_vif_destroy() == 0);
+        RADIO_EXPECT(rtw89_glue_awdl_radio_status(&radio) == 0);
+        RADIO_EXPECT(!radio.vif_registered && !radio.channel_bound && radio.releases == radio_base_releases+idle_warmup+1);
+        /* Late create after STA has connected must attach without a reconnect. */
+        RADIO_EXPECT(rtw89_glue_awdl_vif_create(radio_mac) == 0);
+        RADIO_EXPECT(rtw89_glue_awdl_radio_status(&radio) == 0);
+        RADIO_EXPECT(radio.channel_bound && radio.binds == radio_base_binds+idle_warmup+2 && !radio.blocked);
+        /* A VIF created during a firmware scan must stay pending, then
+         * attach from the serialized completion worker without a reconnect. */
+        RADIO_EXPECT(rtw89_glue_awdl_vif_destroy() == 0);
+        RADIO_EXPECT(rtw89_glue_scan() == 0);
+        RADIO_EXPECT(rtw89_glue_awdl_vif_create(radio_mac) == 0);
+        RADIO_EXPECT(rtw89_glue_awdl_radio_status(&radio) == 0);
+        RADIO_EXPECT(!radio.channel_bound && radio.binds == radio_base_binds+idle_warmup+2 && !radio.blocked);
+        rtw89_glue_test_scan_done();
+        for (int i = 0; i < 100; ++i) {
+            rtw89_glue_awdl_radio_status(&radio);
+            if (radio.channel_bound || radio.blocked)
+                break;
+            usleep(10000);
+        }
+        RADIO_EXPECT(radio.channel_bound && radio.binds == radio_base_binds+idle_warmup+3 && !radio.blocked);
+        failures += test_software_awdl_sync();
+    }
 
     /* connected: the AP renews the group key, encrypted with the pairwise key */
     EXPECT(ap_group_rekey(gtk2, 2) == 0);
@@ -1369,6 +1460,10 @@ static int test_join(void)
     /* the AP throws us out; nothing can be sent after that */
     ap_send_deauth(7);
     EXPECT(wait_link(RTW89_GLUE_LINK_DOWN));
+    if (radio.enabled) {
+        RADIO_EXPECT(rtw89_glue_awdl_radio_status(&radio) == 0);
+        RADIO_EXPECT(radio.vif_registered && !radio.channel_bound && radio.releases == radio_base_releases+idle_warmup+3);
+    }
     rtw89_glue_link(&link);
     EXPECT(link.last_error == -2007);
     EXPECT(sta_tx_test() == -100);
@@ -1592,7 +1687,78 @@ static int test_join(void)
     ap_select(false);
     failures += test_keep();
 #undef EXPECT
+    if (radio.enabled) {
+        RADIO_EXPECT(rtw89_glue_awdl_vif_destroy() == 0);
+        RADIO_EXPECT(rtw89_glue_awdl_vif_destroy() == 0);
+        RADIO_EXPECT(rtw89_glue_awdl_radio_status(&radio) == 0);
+        RADIO_EXPECT(!radio.vif_registered && !radio.channel_bound && !radio.blocked);
+        RADIO_EXPECT(radio.binds == radio.releases);
+        printf("== AWDL SCC lifecycle: %d check(s), %d failure(s); no RF proof\n",
+               radio_checks, radio_failures);
+    }
+#undef RADIO_EXPECT
     printf("== join test: %d failure(s)\n", failures);
+    return failures;
+}
+
+/* Leave an actual fake-chip channel lease bound so radio-down must unassign
+ * it before primary/VIF removal. The following wake repeats this on a new lease. */
+static int test_radio_prepare_down(void)
+{
+    static const uint8_t gtk[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+    static const uint8_t mac[6] = { 0x02, 0x6f, 0x77, 0x6c, 0x79, 0x02 };
+    struct rtw89_glue_awdl_radio_status radio;
+    int failures = 0;
+    int rc = rtw89_glue_awdl_radio_status(&radio);
+    if (rc)
+        return 1;
+    if (!radio.enabled)
+        return 0;
+#define R_EXPECT(cond) do { if (!(cond)) { failures++; printf("== FAIL RADIO DOWN %s\n", #cond); } } while (0)
+    ap_he = false;
+    ap_select(false);
+    ap_send_beacon();
+    R_EXPECT(join_testnet(AP_PASSWORD, 0));
+    R_EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
+    R_EXPECT(ap_handshake(gtk, 1) == 0);
+    R_EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
+    R_EXPECT(rtw89_glue_awdl_vif_create(mac) == 0);
+    R_EXPECT(rtw89_glue_awdl_radio_status(&radio) == 0);
+    R_EXPECT(radio.vif_registered && radio.channel_bound && !radio.blocked);
+    {
+        struct rtw89_glue_awdl_sync_status st;
+        R_EXPECT(rtw89_glue_awdl_sync_status(&st)==0);
+        if (st.built) {
+            R_EXPECT(rtw89_glue_awdl_sync_template(sync_test_template,sizeof(sync_test_template))==0);
+            R_EXPECT(rtw89_glue_awdl_sync_enable(true)==0);
+            for (int i=0;i<100;i++) {
+                rtw89_glue_awdl_sync_status(&st);
+                if (st.handed_off || st.failed) break;
+                usleep(10000);
+            }
+            R_EXPECT(st.active && st.handed_off>0 && !st.failed);
+        }
+    }
+
+#undef R_EXPECT
+    printf("== AWDL SCC before radio down: %d failure(s); no RF proof\n", failures);
+    return failures;
+}
+
+static int test_radio_after_down(void)
+{
+    struct rtw89_glue_awdl_radio_status radio;
+    int rc = rtw89_glue_awdl_radio_status(&radio);
+    if (rc || !radio.enabled)
+        return rc != 0;
+    int failures = radio.vif_registered || radio.channel_bound || radio.binds != radio.releases;
+    {
+        struct rtw89_glue_awdl_sync_status st;
+        if (rtw89_glue_awdl_sync_status(&st)) failures++;
+        else if (st.built && (st.active || st.requested || st.has_template || st.handed_off)) failures++;
+    }
+
+    printf("== AWDL SCC after radio down: %d failure(s); balanced borrowed refs\n", failures);
     return failures;
 }
 
@@ -1646,7 +1812,9 @@ static int test_probed_device(void)
         failures += test_join();
         /* Long enough for the driver's 2 s tracking work to run, associated. */
         usleep(2500 * 1000);
+        failures += test_radio_prepare_down();
         rtw89_glue_down();
+        failures += test_radio_after_down();
         EXPECT(!rtw89_glue_is_up() && !rtw89_glue_scanning());
         printf("== radio down\n");
 
@@ -1656,10 +1824,27 @@ static int test_probed_device(void)
         printf("== radio up after down (wake) returned %d\n", ret);
         EXPECT(ret == 0 && rtw89_glue_is_up());
         if (!ret) {
+            struct rtw89_glue_awdl_radio_status restored = {0};
+            EXPECT(rtw89_glue_awdl_radio_status(&restored) == 0);
+            if (restored.enabled) {
+                EXPECT(rtw89_glue_awdl_vif_present());
+                EXPECT(restored.vif_registered && (OWLY_NATIVE_PEER_DATA ?
+                       (restored.channel_bound && restored.freq==2437) : !restored.channel_bound));
+                EXPECT(rtw89_glue_awdl_vif_destroy() == 0);
+            }
             failures += test_join();
+            failures += test_radio_prepare_down();
             rtw89_glue_down();
+            failures += test_radio_after_down();
             EXPECT(!rtw89_glue_is_up() && !rtw89_glue_scanning());
             printf("== radio down again (sleep)\n");
+            if (restored.enabled) {
+                EXPECT(rtw89_glue_awdl_vif_destroy() == 0);
+                ret = rtw89_glue_up();
+                EXPECT(ret == 0 && !rtw89_glue_awdl_vif_present());
+                if (!ret)
+                    rtw89_glue_down();
+            }
         }
     }
 #undef EXPECT
