@@ -587,6 +587,11 @@ static bool assocLooksValid(const struct apple80211_assoc_data *d)
         return true;
     if (d->ad_auth_upper != APPLE80211_AUTHTYPE_NONE && !secure)
         return false;
+    /* A personal network's password can come inline, as the key with cipher
+     * type 10, instead of a 32-byte pairwise master key (macOS 26.7.1, 25G241,
+     * whose associate request is 592 bytes). */
+    if (secure && d->ad_key.key_cipher_type == kHostCipherPassphrase)
+        return d->ad_key.key_len > 0 && d->ad_key.key_len <= sizeof(d->ad_key.key);
     return secure ? d->ad_key.key_len == 32 : d->ad_key.key_len == 0;
 }
 
@@ -1608,7 +1613,8 @@ int AirPort_RTW89::nativeAssociate(void *data)
     const uint32_t personal = APPLE80211_AUTHTYPE_WPA_PSK | APPLE80211_AUTHTYPE_WPA2_PSK |
                               APPLE80211_AUTHTYPE_SHA256_PSK | kSaeAuth;
     struct rtw89_glue_link link;
-    const uint8_t *bssid, *pmk = nullptr;
+    const uint8_t *bssid, *pmk = nullptr, *password = nullptr;
+    size_t passwordLen = 0;
     bool secure, enterprise, fromPassphrase = false;
     int ret;
 
@@ -1637,6 +1643,22 @@ int AirPort_RTW89::nativeAssociate(void *data)
         /* the password itself (macOS sends it so to a card that does SAE):
          * SAE with it, or the WPA2 pairwise master key derived from it */
         fromPassphrase = true;
+        password = _ns->joinPass;
+        passwordLen = _ns->joinPassLen;
+    } else if (secure && d->ad_key.key_cipher_type == kHostCipherPassphrase) {
+        /* The same password, but inside the request itself: macOS 26.7.1
+         * (25G241) sends a 592-byte associate request whose key is the
+         * passphrase (cipher type 10) rather than a PMK. Taken as a 32-byte
+         * PMK it failed the 4-way handshake on every join. Never read past
+         * the key buffer. */
+        if (!d->ad_key.key_len || d->ad_key.key_len > sizeof(d->ad_key.key)) {
+            LOG("join: inline password of %u bytes refused", d->ad_key.key_len);
+            return kIOReturnBadArgument;
+        }
+        password = d->ad_key.key;
+        passwordLen = d->ad_key.key_len;
+        fromPassphrase = true;
+        LOG("join: the request carries the password itself, %u bytes", d->ad_key.key_len);
     } else if (secure) {
         /* IO80211 hands over the pairwise master key; the 4-way handshake is
          * the driver's */
@@ -1670,12 +1692,12 @@ int AirPort_RTW89::nativeAssociate(void *data)
         if (ret == -2 && bssid)
             ret = rtw89_glue_join_ext(d->ad_ssid, d->ad_ssid_len, nullptr, ie, ieLen);
     } else if (fromPassphrase) {
-        const char *pass = (const char *)_ns->joinPass;
+        const char *pass = (const char *)password;
 
-        ret = rtw89_glue_join_password(d->ad_ssid, d->ad_ssid_len, bssid, pass, _ns->joinPassLen);
+        ret = rtw89_glue_join_password(d->ad_ssid, d->ad_ssid_len, bssid, pass, passwordLen);
         if (ret == -2 && bssid)
             ret = rtw89_glue_join_password(d->ad_ssid, d->ad_ssid_len, nullptr, pass,
-                                           _ns->joinPassLen);
+                                           passwordLen);
     } else {
         ret = rtw89_glue_join_pmk(d->ad_ssid, d->ad_ssid_len, bssid, pmk);
         if (ret == -2 && bssid) /* that access point is not in the list: any of the network's */
@@ -1687,7 +1709,7 @@ int AirPort_RTW89::nativeAssociate(void *data)
             ret = rtw89_glue_join_ext(d->ad_ssid, d->ad_ssid_len, nullptr, nullptr, 0);
         else if (fromPassphrase)
             ret = rtw89_glue_join_password(d->ad_ssid, d->ad_ssid_len, nullptr,
-                                           (const char *)_ns->joinPass, _ns->joinPassLen);
+                                           (const char *)password, passwordLen);
         else
             ret = rtw89_glue_join_pmk(d->ad_ssid, d->ad_ssid_len, nullptr, pmk);
     }
