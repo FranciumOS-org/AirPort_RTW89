@@ -55,12 +55,123 @@ COMPAT_FLAGS := -I$(COMPAT89_DIR) \
 # read with `rtw89ctl log`); the hosttest provides rtw89_iolog as printf.
 LOGRING_DEF := -DIOLog=rtw89_iolog
 
+# OWLY: experimental hardware P2P-client second VIF, never opt-in by default.
+# BOTH FRONT and BACK must be rebuilt with this switch, ABI is version 5.
+OWLY_BACKEND_REAL_VIF ?= 1
+RTW89_AWDL_VIF_STAGE ?= $(OWLY_BACKEND_REAL_VIF)
+RTW89_AWDL_VIF_REGISTER ?= 0
+RTW89_AWDL_CHANCTX_ATTACH ?= 0
+# On-demand shared-channel lifecycle. This is separate from the old automatic
+# Core04D/04F trial. No TX, channel hopping, or Apple sync-ready claim.
+OWLY_AWDL_RADIO_SCC ?= 1
+# Real software PSF scheduling and aux-VIF management TX; explicit build opt-in.
+OWLY_AWDL_SOFTWARE_SYNC ?= 1
+OWLY_NATIVE_PEER_DATA ?= 1
+# Guarded native SET120 interface preparation. Not a radio/peer success flag.
+OWLY_AWDL_SERVICE_LIFECYCLE ?= 1
+# Connected serving-AP beacon lease for world-added NO_IR only.
+OWLY_WORLD_BEACON_HINT ?= 1
+ifneq ($(filter-out 0 1,$(OWLY_WORLD_BEACON_HINT)),)
+$(error OWLY_WORLD_BEACON_HINT must be 0 or 1)
+endif
+ifneq ($(filter-out 0 1,$(OWLY_AWDL_SERVICE_LIFECYCLE)),)
+$(error OWLY_AWDL_SERVICE_LIFECYCLE must be 0 or 1)
+endif
+ifeq ($(OWLY_AWDL_SERVICE_LIFECYCLE),1)
+ifneq ($(OWLY_AWDL_SOFTWARE_SYNC),1)
+$(error Service lifecycle requires the software AWDL backend)
+endif
+endif
+ifneq ($(filter-out 0 1,$(OWLY_AWDL_SOFTWARE_SYNC)),)
+$(error OWLY_AWDL_SOFTWARE_SYNC must be 0 or 1)
+endif
+ifeq ($(OWLY_AWDL_SOFTWARE_SYNC),1)
+ifneq ($(OWLY_AWDL_RADIO_SCC),1)
+$(error Software AWDL requires guarded Radio SCC)
+endif
+endif
+RTW89_AWDL_CHANCTX_GUARD ?= 1
+# OWLY RX shadow: passive codec, never TX, 0 preserves original driver.
+OWLY_AWDL_RX_SHADOW ?= 1
+# Controlled social-channel OTHER_BSS receive filter (OFF by default).
+OWLY_SCC_SOCIAL_RX ?= 1
+
+# ABI6: real RX demultiplexing seam; OFF by default until Apple VIF ABI,
+# packet ownership, peer authentication, and lifecycle are verified.
+OWLY_ABI6_RX_DEMUX ?= 1
+# ABI6 copy-safe cross-KEXT seam. OFF until native Apple P2P RX contract is
+# verified. NEVER treat this as AWDL delivery: frontend fail-closes.
+OWLY_ABI6_FRONT_BRIDGE ?= 1
+# Gate C3: scan-time AWDL Action signature observer. No STA RX ownership or Apple RX.
+OWLY_ABI6_C3_SCAN_OBSERVER ?= 1
+# Experimental truthful AWDL sync status GET117 only; default OFF.
+OWLY_ABI6_GET117_CONTRACT ?= 1
+ifeq ($(OWLY_ABI6_C3_SCAN_OBSERVER),1)
+ifneq ($(OWLY_ABI6_RX_DEMUX),1)
+$(error Gate C3 requires Gate C2 RX demux)
+endif
+ifneq ($(OWLY_ABI6_FRONT_BRIDGE),1)
+$(error Gate C3 requires Gate C2 frontend bridge)
+endif
+endif
+ifeq ($(OWLY_ABI6_FRONT_BRIDGE),1)
+ifneq ($(OWLY_ABI6_RX_DEMUX),1)
+$(error ABI6 cross-KEXT bridge requires RX DEMUX=1)
+endif
+endif
+
+ifneq ($(filter-out 0 1,$(OWLY_SCC_SOCIAL_RX)),)
+$(error OWLY_SCC_SOCIAL_RX must be 0 or 1)
+endif
+ifneq ($(filter-out 0 1,$(OWLY_AWDL_RX_SHADOW)),)
+$(error OWLY_AWDL_RX_SHADOW must be 0 or 1)
+endif
+ifneq ($(filter-out 0 1,$(OWLY_AWDL_RADIO_SCC)),)
+$(error OWLY_AWDL_RADIO_SCC must be 0 or 1)
+endif
+ifeq ($(OWLY_AWDL_RADIO_SCC),1)
+ifneq ($(OWLY_BACKEND_REAL_VIF),1)
+$(error Radio SCC requires the on-demand backend VIF)
+endif
+ifneq ($(RTW89_AWDL_CHANCTX_GUARD),1)
+$(error Radio SCC requires the existing guarded driver assignment rollback)
+endif
+ifneq ($(RTW89_AWDL_CHANCTX_ATTACH),0)
+$(error Radio SCC must not enable the old automatic Core04D attach path)
+endif
+endif
+ifneq ($(OWLY_BACKEND_REAL_VIF),0)
+ifneq ($(RTW89_AWDL_VIF_STAGE),1)
+$(error Backend VIF requires RTW89_AWDL_VIF_STAGE=1)
+endif
+ifneq ($(RTW89_AWDL_VIF_REGISTER),0)
+$(error Backend VIF forbids automatic VIF creation)
+endif
+ifneq ($(RTW89_AWDL_CHANCTX_ATTACH),0)
+$(error Backend VIF forbids chanctx attach)
+endif
+endif
+
 DRIVER_CFLAGS := \
     $(KEXT_FLAGS) $(COMPAT_FLAGS) $(LOGRING_DEF) \
     -include $(COMPAT89_DIR)/rtw89_compat.h \
     -I$(RTW89_SRC) \
     -std=gnu11 \
     -DRTW89_MACOS=1 -DRTW88_MACOS=1 -D__KERNEL__ \
+    -DOWLY_BACKEND_REAL_VIF=$(OWLY_BACKEND_REAL_VIF) \
+    -DRTW89_AWDL_VIF_STAGE=$(RTW89_AWDL_VIF_STAGE) \
+    -DRTW89_AWDL_VIF_REGISTER=$(RTW89_AWDL_VIF_REGISTER) \
+    -DRTW89_AWDL_CHANCTX_ATTACH=$(RTW89_AWDL_CHANCTX_ATTACH) \
+    -DOWLY_AWDL_RADIO_SCC=$(OWLY_AWDL_RADIO_SCC) \
+    -DOWLY_AWDL_SOFTWARE_SYNC=$(OWLY_AWDL_SOFTWARE_SYNC) \
+    -DOWLY_NATIVE_PEER_DATA=$(OWLY_NATIVE_PEER_DATA) \
+    -DOWLY_WORLD_BEACON_HINT=$(OWLY_WORLD_BEACON_HINT) \
+    -DRTW89_AWDL_CHANCTX_GUARD=$(RTW89_AWDL_CHANCTX_GUARD) \
+    -DOWLY_AWDL_RX_SHADOW=$(OWLY_AWDL_RX_SHADOW) \
+    -DOWLY_SCC_SOCIAL_RX=$(OWLY_SCC_SOCIAL_RX) \
+    -DOWLY_ABI6_RX_DEMUX=$(OWLY_ABI6_RX_DEMUX) \
+    -DOWLY_ABI6_FRONT_BRIDGE=$(OWLY_ABI6_FRONT_BRIDGE) \
+    -DOWLY_ABI6_C3_SCAN_OBSERVER=$(OWLY_ABI6_C3_SCAN_OBSERVER) \
     -DCONFIG_RTW89_DEBUGMSG=1 \
     -Werror=implicit-function-declaration \
     -Werror=int-conversion \
@@ -102,9 +213,30 @@ COMPAT89_SRCS := $(COMPAT89_DIR)/rtw89_compat.c \
                  $(COMPAT89_DIR)/rtw89_mlme.c \
                  $(COMPAT89_DIR)/rtw89_data.c \
                  $(COMPAT89_DIR)/rtw89_glue.c \
-                 $(COMPAT89_DIR)/rtw89_awdl.c \
                  $(COMPAT89_DIR)/rtw89_core_wrap.c \
                  $(COMPAT89_DIR)/rtw89_debug_shim.c
+ifeq ($(OWLY_AWDL_SOFTWARE_SYNC),1)
+COMPAT89_SRCS += $(COMPAT89_DIR)/owly_awdl_sync.c $(COMPAT89_DIR)/owly_native_config.c
+endif
+ifeq ($(OWLY_NATIVE_PEER_DATA),1)
+ifneq ($(OWLY_AWDL_SOFTWARE_SYNC),1)
+$(error Native peer/data requires software sync and both rebuilt components)
+endif
+COMPAT89_SRCS += $(COMPAT89_DIR)/owly_native_link.c
+endif
+# Link the AWDL RX codec only in experimental observer builds.
+ifeq ($(OWLY_AWDL_RX_SHADOW),1)
+COMPAT89_SRCS += $(COMPAT89_DIR)/owly_awdl_frame.c $(COMPAT89_DIR)/owly_awdl_shadow.c
+endif
+ifeq ($(OWLY_ABI6_RX_DEMUX),1)
+ifneq ($(OWLY_AWDL_RX_SHADOW),1)
+$(error ABI6 RX demux requires the existing AWDL frame codec / shadow build)
+endif
+ifneq ($(OWLY_SCC_SOCIAL_RX),1)
+$(error ABI6 RX demux requires SCC social RX)
+endif
+COMPAT89_SRCS += $(COMPAT89_DIR)/owly_abi6_rx.c
+endif
 
 DRIVER_OBJS   := $(patsubst %,$(BUILD_DIR)/rtw89/%.o,$(CORE_SRCS) $(CHIP_SRCS))
 COMPAT_OBJS   := $(patsubst $(COMPAT_DIR)/%.c,$(BUILD_DIR)/compat/%.o,$(COMPAT_SRCS))
@@ -272,7 +404,7 @@ scanrequesttest:
 
 hosttest: link scanrequesttest
 	@cc -c -O1 -g -Wall -o $(BUILD_DIR)/out/host_kernel.o tools/hosttest/host_kernel.c
-	@cc -c -O1 -g -Wall -I$(COMPAT89_DIR) -o $(BUILD_DIR)/out/host_main.o tools/hosttest/host_main.c
+	@cc -c -O1 -g -Wall -DOWLY_NATIVE_PEER_DATA=$(OWLY_NATIVE_PEER_DATA) -I$(COMPAT89_DIR) -o $(BUILD_DIR)/out/host_main.o tools/hosttest/host_main.c
 	@$(CC) $(DRIVER_CFLAGS) -MF /dev/null -c tools/hosttest/selftest.c -o $(BUILD_DIR)/out/selftest.o 2> $(BUILD_DIR)/log/hosttest_selftest.log \
 	    || { grep -E 'error' $(BUILD_DIR)/log/hosttest_selftest.log >&2; exit 1; }
 	@$(CC) $(DRIVER_CFLAGS) -MF /dev/null -c tools/hosttest/fakechip_core.c -o $(BUILD_DIR)/out/fakechip_core.o 2> $(BUILD_DIR)/log/hosttest_fakechip_core.log \
@@ -334,7 +466,7 @@ hosttest: link scanrequesttest
 # IOKit side: C++ against MacKernelSDK only. It talks to the Linux side through
 # src/compat_rtw89/rtw89_glue.h and never sees the compat headers.
 KEXT_SRC      := $(PROJ_ROOT)/src/kext
-KEXT_CXXFLAGS := $(ARCH) $(MINOS) -isysroot $(SDK) -nostdinc \
+KEXT_CXXFLAGS := -DOWLY_NATIVE_PEER_DATA=$(OWLY_NATIVE_PEER_DATA) -DOWLY_AWDL_SERVICE_LIFECYCLE=$(OWLY_AWDL_SERVICE_LIFECYCLE) -DOWLY_AWDL_SOFTWARE_SYNC=$(OWLY_AWDL_SOFTWARE_SYNC) -DOWLY_ABI6_GET117_CONTRACT=$(OWLY_ABI6_GET117_CONTRACT) -DOWLY_ABI6_C3_SCAN_OBSERVER=$(OWLY_ABI6_C3_SCAN_OBSERVER) -DOWLY_ABI6_FRONT_BRIDGE=$(OWLY_ABI6_FRONT_BRIDGE) -DOWLY_BACKEND_REAL_VIF=$(OWLY_BACKEND_REAL_VIF) $(ARCH) $(MINOS) -isysroot $(SDK) -nostdinc \
                  -std=gnu++17 -O2 -fno-strict-aliasing -mkernel -fapple-kext -fno-rtti \
                  -fno-exceptions \
                  -fno-builtin -fno-common -fno-stack-protector \
@@ -343,8 +475,6 @@ KEXT_CXXFLAGS := $(ARCH) $(MINOS) -isysroot $(SDK) -nostdinc \
                  -I$(MKSDK)/Headers -I$(COMPAT89_DIR) -Wall -MMD -MP
 KEXT_OBJS     := $(BUILD_DIR)/kext/AirPortRTW89.o $(BUILD_DIR)/kext/AirPortRTW89Native.o \
                  $(BUILD_DIR)/kext/rtw89_logring.o \
-                 $(BUILD_DIR)/kext/rtw89_awdl_timing.o \
-                 $(BUILD_DIR)/kext/rtw89_awdl_clock.o \
                  $(BUILD_DIR)/kext/kmod_info.o
 KEXT_BUNDLE   := $(BUILD_DIR)/out/AirPort_RTW89.kext
 KEXT_BIN      := $(KEXT_BUNDLE)/Contents/MacOS/AirPort_RTW89
@@ -366,6 +496,41 @@ $(BUILD_DIR)/kext/%.o: $(KEXT_SRC)/%.c
 # here, out of the same copy the EFI installs.
 FRONT_SRC    := $(PROJ_ROOT)/src/front
 FAMILY_BIN   := $(PROJ_ROOT)/efi/kit/IO80211FamilyLegacy.kext/Contents/MacOS/IO80211FamilyLegacy
+# OWLY_NATIVEFRONT_VIF_OBSERVER_BEGIN: 0 preserves the existing frontend.
+RTW89_AWDL_NATIVE_FRONT_OBSERVE ?= 1
+# RC3: creation is separately opt-in; default "make front" must be fail-closed.
+OWLY_GATE14_REAL_VIF ?= 1
+# ABI6 native P2P subclass test, only after Cap12 virtual GET bridge.
+# Source-only opt-in. Does not create AWDL data path or enable TX.
+OWLY_ABI6_NATIVE_P2P_FACTORY ?= 1
+ifneq ($(filter-out 0 1,$(OWLY_ABI6_NATIVE_P2P_FACTORY)),)
+$(error OWLY_ABI6_NATIVE_P2P_FACTORY must be 0 or 1)
+endif
+ifeq ($(OWLY_ABI6_NATIVE_P2P_FACTORY),1)
+ifneq ($(OWLY_GATE14_REAL_VIF),1)
+$(error ABI6 P2P subclass requires Gate14 real VIF=1)
+endif
+ifneq ($(OWLY_BACKEND_REAL_VIF),1)
+$(error ABI6 P2P subclass requires real backend VIF=1)
+endif
+ifneq ($(RTW89_AWDL_NATIVE_FRONT_OBSERVE),1)
+$(error ABI6 P2P subclass requires native lifecycle observation=1)
+endif
+endif
+# OWLY_NATIVEFRONT_VIF_OBSERVER_END
+ifeq ($(OWLY_GATE14_REAL_VIF),1)
+ifneq ($(OWLY_BACKEND_REAL_VIF),1)
+$(error Armed Gate14 front requires OWLY_BACKEND_REAL_VIF=1; rebuild both kexts)
+endif
+ifneq ($(RTW89_AWDL_NATIVE_FRONT_OBSERVE),1)
+$(error Armed Gate14 front requires native lifecycle=1)
+endif
+endif
+ifeq ($(OWLY_BACKEND_REAL_VIF),1)
+ifneq ($(OWLY_GATE14_REAL_VIF),1)
+$(error Real backend VIF requires armed Gate14 frontend in matching build)
+endif
+endif
 FRONT_BUNDLE := $(BUILD_DIR)/out/AirPortRTW89Front.kext
 front:
 	@rm -rf $(FRONT_BUNDLE)
@@ -373,6 +538,9 @@ front:
 	@cp $(FRONT_SRC)/Info.plist $(FRONT_BUNDLE)/Contents/Info.plist
 	@echo "  CXX  front/AirPortRTW89Front.cpp"
 	@$(CXX) $(KEXT_CXXFLAGS) -D__IO80211_TARGET=__MAC_13_0 -Wno-inconsistent-missing-override \
+	    -DRTW89_AWDL_NATIVE_FRONT_OBSERVE=$(RTW89_AWDL_NATIVE_FRONT_OBSERVE) \
+	    -DOWLY_GATE14_REAL_VIF=$(OWLY_GATE14_REAL_VIF) \
+	    -DOWLY_ABI6_NATIVE_P2P_FACTORY=$(OWLY_ABI6_NATIVE_P2P_FACTORY) \
 	    -c $(FRONT_SRC)/AirPortRTW89Front.cpp -o $(BUILD_DIR)/front/AirPortRTW89Front.o
 	@$(CC) $(FW_CFLAGS) -c $(FRONT_SRC)/kmod_info.c -o $(BUILD_DIR)/front/kmod_info.o
 	@$(CXX) $(ARCH) $(MINOS) -isysroot $(SDK) -nostdlib -Xlinker -kext \

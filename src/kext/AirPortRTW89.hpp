@@ -30,15 +30,9 @@
 
 #include "rtw89_glue.h"
 #include "../front/rtw89_front_api.h"
-
-/* src/kext/rtw89_awdl_timing.cpp: can this host wake on an AWDL schedule? */
-void rtw89_awdl_timing_start(void);
-void rtw89_awdl_timing_stop(void);
-
-/* The AWDL availability window clock: calls into the compat side once per
- * window so it can keep the schedule and transmit on it. */
-void rtw89_awdl_clock_start(uint8_t channel);
-void rtw89_awdl_clock_stop(void);
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+#include "owly_abi6_rx_gate.h"
+#endif
 
 class AirPort_RTW89 : public IOEthernetController {
     OSDeclareDefaultStructors(AirPort_RTW89)
@@ -90,18 +84,7 @@ private:
     static void irqEnable(void *ctx, bool enable);
     static void linkChanged(void *ctx);
     static void rxFrame(void *ctx, const uint8_t *frame, size_t len);
-    static void awdlFrame(void *ctx, const uint8_t *frame, size_t len,
-                          const uint8_t peer[6], uint32_t channel, int8_t rssi);
-    static void awdlData(void *ctx, const uint8_t *eth, size_t len);
-    static void awdlWindow(void *ctx, uint32_t aw_seq, const uint8_t master[6]);
     static void txWake(void *ctx);
-    /* Start or stop the availability window clock, from whatever just
-     * changed: it runs only while awdl0 is up, macOS has asked for sync and
-     * the family has given us a template to send. */
-    void awdlClockUpdate();
-    void awdlChannelHold(const struct rtw89_glue_link &link);
-    void awdlClockUpdateAndHold();
-    void awdlDeliverUpdate();
     bool transmit(mbuf_t m);
 
     /* Native Wi-Fi (AirPortRTW89Native.cpp): connected to AirPortRTW89Front
@@ -120,9 +103,9 @@ private:
     void nativePowerChanged();
     static bool frontExpected();
     int nativeRequest(bool isSet, int number, void *data);
-    int nativeVirtualRequest(bool isSet, int number, void *data);
-    int nativeVirtualIfCreate(void *data);
-    int nativeVirtualIfDelete(void *data);
+    int nativeAwdlSyncRequest(bool isSet, int number, void *data);
+    bool nativeAwdlGetEnvelope(void *interface, void *vif, unsigned long cmd,
+                               void *data, int *result);
     int nativeAssociate(void *data);
     int nativeScanHostPayload(unsigned int number, const void *payload, uint32_t length,
                               const char *entry);
@@ -130,7 +113,6 @@ private:
     static void scanDone(void *ctx, bool aborted);
     static void backGetMac(void *ctx, uint8_t mac[6]);
     static int backSetMac(void *ctx, const uint8_t mac[6]);
-    static uint32_t backAwdlOutput(void *ctx, mbuf_t m);
     static void backLog(void *ctx, const char *line);
     static int backRequest(void *ctx, unsigned int type, int number, void *interface, void *data);
     static int backIoctl(void *ctx, void *interface, void *vif, void *ifnet, unsigned long cmd,
@@ -139,9 +121,32 @@ private:
                             bool *handled);
     static int backEnable(void *ctx, bool on);
     static uint32_t backOutput(void *ctx, mbuf_t m);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    static uint32_t backNativeOutput(void *ctx,mbuf_t m);
+    static int backNativeWindow(void *ctx,struct owly_link_window *out);
+    static bool nativeRx(void *ctx,uint32_t kind,const uint8_t *raw,size_t len,
+                         const uint8_t src[6],const uint8_t dst[6],
+                         uint8_t channel,int8_t rssi,uint64_t received_us);
+#endif
+    /* OWLY_NATIVE_IDENTITY_BRIDGE_BEGIN: backend receives only identity events. */
+    static bool backVifEvent(void *ctx, void *vif, uint32_t role, uint32_t event,
+                             const uint8_t request_mac[6]);
+    /* OWLY_NATIVE_IDENTITY_BRIDGE_END */
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    static bool awdlRxAction(void *ctx, const uint8_t source[6],
+                             unsigned int subtype, unsigned int social_mask,
+                             const uint8_t *raw, size_t len);
+#if defined(OWLY_ABI6_C3_SCAN_OBSERVER) && OWLY_ABI6_C3_SCAN_OBSERVER
+    static bool awdlRxScanSignature(void *ctx, const uint8_t source[6],
+                                    const uint8_t *raw, size_t len);
+#endif
+    static bool awdlRxIPv6(void *ctx, const uint8_t dst[6],
+                            const uint8_t src[6], const uint8_t *ip6, size_t len);
+    bool awdlHandoff(uint32_t kind, const uint8_t *raw, size_t len,
+                     const uint8_t src[6], const uint8_t dst[6],
+                     uint8_t channel=0,int8_t rssi=0,uint64_t received_us=0);
+#endif
     static void backPower(void *ctx, bool on);
-    static int backVirtualRequest(void *ctx, unsigned int type, int number,
-                                  void *virtual_interface, void *data);
     /* The radio on, unless the machine is going down or asleep. */
     int radioUp() { return _halting ? -100 : _asleep ? -101 : rtw89_glue_up(); }
     static IOReturn powerEvent(void *target, void *refCon, UInt32 messageType,
@@ -164,6 +169,11 @@ private:
     volatile UInt32 _nativeEvents = 0;
     volatile bool _nativeClosing = false;
     volatile SInt32 _nativeRunning = 0;
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    /* One lock protects admission and the _ns->front callback lifetime. */
+    IOLock *_owlyRxGateLock = nullptr;
+    struct owly_abi6_rx_gate _owlyRxGate = {};
+#endif
     IOService *_front = nullptr;
     NativeState *_ns = nullptr;
 

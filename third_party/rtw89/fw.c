@@ -5050,7 +5050,8 @@ int rtw89_fw_h2c_join_info(struct rtw89_dev *rtwdev, struct rtw89_vif_link *rtwv
 	bool is_mld = ieee80211_vif_is_mld(vif);
 	u8 self_role = rtwvif_link->self_role;
 	enum rtw89_fw_sta_type sta_type;
-	u8 net_type = rtwvif_link->net_type;
+	u8 net_type = rtwsta_link && rtwsta_link->rtwsta->owly_awdl ?
+		      RTW89_NET_TYPE_AD_HOC : rtwvif_link->net_type;
 	struct rtw89_h2c_join_v1 *h2c_v1;
 	struct rtw89_h2c_join *h2c;
 	u32 len = sizeof(*h2c);

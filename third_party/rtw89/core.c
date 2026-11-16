@@ -22,6 +22,10 @@
 #include "util.h"
 #include "wow.h"
 
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+#include "owly_unicast_core_trace.h"
+#endif
+
 static bool rtw89_disable_ps_mode;
 module_param_named(disable_ps_mode, rtw89_disable_ps_mode, bool, 0644);
 MODULE_PARM_DESC(disable_ps_mode, "Set Y to disable low power mode");
@@ -1230,36 +1234,111 @@ static void rtw89_core_tx_update_injection(struct rtw89_dev *rtwdev,
 	const struct rtw89_hw_rate_def *hw_rate = &rtw89_hw_rate[rtwdev->chip->chip_gen];
 	enum mac80211_rate_control_flags flags = info->control.rates[0].flags;
 	struct rtw89_tx_desc_info *desc_info = &tx_req->desc_info;
+	struct ieee80211_hdr *hdr = (void *)tx_req->skb->data;
 	const struct rtw89_chan *chan;
-	u8 idx = info->control.rates[0].idx;
-	u8 nss, mcs;
+	s8 idx = info->control.rates[0].idx;
+	u8 nss, mcs, max_mcs;
 
+	/* Follow the raw-injection descriptor contract. The caller already
+	 * supplied the frame, sequence, fixed rate and bounded retry count. */
 	desc_info->use_rate = true;
 	desc_info->dis_data_fb = true;
-
+	desc_info->hw_rts_en = false;
+	desc_info->rts_en = (flags & IEEE80211_TX_RC_USE_RTS_CTS) &&
+			    !desc_info->is_bmc &&
+			    !(info->flags & IEEE80211_TX_CTL_NO_ACK);
+	if (!(info->flags & IEEE80211_TX_CTL_ASSIGN_SEQ) ||
+	    ieee80211_is_ctl(hdr->frame_control)) {
+		desc_info->upd_wlan_hdr = false;
+		desc_info->hw_ssn_sel = 0;
+		desc_info->hw_seq_mode = 0;
+	} else {
+		desc_info->hw_ssn_sel = RTW89_MGMT_HW_SSN_SEL;
+		desc_info->hw_seq_mode = RTW89_MGMT_HW_SEQ_MODE;
+	}
+	if (info->flags & IEEE80211_TX_CTL_NO_ACK) {
+		desc_info->no_ack = true;
+		desc_info->tx_cnt_lmt_en = true;
+		/* AX TXWD v0 has no per-packet NO_ACK bit: one attempt. */
+		desc_info->tx_cnt_lmt = 1;
+	} else if (info->control.rates[0].count) {
+		desc_info->tx_cnt_lmt_en = true;
+		desc_info->tx_cnt_lmt = umin(info->control.rates[0].count,
+					  RTW89_TX_DATA_CNT_LMT_MAX);
+	}
+	if (idx < 0) {
+		if (tx_req->tx_type == RTW89_CORE_TX_TYPE_DATA)
+			desc_info->data_rate =
+				info->flags & IEEE80211_TX_CTL_NO_CCK_RATE ?
+				RTW89_HW_RATE_OFDM6 : desc_info->data_retry_lowest_rate;
+		return;
+	}
 	if (flags & IEEE80211_TX_RC_160_MHZ_WIDTH)
 		desc_info->data_bw = 3;
 	else if (flags & IEEE80211_TX_RC_80_MHZ_WIDTH)
 		desc_info->data_bw = 2;
 	else if (flags & IEEE80211_TX_RC_40_MHZ_WIDTH)
 		desc_info->data_bw = 1;
-
 	if (flags & IEEE80211_TX_RC_SHORT_GI)
 		desc_info->gi_ltf = 1;
-
 	if (flags & IEEE80211_TX_RC_VHT_MCS) {
+		max_mcs = rtwdev->chip->chip_gen == RTW89_CHIP_BE ? 11 : 9;
 		nss = umin(idx >> 4, ARRAY_SIZE(hw_rate->vht) - 1);
-		mcs = idx & 0xf;
+		mcs = umin(idx & 0xf, max_mcs);
 		desc_info->data_rate = hw_rate->vht[nss] + mcs;
 	} else if (flags & IEEE80211_TX_RC_MCS) {
-		desc_info->data_rate = hw_rate->ht + idx;
+		desc_info->data_rate = hw_rate->ht + umin(idx, 31);
 	} else {
 		chan = rtw89_chan_get(rtwdev, tx_req->rtwvif_link->chanctx_idx);
-
-		desc_info->data_rate = idx + (chan->band_type == RTW89_BAND_2G ?
-					      RTW89_HW_RATE_CCK1 : RTW89_HW_RATE_OFDM6);
+		if (chan->band_type == RTW89_BAND_2G)
+			desc_info->data_rate = RTW89_HW_RATE_CCK1 + umin(idx, 11);
+		else
+			desc_info->data_rate = RTW89_HW_RATE_OFDM6 + umin(idx, 7);
 	}
 }
+
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+static void rtw89_core_tx_update_awdl_port(struct rtw89_dev *rtwdev,
+					  struct rtw89_core_tx_request *tx_req,
+					  struct ieee80211_tx_info *info)
+{
+	static const u8 awdl_bssid[] = {0x00, 0x25, 0x00, 0xff, 0x94, 0x73};
+	static const u8 awdl_snap[] = {0xaa, 0xaa, 0x03, 0x00, 0x17, 0xf2, 0x08, 0x00};
+	struct rtw89_tx_desc_info *desc_info = &tx_req->desc_info;
+	const struct rtw89_vif_link *link = tx_req->rtwvif_link;
+	const struct sk_buff *skb = tx_req->skb;
+	const u8 *frame = skb->data;
+
+	/* The native radio submitter allocates a shared software sequence.
+	 * The default management path would replace it using a separate
+	 * hardware counter, colliding with non-QoS data from this same MAC. */
+	if (rtwdev->chip->chip_id == RTL8852B && tx_req->vif && tx_req->vif->p2p &&
+	    (info->flags & IEEE80211_TX_CTL_INJECTED) &&
+	    (info->flags & IEEE80211_TX_INTFL_DONT_ENCRYPT) && skb->len >= 24 &&
+	    (frame[0] == 0xd0 || frame[0] == IEEE80211_FTYPE_DATA) &&
+	    !(frame[1] & 0x47) && !(frame[22] & 15) &&
+	    !memcmp(frame + 10, link->mac_addr, ETH_ALEN) &&
+	    !memcmp(frame + 16, awdl_bssid, sizeof(awdl_bssid))) {
+		desc_info->hw_ssn_sel = 0;
+		desc_info->hw_seq_mode = 0;
+	}
+
+	if (rtwdev->chip->chip_id != RTL8852B || !tx_req->vif || !tx_req->vif->p2p ||
+	    tx_req->sta || tx_req->tx_type != RTW89_CORE_TX_TYPE_DATA ||
+	    !(info->flags & IEEE80211_TX_INTFL_DONT_ENCRYPT) ||
+	    !(info->flags & IEEE80211_TX_CTL_REQ_TX_STATUS) ||
+	    (info->flags & IEEE80211_TX_CTL_NO_ACK) || desc_info->is_bmc ||
+	    skb->len < 81 || frame[0] != IEEE80211_FTYPE_DATA || frame[1] ||
+	    memcmp(frame + 10, link->mac_addr, ETH_ALEN) ||
+	    memcmp(frame + 16, awdl_bssid, sizeof(awdl_bssid)) ||
+	    memcmp(frame + 24, awdl_snap, sizeof(awdl_snap)))
+		return;
+
+	/* AWDL sends data without an associated station. Keep the TXWD port
+	 * consistent with the MAC ID already taken from the auxiliary link. */
+	desc_info->port = link->port;
+}
+#endif
 
 static void
 rtw89_core_tx_update_desc_info(struct rtw89_dev *rtwdev,
@@ -1303,6 +1382,8 @@ rtw89_core_tx_update_desc_info(struct rtw89_dev *rtwdev,
 
 	desc_info->seq = seq;
 	desc_info->is_bmc = is_bmc;
+	desc_info->rts_en = !is_bmc;
+	desc_info->hw_rts_en = true;
 	desc_info->wd_page = true;
 	desc_info->hiq = info->flags & IEEE80211_TX_CTL_SEND_AFTER_DTIM;
 	desc_info->upd_wlan_hdr = upd_wlan_hdr;
@@ -1313,17 +1394,24 @@ rtw89_core_tx_update_desc_info(struct rtw89_dev *rtwdev,
 		break;
 	case RTW89_CORE_TX_TYPE_DATA:
 		rtw89_core_tx_update_data_info(rtwdev, tx_req);
-		pkt_type = rtw89_core_tx_btc_spec_pkt_notify(rtwdev, tx_req);
-		rtw89_core_tx_update_he_qos_htc(rtwdev, tx_req, pkt_type);
-		rtw89_core_tx_update_ampdu_info(rtwdev, tx_req, pkt_type);
+		/* Raw NoDS/AWDL frames are complete, not stack-built AP traffic. */
+		if (likely(!(info->flags & IEEE80211_TX_CTL_INJECTED))) {
+			pkt_type = rtw89_core_tx_btc_spec_pkt_notify(rtwdev, tx_req);
+			rtw89_core_tx_update_he_qos_htc(rtwdev, tx_req, pkt_type);
+			rtw89_core_tx_update_ampdu_info(rtwdev, tx_req, pkt_type);
+		}
 		rtw89_core_tx_update_llc_hdr(rtwdev, desc_info, skb);
 		break;
 	default:
 		break;
 	}
 
-	if (unlikely(info->flags & IEEE80211_TX_CTL_INJECTED))
+	if (unlikely(info->flags & IEEE80211_TX_CTL_INJECTED)) {
 		rtw89_core_tx_update_injection(rtwdev, tx_req, info);
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+		rtw89_core_tx_update_awdl_port(rtwdev, tx_req, info);
+#endif
+	}
 }
 
 static void rtw89_tx_wait_work(struct wiphy *wiphy, struct wiphy_work *work)
@@ -1411,6 +1499,11 @@ int rtw89_h2c_tx(struct rtw89_dev *rtwdev,
 	return 0;
 }
 
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+static void owly_native_txwd_note(struct rtw89_dev *rtwdev,
+                                 const struct rtw89_core_tx_request *tx_req);
+#endif
+
 static int rtw89_core_tx_write_link(struct rtw89_dev *rtwdev,
 				    struct rtw89_vif_link *rtwvif_link,
 				    struct rtw89_sta_link *rtwsta_link,
@@ -1431,9 +1524,14 @@ static int rtw89_core_tx_write_link(struct rtw89_dev *rtwdev,
 	tx_req.rtwsta_link = rtwsta_link;
 	tx_req.with_wait = !!wait;
 
-	rtw89_traffic_stats_accu(rtwdev, rtwvif, skb, true, true);
-	rtw89_wow_parse_akm(rtwdev, skb);
+	if (likely(!(IEEE80211_SKB_CB(skb)->flags & IEEE80211_TX_CTL_INJECTED))) {
+		rtw89_traffic_stats_accu(rtwdev, rtwvif, skb, true, true);
+		rtw89_wow_parse_akm(rtwdev, skb);
+	}
 	rtw89_core_tx_update_desc_info(rtwdev, &tx_req);
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+	owly_native_txwd_note(rtwdev, &tx_req);
+#endif
 	rtw89_core_tx_wake(rtwdev, &tx_req);
 
 	rcu_assign_pointer(skb_data->wait, wait);
@@ -1626,13 +1724,51 @@ static __le32 rtw89_build_txwd_info3(struct rtw89_tx_desc_info *desc_info)
 
 static __le32 rtw89_build_txwd_info4(struct rtw89_tx_desc_info *desc_info)
 {
-	bool rts_en = !desc_info->is_bmc;
-	u32 dword = FIELD_PREP(RTW89_TXWD_INFO4_RTS_EN, rts_en) |
-		    FIELD_PREP(RTW89_TXWD_INFO4_HW_RTS_EN, 1) |
+	u32 dword = FIELD_PREP(RTW89_TXWD_INFO4_RTS_EN, desc_info->rts_en) |
+		    FIELD_PREP(RTW89_TXWD_INFO4_HW_RTS_EN, desc_info->hw_rts_en) |
 		    FIELD_PREP(RTW89_TXWD_INFO4_SW_DEFINE, desc_info->sn);
 
 	return cpu_to_le32(dword);
 }
+
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+/* Bounded evidence at the actual descriptor boundary. Values below are the
+ * packed words handed to the AX serializer; none is an RF/IP/TLS receipt. */
+static void owly_native_txwd_note(struct rtw89_dev *rtwdev,
+                                 const struct rtw89_core_tx_request *tx_req)
+{
+	static const u8 bssid[6] = {0, 0x25, 0, 0xff, 0x94, 0x73};
+	static unsigned long count;
+	struct rtw89_tx_desc_info desc = tx_req->desc_info;
+	const struct sk_buff *skb = tx_req->skb;
+	const struct ieee80211_tx_info *info = IEEE80211_SKB_CB((struct sk_buff *)skb);
+	const u8 *frame = skb->data;
+
+	if (rtwdev->chip->chip_id != RTL8852B || !tx_req->vif || !tx_req->vif->p2p ||
+	    !(info->flags & IEEE80211_TX_CTL_INJECTED) || skb->len < 40 ||
+	    frame[0] != 8 || frame[1] || memcmp(frame + 16, bssid, 6))
+		return;
+	++count;
+	if (count > 8 && (count & (count - 1)))
+		return;
+	u32 hash = 2166136261u;
+	for (size_t i = 0; i < skb->len; ++i)
+		hash = (hash ^ frame[i]) * 16777619u;
+	IOLog("OWLY raw TXWD: count=%lu seq=%u ac=%u priority=%u macid=%u port=%u "
+	      "rate=%u attempts=%u noack=%u bytes=%u hash=%08x "
+	      "body0=%08x body2=%08x body3=%08x info0=%08x info1=%08x info4=%08x "
+	      "(descriptor only, not peer receipt)\n",
+	      count, desc.seq, skb_get_queue_mapping(skb), skb->priority,
+	      desc.mac_id, desc.port, desc.data_rate, desc.tx_cnt_lmt,
+	      (unsigned)desc.no_ack, skb->len, hash,
+	      (unsigned)le32_to_cpu(rtw89_build_txwd_body0(&desc)),
+	      (unsigned)le32_to_cpu(rtw89_build_txwd_body2(&desc)),
+	      (unsigned)le32_to_cpu(rtw89_build_txwd_body3(&desc)),
+	      (unsigned)le32_to_cpu(rtw89_build_txwd_info0(&desc)),
+	      (unsigned)le32_to_cpu(rtw89_build_txwd_info1(&desc)),
+	      (unsigned)le32_to_cpu(rtw89_build_txwd_info4(&desc)));
+}
+#endif
 
 void rtw89_core_fill_txdesc(struct rtw89_dev *rtwdev,
 			    struct rtw89_tx_desc_info *desc_info,
@@ -1769,7 +1905,8 @@ static __le32 rtw89_build_txwd_body5_v2(struct rtw89_tx_desc_info *desc_info)
 
 static __le32 rtw89_build_txwd_body6_v2(struct rtw89_tx_desc_info *desc_info)
 {
-	u32 dword = FIELD_PREP(BE_TXD_BODY6_UPD_WLAN_HDR, desc_info->upd_wlan_hdr);
+	u32 dword = FIELD_PREP(BE_TXD_BODY6_NO_ACK, desc_info->no_ack) |
+		    FIELD_PREP(BE_TXD_BODY6_UPD_WLAN_HDR, desc_info->upd_wlan_hdr);
 
 	return cpu_to_le32(dword);
 }
@@ -1831,9 +1968,8 @@ static __le32 rtw89_build_txwd_info2_v3(struct rtw89_tx_desc_info *desc_info)
 
 static __le32 rtw89_build_txwd_info4_v2(struct rtw89_tx_desc_info *desc_info)
 {
-	bool rts_en = !desc_info->is_bmc;
-	u32 dword = FIELD_PREP(BE_TXD_INFO4_RTS_EN, rts_en) |
-		    FIELD_PREP(BE_TXD_INFO4_HW_RTS_EN, 1);
+	u32 dword = FIELD_PREP(BE_TXD_INFO4_RTS_EN, desc_info->rts_en) |
+		    FIELD_PREP(BE_TXD_INFO4_HW_RTS_EN, desc_info->hw_rts_en);
 
 	return cpu_to_le32(dword);
 }
@@ -4524,6 +4660,24 @@ out:
 	rcu_read_unlock();
 }
 
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+static bool rtw89_core_awdl_data_rx_immediate(const struct rtw89_dev *rtwdev,
+					      const struct rtw89_rx_desc_info *desc,
+					      const struct sk_buff *skb)
+{
+	static const u8 awdl_bssid[] = {0x00, 0x25, 0x00, 0xff, 0x94, 0x73};
+
+	/* A PHY status report need not accompany an 8852B data frame.
+	 * AWDL unicast uses the known peer and RX channel. Release it
+	 * here; action frames still wait for the measured RSSI. */
+	return rtwdev->chip->chip_id == RTL8852B && !rtwdev->scanning &&
+	       desc->frame_type == RTW89_RX_TYPE_DATA && skb->len >= 24 &&
+	       (skb->data[0] == 0x08 || skb->data[0] == 0x88) &&
+	       !(skb->data[1] & 0x43) && !(skb->data[4] & 1) &&
+	       !memcmp(skb->data + 16, awdl_bssid, ETH_ALEN);
+}
+#endif
+
 void rtw89_core_rx(struct rtw89_dev *rtwdev,
 		   struct rtw89_rx_desc_info *desc_info,
 		   struct sk_buff *skb)
@@ -4538,6 +4692,10 @@ void rtw89_core_rx(struct rtw89_dev *rtwdev,
 		return;
 	}
 
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+	rtw89_compat_awdl_rx_note(desc_info, skb);
+#endif
+
 	if (ppdu_sts->curr_rx_ppdu_cnt[band] != ppdu_cnt) {
 		rtw89_core_flush_ppdu_rx_queue(rtwdev, desc_info);
 		ppdu_sts->curr_rx_ppdu_cnt[band] = ppdu_cnt;
@@ -4550,6 +4708,13 @@ void rtw89_core_rx(struct rtw89_dev *rtwdev,
 
 	if (!rtw89_core_skb_pn_valid(rtwdev, desc_info, skb))
 		return;
+
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+	if (rtw89_core_awdl_data_rx_immediate(rtwdev, desc_info, skb)) {
+		rtw89_core_rx_to_mac80211(rtwdev, NULL, desc_info, skb, rx_status);
+		return;
+	}
+#endif
 
 	if (desc_info->long_rxdesc &&
 	    BIT(desc_info->frame_type) & PPDU_FILTER_BITMAP)
@@ -4712,6 +4877,9 @@ static void rtw89_core_txq_check_agg(struct rtw89_dev *rtwdev,
 	struct ieee80211_txq *txq = rtw89_txq_to_txq(rtwtxq);
 	struct ieee80211_sta *sta = txq->sta;
 	struct rtw89_sta *rtwsta = sta_to_rtwsta_safe(sta);
+
+	if (unlikely(IEEE80211_SKB_CB(skb)->flags & IEEE80211_TX_CTL_INJECTED))
+		return;
 
 	if (test_bit(RTW89_TXQ_F_FORBID_BA, &rtwtxq->flags))
 		return;
@@ -5754,7 +5922,7 @@ int rtw89_core_sta_link_add(struct rtw89_dev *rtwdev,
 		ewma_evm_init(&rtwsta_link->evm_max[i]);
 	}
 
-	if (vif->type == NL80211_IFTYPE_STATION && !sta->tdls) {
+	if (vif->type == NL80211_IFTYPE_STATION && !rtw89_sta_is_direct_peer(sta)) {
 		/* must do rtw89_reg_6ghz_recalc() before rfk channel */
 		ret = rtw89_reg_6ghz_recalc(rtwdev, rtwvif_link, true);
 		if (ret)
@@ -5770,7 +5938,7 @@ int rtw89_core_sta_link_add(struct rtw89_dev *rtwdev,
 			rtw89_mac_set_tx_retry_limit(rtwdev, rtwsta_link, false, 60);
 		}
 		rtw89_phy_dig_suspend(rtwdev);
-	} else if (vif->type == NL80211_IFTYPE_AP || sta->tdls) {
+	} else if (vif->type == NL80211_IFTYPE_AP || rtw89_sta_is_direct_peer(sta)) {
 		ret = rtw89_mac_set_macid_pause(rtwdev, rtwsta_link->mac_id, false);
 		if (ret) {
 			rtw89_warn(rtwdev, "failed to send h2c macid pause\n");
@@ -5804,7 +5972,7 @@ int rtw89_core_sta_link_disassoc(struct rtw89_dev *rtwdev,
 
 	rtw89_assoc_link_clr(rtwsta_link);
 
-	if (vif->type == NL80211_IFTYPE_STATION) {
+	if (vif->type == NL80211_IFTYPE_STATION && !rtwsta_link->rtwsta->owly_awdl) {
 		rtw89_fw_h2c_set_bcn_fltr_cfg(rtwdev, rtwvif_link, false);
 		rtw89_core_bcn_track_reset(rtwdev);
 	}
@@ -5826,12 +5994,13 @@ int rtw89_core_sta_link_disconnect(struct rtw89_dev *rtwdev,
 	rtw89_mac_bf_monitor_calc(rtwdev, rtwsta_link, true);
 	rtw89_mac_bf_disassoc(rtwdev, rtwvif_link, rtwsta_link);
 
-	if (vif->type == NL80211_IFTYPE_AP || sta->tdls)
+	if ((vif->type == NL80211_IFTYPE_AP || rtw89_sta_is_direct_peer(sta)) &&
+	    (!rtwsta_link->rtwsta->owly_awdl || rtwsta_link->addr_cam.valid))
 		rtw89_cam_deinit_addr_cam(rtwdev, &rtwsta_link->addr_cam);
 	if (sta->tdls)
 		rtw89_cam_deinit_bssid_cam(rtwdev, &rtwsta_link->bssid_cam);
 
-	if (vif->type == NL80211_IFTYPE_STATION && !sta->tdls) {
+	if (vif->type == NL80211_IFTYPE_STATION && !rtw89_sta_is_direct_peer(sta)) {
 		rtw89_vif_type_mapping(rtwvif_link, false);
 		rtw89_fw_release_general_pkt_list_vif(rtwdev, rtwvif_link, true);
 	}
@@ -5889,7 +6058,7 @@ int rtw89_core_sta_link_assoc(struct rtw89_dev *rtwdev,
 	struct ieee80211_link_sta *link_sta;
 	int ret;
 
-	if (vif->type == NL80211_IFTYPE_AP || sta->tdls) {
+	if (vif->type == NL80211_IFTYPE_AP || rtw89_sta_is_direct_peer(sta)) {
 		if (sta->tdls) {
 			rcu_read_lock();
 
@@ -5936,7 +6105,7 @@ int rtw89_core_sta_link_assoc(struct rtw89_dev *rtwdev,
 	rtw89_mac_bf_assoc(rtwdev, rtwvif_link, rtwsta_link);
 	rtw89_mac_bf_monitor_calc(rtwdev, rtwsta_link, false);
 
-	if (vif->type == NL80211_IFTYPE_STATION && !sta->tdls) {
+	if (vif->type == NL80211_IFTYPE_STATION && !rtw89_sta_is_direct_peer(sta)) {
 		struct ieee80211_bss_conf *bss_conf;
 		u8 link_mode = 0;
 
@@ -5986,7 +6155,7 @@ int rtw89_core_sta_link_remove(struct rtw89_dev *rtwdev,
 	const struct ieee80211_sta *sta = rtwsta_link_to_sta(rtwsta_link);
 	int ret;
 
-	if (vif->type == NL80211_IFTYPE_STATION && !sta->tdls) {
+	if (vif->type == NL80211_IFTYPE_STATION && !rtw89_sta_is_direct_peer(sta)) {
 		rtw89_reg_6ghz_recalc(rtwdev, rtwvif_link, false);
 		rtw89_btc_ntfy_role_info(rtwdev, rtwvif_link, rtwsta_link,
 					 BTC_ROLE_MSTS_STA_DIS_CONN);
@@ -5994,7 +6163,7 @@ int rtw89_core_sta_link_remove(struct rtw89_dev *rtwdev,
 		if (vif->p2p)
 			rtw89_mac_set_tx_retry_limit(rtwdev, rtwsta_link, false,
 						     rtwsta_link->tx_retry);
-	} else if (vif->type == NL80211_IFTYPE_AP || sta->tdls) {
+	} else if (vif->type == NL80211_IFTYPE_AP || rtw89_sta_is_direct_peer(sta)) {
 		ret = rtw89_fw_h2c_role_maintain(rtwdev, rtwvif_link, rtwsta_link,
 						 RTW89_ROLE_REMOVE);
 		if (ret) {

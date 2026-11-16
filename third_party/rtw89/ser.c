@@ -330,7 +330,7 @@ static void ser_sta_deinit_cam_iter(void *data, struct ieee80211_sta *sta)
 	rtw89_sta_for_each_link(rtwsta, rtwsta_link, link_id) {
 		rtwvif_link = rtwsta_link->rtwvif_link;
 
-		if (rtwvif_link->net_type == RTW89_NET_TYPE_AP_MODE || sta->tdls)
+		if (rtwvif_link->net_type == RTW89_NET_TYPE_AP_MODE || rtw89_sta_is_direct_peer(sta))
 			rtw89_cam_deinit_addr_cam(rtwdev, &rtwsta_link->addr_cam);
 		if (sta->tdls)
 			rtw89_cam_deinit_bssid_cam(rtwdev, &rtwsta_link->bssid_cam);

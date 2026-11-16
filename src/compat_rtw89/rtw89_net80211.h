@@ -37,6 +37,10 @@ struct rtw89_cfg80211_rdev {
                                          * an AP's Country element goes over it */
     bool ie_country;                    /* an AP's country is in force */
 
+    /* Owned world-NO_IR lease; wiphy channel storage, not borrowed chanctx.
+     * All inspection and changes are under the wiphy mutex. */
+    struct ieee80211_channel *owly_beacon_channel;
+
     /* Must be last: wiphy->priv[] (the mac80211 state) follows it. */
     struct wiphy wiphy __aligned(NETDEV_ALIGN);
 };
@@ -50,6 +54,10 @@ static inline struct rtw89_cfg80211_rdev *wiphy_to_rdev(struct wiphy *wiphy)
  * NULL once not: rtw89's TX power tables follow it. */
 void rtw89_cfg80211_country_ie(struct wiphy *wiphy, const u8 *alpha2);
 void rtw89_cfg80211_set_country(struct wiphy *wiphy, const char *alpha2);
+bool rtw89_cfg80211_link_beacon(struct wiphy *wiphy,
+                              struct ieee80211_channel *channel,
+                              const u8 bssid[6], const u8 source[6], u16 capability);
+bool rtw89_cfg80211_link_beacon_reset(struct wiphy *wiphy);
 
 /* ------------------------------------------------------------------ */
 /*  mac80211 side: what Linux keeps in ieee80211_local / sdata / sta    */
@@ -222,6 +230,7 @@ enum rtw89_mlme_state {
 
 struct rtw89_mlme_status {
     enum rtw89_mlme_state state;
+    bool awdl_channel_owned;   /* idle radio hold; not CONNECTED */
     u8 bssid[ETH_ALEN];
     u8 ssid[IEEE80211_MAX_SSID_LEN + 1];
     u16 freq;
@@ -243,6 +252,16 @@ struct rtw89_mlme_status {
 
 /* All of these are called with the wiphy mutex held, except rtw89_mlme_rx(). */
 /* @notify is called (under the wiphy mutex) whenever the state changes. */
+/* OWLY_CORE04D_SHARED_CHANCTX: internal MLME shim, stage only. */
+#if defined(RTW89_AWDL_VIF_STAGE) && RTW89_AWDL_VIF_STAGE
+void rtw89_mlme_awdl_set_release_hook(void (*hook)(struct ieee80211_chanctx_conf *));
+struct ieee80211_chanctx_conf *rtw89_mlme_awdl_shared_chanctx(void);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+int rtw89_mlme_awdl_hold_channel(u16 freq);
+int rtw89_mlme_awdl_set_self_addr(const u8 *addr);
+void rtw89_mlme_awdl_release_channel(void);
+#endif
+#endif
 void rtw89_mlme_start(struct ieee80211_hw *hw, struct ieee80211_vif *vif, void (*notify)(void));
 void rtw89_mlme_stop(void);
 /* @pmk: the 32-byte pairwise master key for a WPA2-PSK network, else NULL. */
@@ -255,25 +274,13 @@ bool rtw89_mlme_authorized(void);
 size_t rtw89_mlme_assoc_rsn_ie(u8 *buf, size_t max);
 /* For tests: see every management frame the MLME transmits. */
 void rtw89_mlme_set_tx_tap(void (*tap)(const u8 *frame, size_t len));
+/* OWLY_CORE04B_MGMT_DECL: internal, wiphy-lock-only, no installed caller. */
+#if defined(RTW89_AWDL_MGMT_BRIDGE) && RTW89_AWDL_MGMT_BRIDGE
+int rtw89_mlme_awdl_submit_action(struct ieee80211_vif *awdl_vif,
+                                  struct ieee80211_channel *awdl_chan,
+                                  const u8 *frame, size_t len);
+#endif
 
-/* Put an AWDL frame on air as it is: no encryption, no management
- * protection, and on whatever channel the radio is already on. */
-int rtw89_mlme_tx_awdl(const u8 *frame, size_t len);
-/* Whether that call would get as far as the radio: the same conditions, asked
- * without a frame, so the schedule can wait instead of counting refusals. */
-bool rtw89_mlme_awdl_tx_ready(void);
-
-/* Why it is not ready, for a log line that names the cause rather than
- * repeating ENETDOWN: the three preconditions, in the order they are asked. */
-#define RTW89_AWDL_TX_NO_INTERFACE  1
-#define RTW89_AWDL_TX_NO_CHANNEL    2
-#define RTW89_AWDL_TX_NO_LINK       3
-int rtw89_mlme_awdl_tx_why(void);
-
-/* Hold the radio on a social channel for AWDL while no network is joined,
- * and give it back. See rtw89_mlme_awdl_hold_channel(). */
-int rtw89_mlme_awdl_hold_channel(u16 freq);
-void rtw89_mlme_awdl_release_channel(void);
 /* The AP's beacons while associated, FCS on; takes the skb. Any context. */
 void rtw89_mlme_rx_beacon(struct sk_buff *skb);
 /* The driver reports missed beacons / is done with a frame. Any context. */

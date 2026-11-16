@@ -25,7 +25,6 @@
 #include "rtw89_sae.h"
 
 /* The address the chip answers to; see rtw89_core_wrap.c. */
-int rtw89_compat_set_self_addr(struct ieee80211_vif *vif, const u8 *addr);
 
 #define MLME_AUTH_TIMEOUT   (HZ / 2)
 #define MLME_ASSOC_TIMEOUT  (HZ / 2)
@@ -115,7 +114,9 @@ static struct {
 
     struct ieee80211_chanctx_conf *chanctx;
     bool chanctx_assigned;
-    bool awdl_chanctx;          /* the context is AWDL's, not a join's */
+    bool awdl_chanctx;          /* owned idle context; never an AP association */
+    bool awdl_self_addr;        /* must restore/revalidate before any AP join */
+    int awdl_self_addr_error;
     struct ieee80211_sta *sta;
     enum ieee80211_sta_state sta_state;
     u16 aid;
@@ -184,6 +185,26 @@ static struct {
     struct wiphy_delayed_work timeout_work;
 } mlme;
 
+/* OWLY_CORE04D_SHARED_CHANCTX: borrowed AP context lifecycle hook.
+ * Strictly under the wiphy mutex. No RF TX or second channel creation. */
+#if defined(RTW89_AWDL_VIF_STAGE) && RTW89_AWDL_VIF_STAGE
+static void (*owly_core04d_before_release)(struct ieee80211_chanctx_conf *);
+void rtw89_mlme_awdl_set_release_hook(void (*hook)(struct ieee80211_chanctx_conf *))
+{
+    owly_core04d_before_release = hook;
+}
+struct ieee80211_chanctx_conf *rtw89_mlme_awdl_shared_chanctx(void)
+{
+    if (!mlme.running || !mlme.chanctx_assigned || !mlme.chanctx ||
+        (mlme.state != RTW89_MLME_CONNECTED &&
+         !(mlme.state == RTW89_MLME_IDLE && mlme.awdl_chanctx)))
+        return NULL;
+    lockdep_assert_wiphy(mlme.hw->wiphy);
+    return mlme.chanctx;
+}
+#endif
+/* OWLY_CORE04D_SHARED_CHANCTX_MLME_END */
+
 static void mlme_set_state(enum rtw89_mlme_state state)
 {
     mlme.state = state;
@@ -204,6 +225,10 @@ static const u8 mlme_rsn_ie_8021x[] = {
 #define mlme_info(fmt, ...) IOLog("[rtw89 mlme] " fmt "\n", ##__VA_ARGS__)
 
 static void mlme_bcn_mon_start(void);
+
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+#include "owly_awdl_idle.inc"
+#endif
 
 /* Not in mlme: it holds across stopping and starting the radio. */
 static bool mlme_he_off;
@@ -603,6 +628,58 @@ static bool mlme_robust(const u8 *frame, size_t len)
     return _ieee80211_is_robust_mgmt_frame((struct ieee80211_hdr *)frame);
 }
 
+/* OWLY_CORE04B_MGMT_BRIDGE_BEGIN
+ * An internal TX entry point, intentionally without a caller.
+ * Requires the wiphy lock, a REGISTERED separate AWDL vif, and an already
+ * selected legal channel. Do NOT supply the connected AP station vif.
+ * There is no channel switching or AWDL interface creation here.
+ * Ownership of skb transfers to ops->tx() after the call; 0 means HANDOFF
+ * only, NOT that a radio transmitted or a peer heard the frame.
+ */
+#if defined(RTW89_AWDL_MGMT_BRIDGE) && RTW89_AWDL_MGMT_BRIDGE
+#include "rtw89_awdl_mgmt_gate.h"
+int rtw89_mlme_awdl_submit_action(struct ieee80211_vif *awdl_vif,
+                                  struct ieee80211_channel *awdl_chan,
+                                  const u8 *frame, size_t len)
+{
+    if (!mlme.hw || !mlme.local || !mlme.vif)
+        return -ENETDOWN;
+    /* Prevent races with VIF lifecycle, channel context and radio teardown. */
+    lockdep_assert_wiphy(mlme.hw->wiphy);
+    if (!awdl_vif || !awdl_chan || awdl_vif == mlme.vif)
+        return -EOPNOTSUPP;
+    if (!owly_awdl_mgmt_gate(frame, len, awdl_vif->addr))
+        return -EINVAL;
+
+    /* Explicit hard gate, even if some future code starts calling us. */
+#if !defined(RTW89_AWDL_MGMT_RF_TX) || !RTW89_AWDL_MGMT_RF_TX
+    return -EOPNOTSUPP;
+#else
+    struct sk_buff *skb;
+    struct ieee80211_tx_info *info;
+    struct ieee80211_tx_control control = { .sta = NULL };
+    /* VIF registration, channel context and regulatory validation are the
+     * CALLER'S responsibility; currently NO call site exists. */
+    skb = mlme_alloc_frame(len);
+    if (!skb)
+        return -ENOMEM;
+    memcpy(skb_put(skb, (unsigned int)len), frame, len);
+    info = IEEE80211_SKB_CB(skb);
+    memset(info, 0, sizeof(*info));
+    info->flags = IEEE80211_TX_CTL_NO_ACK;
+    info->control.vif = awdl_vif;
+    info->band = awdl_chan->band;
+    info->hw_queue = awdl_vif->hw_queue[IEEE80211_AC_VO];
+    skb->priority = 7;
+    skb_set_queue_mapping(skb, IEEE80211_AC_VO);
+    /* Existing rtw89_ops_tx classifies this 802.11 frame as MGMT. */
+    mlme.local->ops->tx(mlme.hw, &control, skb);
+    return 0;
+#endif
+}
+#endif
+/* OWLY_CORE04B_MGMT_BRIDGE_END */
+
 static void mlme_tx_mgmt(struct sk_buff *skb)
 {
     if (mlme.mfp && mlme.ptk_conf && mlme_robust(skb->data, skb->len)) {
@@ -802,6 +879,8 @@ static void mlme_teardown(u16 deauth_reason)
     bool was_assoc = mlme.vif->cfg.assoc;
     u64 changed = BSS_CHANGED_BSSID;
 
+    if (rtw89_cfg80211_link_beacon_reset(mlme.hw->wiphy))
+        mlme_info("OWLY world beacon: connected-AP NO_IR lease revoked");
     if (mlme.state == RTW89_MLME_IDLE)
         return;
 
@@ -895,7 +974,13 @@ static void mlme_teardown(u16 deauth_reason)
     if (ops->link_info_changed)
         ops->link_info_changed(mlme.hw, mlme.vif, conf, changed);
 
+    /* ieee80211_link_release_channel(): with RTLAirLink's AWDL, the auxiliary
+     * VIF is released first */
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    owly_mlme_release_chanctx();
+#else
     mlme_release_chanctx();
+#endif
 
     mlme_set_state(RTW89_MLME_IDLE);
 }
@@ -3567,6 +3652,19 @@ static void mlme_rx_beacon(const struct ieee80211_mgmt *mgmt, size_t len, u16 fr
      * scan does, it is not evidence of anything */
     if (freq != mlme.chan->center_freq)
         return;
+    /* Before content dedup: a beacon after authorization can qualify even
+     * when its contents match one received during the key handshake.
+     * The RX caller checked FCS and BSSID; frequency is checked above. */
+    if (mlme.running && mlme.state == RTW89_MLME_CONNECTED && mlme.vif->cfg.assoc &&
+        mlme.sta && mlme.sta_state == IEEE80211_STA_AUTHORIZED &&
+        mlme.chanctx_assigned && mlme.chanctx &&
+        mlme.chanctx->def.chan == mlme.chan && conf->chanctx_conf == mlme.chanctx &&
+        rtw89_cfg80211_link_beacon(mlme.hw->wiphy, mlme.chan, mgmt->bssid,
+                                  mgmt->sa, le16_to_cpu(mgmt->u.beacon.capab_info))) {
+        mlme_info("OWLY world beacon: serving ESS AP on %u MHz; world NO_IR lease granted; power unchanged", freq);
+        if (mlme.notify)
+            mlme.notify();
+    }
     ies = mgmt->u.beacon.variable;
     ies_len = len - fixed;
 
@@ -3834,7 +3932,6 @@ void rtw89_mlme_set_tx_tap(void (*tap)(const u8 *frame, size_t len))
  * owns the schedule, this only hands the frame to the chip.
  */
 /* rtw89_core_wrap.c: needs core.c's static link helpers. */
-bool rtw89_compat_vif_can_tx(struct ieee80211_vif *vif);
 
 /*
  * The conditions rtw89_mlme_tx_awdl() checks, asked on their own.
@@ -3845,45 +3942,6 @@ bool rtw89_compat_vif_can_tx(struct ieee80211_vif *vif);
  * window where AirDrop is first opened and a peer is first looking for us.
  * Waiting is not a failure and should not be counted or logged as one.
  */
-int rtw89_mlme_awdl_tx_why(void)
-{
-    if (!mlme.hw || !mlme.vif || !mlme.local)
-        return RTW89_AWDL_TX_NO_INTERFACE;
-    if (!mlme.chan)
-        return RTW89_AWDL_TX_NO_CHANNEL;
-    if (!rtw89_compat_vif_can_tx(mlme.vif))
-        return RTW89_AWDL_TX_NO_LINK;
-    return 0;
-}
-
-bool rtw89_mlme_awdl_tx_ready(void)
-{
-    return rtw89_mlme_awdl_tx_why() == 0;
-}
-
-int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
-{
-    struct sk_buff *skb;
-
-    if (!frame || !len)
-        return -EINVAL;
-    if (!mlme.hw || !mlme.vif || !mlme.local || !mlme.chan)
-        return -ENETDOWN;       /* no radio to send it with yet; the caller
-                                 * asks rtw89_mlme_awdl_tx_why() which */
-    /* Those four being set is not enough: during teardown they still point at
-     * a vif whose link pool has gone, and sending then panicked the machine.
-     * See rtw89_compat_vif_can_tx() for what the driver does with it. */
-    if (!rtw89_compat_vif_can_tx(mlme.vif))
-        return -ENETDOWN;
-    skb = mlme_alloc_frame(len);
-    if (!skb)
-        return -ENOMEM;
-    memcpy(skb_put(skb, len), frame, len);
-    /* no station: see mlme_tx_frame_sta() for why this one must not carry the
-     * AP's, and what happened when it did */
-    mlme_tx_frame_sta(skb, IEEE80211_TX_INTFL_DONT_ENCRYPT, NULL);
-    return 0;
-}
 
 /*
  * Hold the radio on one channel for AWDL, with no network joined.
@@ -3903,78 +3961,8 @@ int rtw89_mlme_tx_awdl(const u8 *frame, size_t len)
  * back (mlme_connect() gives this up first), and macOS keeps Wi-Fi scanning
  * and awdl0 up either way.
  */
-int rtw89_mlme_awdl_hold_channel(u16 freq)
-{
-    const struct ieee80211_ops *ops;
-    struct ieee80211_bss_conf *conf;
-    struct ieee80211_channel *chan;
-    struct cfg80211_chan_def chandef;
-    int ret;
-
-    if (!mlme.running || !mlme.hw || !mlme.vif || !mlme.local)
-        return -ENETDOWN;
-    ops = mlme.local->ops;
-    conf = &mlme.vif->bss_conf;
-    /* a network owns the radio whenever one is being joined or held */
-    if (mlme.state != RTW89_MLME_IDLE)
-        return -EBUSY;
-    if (mlme.chanctx && !mlme.awdl_chanctx)
-        return -EBUSY;
-    if (mlme.awdl_chanctx && mlme.chan && mlme.chan->center_freq == freq)
-        return 0;               /* already there */
-    chan = ieee80211_get_channel(mlme.hw->wiphy, freq);
-    if (!chan || (chan->flags & IEEE80211_CHAN_DISABLED))
-        return -EINVAL;
-    if (mlme.awdl_chanctx)
-        mlme_release_chanctx();
-
-    /* 20 MHz and no 802.11n: an AWDL sync frame is a basic-rate management
-     * frame and the width only has to match what peers expect to find. */
-    cfg80211_chandef_create(&chandef, chan, NL80211_CHAN_NO_HT);
-    mlme.chanctx = kzalloc(sizeof(*mlme.chanctx) + mlme.hw->chanctx_data_size,
-                           GFP_KERNEL);
-    if (!mlme.chanctx)
-        return -ENOMEM;
-    mlme.chanctx->def = chandef;
-    mlme.chanctx->min_def = chandef;
-    mlme.chanctx->rx_chains_static = 1;
-    mlme.chanctx->rx_chains_dynamic = 1;
-    ret = ops->add_chanctx(mlme.hw, mlme.chanctx);
-    if (ret) {
-        kfree(mlme.chanctx);
-        mlme.chanctx = NULL;
-        return ret;
-    }
-    conf->chanreq.oper = chandef;
-    ret = ops->assign_vif_chanctx ?
-          ops->assign_vif_chanctx(mlme.hw, mlme.vif, conf, mlme.chanctx) : 0;
-    if (ret) {
-        ops->remove_chanctx(mlme.hw, mlme.chanctx);
-        kfree(mlme.chanctx);
-        mlme.chanctx = NULL;
-        memset(&conf->chanreq, 0, sizeof(conf->chanreq));
-        return ret;
-    }
-    conf->chanctx_conf = mlme.chanctx;
-    mlme.chanctx_assigned = true;
-    mlme.awdl_chanctx = true;
-    mlme.chan = chan;
-    mlme.sband = mlme.hw->wiphy->bands[chan->band];
-    mlme.chandef = chandef;
-    mlme_info("holding %u MHz for AWDL; no network is joined", (unsigned int)freq);
-    return 0;
-}
 
 /* Give it back: the clock stopped, or a network is wanted instead. */
-void rtw89_mlme_awdl_release_channel(void)
-{
-    if (!mlme.running || !mlme.awdl_chanctx)
-        return;
-    mlme_release_chanctx();
-    mlme.chan = NULL;
-    mlme.sband = NULL;
-    mlme_info("the AWDL channel is given back");
-}
 
 void rtw89_mlme_start(struct ieee80211_hw *hw, struct ieee80211_vif *vif, void (*notify)(void))
 {
@@ -4010,7 +3998,9 @@ void rtw89_mlme_stop(void)
 
     /* before the teardown, which returns at once while nothing is joined and
      * would leave an AWDL channel context behind */
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
     rtw89_mlme_awdl_release_channel();
+#endif
     mlme_teardown(WLAN_REASON_DEAUTH_LEAVING);
     mlme.running = false;
     wiphy_delayed_work_cancel(mlme.hw->wiphy, &mlme.timeout_work);
@@ -4044,6 +4034,13 @@ void rtw89_mlme_get_status(struct rtw89_mlme_status *status)
     status->state = mlme.running ? mlme.state : RTW89_MLME_IDLE;
     status->last_error = mlme.last_error;
     status->eapol_rx = mlme.eapol_rx;
+    status->awdl_channel_owned = mlme.running && mlme.awdl_chanctx &&
+                                mlme.chanctx_assigned && mlme.chanctx && mlme.chan;
+    if (status->awdl_channel_owned) {
+        status->freq = (u16)mlme.chan->center_freq;
+        status->center_freq = (u16)mlme.chandef.center_freq1;
+        status->width = 20;
+    }
     if (status->state != RTW89_MLME_IDLE) {
         status->width = (u16)mlme_chandef_mhz(&mlme.chandef);
         status->center_freq = (u16)mlme.chandef.center_freq1;
@@ -4217,27 +4214,13 @@ static int mlme_connect(const struct rtw89_mlme_bss *bss, const u8 *pmk,
     if (bss->ies_len > MLME_MAX_IES || !bss->ssid_len)
         return -EINVAL;
 
-    /* A join outranks AWDL: the radio goes to the AP's channel. The context
-     * held for the availability windows is given back first, since the one
-     * built below replaces it. */
-    if (mlme.awdl_chanctx) {
-        mlme_info("giving the AWDL channel back: a network is being joined");
-        mlme_release_chanctx();
-        mlme.chan = NULL;
-        mlme.sband = NULL;
-        /*
-         * And the station's address back, here rather than on the work that
-         * follows the hold: an association is acknowledged with the address in
-         * the port's CAM, so a join that started while the chip was answering
-         * to awdl0's would get no acknowledgement from the AP and fail. The
-         * join is the one thing AWDL must never cost.
-         *
-         * vif->addr is the station's: only the link's copy is ever changed,
-         * and the helper does nothing when the two already agree.
-         */
-        if (rtw89_compat_set_self_addr(mlme.vif, mlme.vif->addr))
-            mlme_info("the station's address could not be put back");
-    }
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    /* An ordinary join always takes back the real station's channel. The
+     * release hook drains/unassigns AWDL before this context can be freed. */
+    rtw89_mlme_awdl_release_channel();
+    ret=rtw89_mlme_awdl_set_self_addr(NULL);
+    if(ret)return ret;
+#endif
 
     mlme.bss = *bss;
     memcpy(mlme.ies, bss->ies, bss->ies_len);

@@ -19,6 +19,71 @@
 #undef rtw89_core_start
 #undef rtw89_core_stop
 
+#if defined(OWLY_AWDL_RADIO_SCC) && OWLY_AWDL_RADIO_SCC
+#include "rtw89_net80211.h"
+
+/* OWLY_FAKE_CONNECTED_SCAN_MODEL_BEGIN */
+
+/* HOST TEST ONLY: this translation unit is linked instead of core_wrap.o
+ * in hosttest_fakechip, never in the real kext. The pretend device consumes
+ * TX rings but emits no firmware packet-offload acknowledgement, so a real
+ * connected hw_scan fails before it can exercise scan/VIF interleaving.
+ * Model only that firmware boundary. Real glue request building/completion,
+ * wiphy worker, VIF and channel assign/unassign operations remain in use.
+ * Do not set rtwdev->scanning or claim firmware/RF scan coverage.
+ */
+static struct ieee80211_ops owly_fake_radio_ops;
+static const struct ieee80211_ops *owly_fake_original_ops;
+static struct ieee80211_vif *owly_fake_scan_vif;
+
+static int owly_fake_connected_scan(struct ieee80211_hw *hw,
+                                     struct ieee80211_vif *vif,
+                                     struct ieee80211_scan_request *req)
+{
+    lockdep_assert_wiphy(hw->wiphy);
+    if (!vif || !req || !req->req.n_channels)
+        return -EINVAL;
+    /* Preserve existing disconnected-scan coverage; only this new
+     * connected interleaving test uses a modeled offload boundary. */
+    if (!vif->cfg.assoc)
+        return owly_fake_original_ops->hw_scan(hw, vif, req);
+    if (owly_fake_scan_vif)
+        return -EBUSY;
+    owly_fake_scan_vif = vif;
+    IOLog("== AWDL SCC scan fixture: start (simulated firmware boundary)\n");
+    return 0;
+}
+
+static void owly_fake_cancel_scan(struct ieee80211_hw *hw,
+                                  struct ieee80211_vif *vif)
+{
+    struct cfg80211_scan_info info = { .aborted = true };
+    lockdep_assert_wiphy(hw->wiphy);
+    if (owly_fake_scan_vif == vif) {
+        owly_fake_scan_vif = NULL; /* clear before completion can queue work */
+        IOLog("== AWDL SCC scan fixture: complete (simulated firmware boundary)\n");
+        ieee80211_scan_completed(hw, &info);
+        return;
+    }
+    owly_fake_original_ops->cancel_hw_scan(hw, vif);
+}
+
+static void owly_fake_install_scan_model(struct ieee80211_hw *hw)
+{
+    struct rtw89_m80211_local *local = hw_to_local(hw);
+    lockdep_assert_wiphy(hw->wiphy);
+    if (local->ops != &owly_fake_radio_ops) {
+        owly_fake_original_ops = local->ops;
+        owly_fake_radio_ops = *local->ops;
+        owly_fake_radio_ops.hw_scan = owly_fake_connected_scan;
+        owly_fake_radio_ops.cancel_hw_scan = owly_fake_cancel_scan;
+        local->ops = &owly_fake_radio_ops;
+    }
+    owly_fake_scan_vif = NULL;
+}
+/* OWLY_FAKE_CONNECTED_SCAN_MODEL_END */
+#endif
+
 /*
  * Starting the radio is hardware from top to bottom (MAC/BB/RF init, firmware
  * download, calibration). Pretend it worked, so the test can go on to add an
@@ -27,6 +92,9 @@
  */
 int rtw89_core_start(struct rtw89_dev *rtwdev)
 {
+#if defined(OWLY_AWDL_RADIO_SCC) && OWLY_AWDL_RADIO_SCC
+    owly_fake_install_scan_model(rtwdev->hw);
+#endif
     /* The driver checks these enable bits before touching the MAC. */
     rtw89_write32_set(rtwdev, R_AX_DMAC_FUNC_EN, B_AX_MAC_FUNC_EN | B_AX_DMAC_FUNC_EN);
     rtw89_write32_set(rtwdev, R_AX_CMAC_FUNC_EN, B_AX_CMAC_EN);

@@ -14,10 +14,19 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "owly_native_config.h"
+#include "owly_native_scan_policy.h"
+#include "owly_awdl_poll_policy.h"
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+#include "owly_native_link.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* A real bound, configured AWDL link with a fresh peer or unicast traffic. */
+bool rtw89_glue_awdl_scan_protect(bool *data_busy);
 
 struct rtw89_glue_platform {
     void *ctx;
@@ -48,6 +57,19 @@ struct rtw89_glue_platform {
      * thread, may sleep; @frame is only valid during the call. */
     void (*rx_frame)(void *ctx, const uint8_t *frame, size_t len);
 
+    /* ABI6 experimental callback boundary. NULL by default. Receives only
+     * syntax-validated AWDL Action metadata or IPv6 payload; callbacks borrow
+     * pointers for the duration of the call, and MUST NOT retain them. These
+     * callbacks are NOT yet bound to IO80211VirtualInterface or awdl0. */
+    bool (*awdl_rx_action)(void *ctx, const uint8_t source[6],
+                           unsigned int subtype, unsigned int social_mask,
+                           const uint8_t *raw_frame, size_t frame_len);
+    /* C3: passive scan-time signature ONLY, no Apple peer authorization and
+     * never consume skb. Receiver copies bytes synchronously and returns false. */
+    bool (*awdl_rx_scan_signature)(void *ctx, const uint8_t source[6],
+                                   const uint8_t *raw_frame, size_t frame_len);
+    bool (*awdl_rx_ipv6)(void *ctx, const uint8_t dst[6],
+                         const uint8_t src[6], const uint8_t *ip6, size_t len);
     /* Optional: rtw89_glue_tx_room() returned zero earlier and there is room
      * again. Called from a driver thread; may call rtw89_glue_tx*(). */
     void (*tx_wake)(void *ctx);
@@ -56,22 +78,13 @@ struct rtw89_glue_platform {
      * thread with driver locks held: only the scan result calls are safe. */
     void (*scan_done)(void *ctx, bool aborted);
 
-    /* Optional: a received AWDL action frame, for IO80211's AWDL engine.
-     * @frame is the action frame body -- the category byte, the vendor OUI
-     * and what follows, with the 802.11 header already stripped, which is
-     * where IO80211 expects to find the OUI and the TLVs -- and is only valid
-     * during the call. @peer is its transmitter, @channel the channel it
-     * arrived on and @rssi its strength in dBm, which the family needs in
-     * order to decide a peer is reachable at all. Called from the driver's
-     * receive thread. */
-    void (*awdl_frame)(void *ctx, const uint8_t *frame, size_t len,
-                       const uint8_t peer[6], uint32_t channel, int8_t rssi);
-    /* Optional: a received AWDL data frame, already in the 802.3 form awdl0
-     * works in -- destination, source, length, then the payload as it
-     * arrived. Only valid during the call; the receive thread again. */
-    void (*awdl_data)(void *ctx, const uint8_t *eth, size_t len);
-    /* An availability window has begun, on the followed master's numbering. */
-    void (*awdl_window)(void *ctx, uint32_t aw_seq, const uint8_t master[6]);
+    /* Keep this shared table's layout independent of feature flags. The
+     * host harness and kernel TUs both copy the entire table, even when the
+     * native consumer is disabled. New callbacks append after old members;
+     * an absent native consumer is represented by NULL, never a smaller ABI. */
+    bool (*native_rx)(void *ctx,uint32_t kind,const uint8_t *bytes,size_t len,
+                      const uint8_t src[6],const uint8_t dst[6],
+                      uint8_t channel,int8_t rssi,uint64_t received_us);
 };
 
 struct rtw89_glue_device {
@@ -98,6 +111,10 @@ struct rtw89_glue_info {
 
 /* True if the driver's id_table has this vendor/device pair. */
 bool rtw89_glue_supports(uint16_t vendor, uint16_t device);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+int rtw89_glue_native_output(const uint8_t *ethernet,size_t len);
+int rtw89_glue_native_window(struct owly_link_window *window);
+#endif
 
 /*
  * Bring the compat runtime up and run the driver's probe(): allocate the hw,
@@ -130,6 +147,60 @@ size_t rtw89_glue_coex_info(char *buf, size_t max);
 int rtw89_glue_up(void);
 void rtw89_glue_down(void);
 bool rtw89_glue_is_up(void);
+
+/* OWLY backend VIF bridge: on-demand second P2P-client hardware VIF.
+ * NOT an AWDL channel scheduler, Skywalk path or BSD awdl0 registration.
+ * All operations serialize on glue.cmd_lock and the wiphy lock internally.
+ * rc = 0 only after the real driver add_interface() succeeds.
+ */
+int rtw89_glue_awdl_vif_create(const uint8_t mac[6]);
+int rtw89_glue_awdl_vif_destroy(void);
+bool rtw89_glue_awdl_vif_present(void);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+int rtw89_glue_awdl_vif_enable(void);
+#endif
+
+/* Internal C-driver/host-test status only. No pointers or packet ownership
+ * cross this API; channel_bound does NOT mean AWDL synchronized or RF TX.
+ * A feature-disabled build returns enabled == false and zero counters. */
+struct rtw89_glue_awdl_radio_status {
+    bool enabled;
+    bool vif_registered;
+    bool channel_bound;
+    bool blocked;
+    uint16_t freq;
+    int last_error;
+    uint32_t attempts;
+    uint32_t binds;
+    uint32_t releases;
+};
+int rtw89_glue_awdl_radio_status(struct rtw89_glue_awdl_radio_status *out);
+
+/* Software PSF engine, serialized with the actual VIF/channel lifecycle.
+ * enabled retains a configured session on the bound VIF across a scan.
+ * active additionally requires an available radio scheduler. */
+struct rtw89_glue_awdl_sync_status {
+    bool built, requested, enabled, scan_paused, active, blocked, has_template;
+    uint8_t channel;
+    uint64_t staged, handed_off, failed, skipped, native_mi_handed_off;
+    uint32_t config_mask, master_channel, sync_role, psf_period_ms, election_id;
+    int32_t peer_rssi;
+    uint64_t rejected_rssi;
+};
+int rtw89_glue_awdl_config(bool set, unsigned number, void *data);
+int rtw89_glue_awdl_ht_capability(void *output, size_t capacity);
+int rtw89_glue_awdl_sync_template(const uint8_t *bytes, size_t length);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+int rtw89_glue_awdl_mi(bool automatic, const uint8_t destination[6],
+                       const uint8_t *bytes, size_t length);
+int rtw89_glue_awdl_vif_disable(void);
+#endif
+int rtw89_glue_awdl_sync_enable(bool enabled);
+int rtw89_glue_awdl_sync_status(struct rtw89_glue_awdl_sync_status *out);
+/* Service readiness requires a bound, permitted channel and a live VIF.
+ * The radio scheduler independently checks whether it can transmit. */
+bool rtw89_glue_awdl_service_ready(void);
+
 
 /*
  * Start a firmware scan over every enabled channel: active (wildcard probe
@@ -353,18 +424,12 @@ void rtw89_glue_set_rejoin(bool on);
 
 /* Log the AWDL sync frames the chip already hears (see rtw89_awdl.h). Nothing
  * is transmitted; this only measures Apple's timeline before we try to join it. */
-void rtw89_glue_awdl_watch(bool on);
 
 /* Hand received AWDL action frames up through platform.awdl_frame as well. */
-void rtw89_glue_awdl_deliver(bool on);
 
 /* The transmit loop: the kext owns the clock, this owns the frames. */
-void rtw89_glue_awdl_tx_start(uint8_t channel);
-void rtw89_glue_awdl_tx_stop(void);
-void rtw89_glue_awdl_tick(uint32_t now_us);
 
 /* How many sync frames went out, and how many could not. */
-void rtw89_glue_awdl_tx_counts(uint32_t *sent, uint32_t *failed);
 
 /*
  * When the followed master's next availability window begins, on the same
@@ -372,7 +437,6 @@ void rtw89_glue_awdl_tx_counts(uint32_t *sent, uint32_t *failed);
  * while no master is being followed. The clock uses it to put its own window
  * boundaries on the master's, which is what being on the timeline means.
  */
-bool rtw89_glue_awdl_master_phase(uint64_t *next_aw_us, uint16_t *aw_period_tu);
 
 /*
  * A received frame's hardware arrival time, moved into the clock the driver
@@ -386,11 +450,8 @@ bool rtw89_glue_rx_local_us(uint64_t mactime, uint64_t *local_us);
  * is followed. Sitting anywhere else means being present in its windows on a
  * channel it is not listening to.
  */
-uint8_t rtw89_glue_awdl_master_channel(void);
-uint8_t rtw89_glue_awdl_follow_channel(uint8_t current, uint8_t fallback);
 /* awdl0's own address, so the chip can be told to answer to it; NULL when it
  * goes away. See rtw89_compat_set_self_addr(). */
-void rtw89_glue_awdl_set_mac(const uint8_t *mac);
 
 /*
  * Ask for the radio to be held on @freq for AWDL while no network is joined,
@@ -398,21 +459,13 @@ void rtw89_glue_awdl_set_mac(const uint8_t *mac);
  * because the caller may be the link notify, which already holds the wiphy
  * mutex. A network always outranks it.
  */
-void rtw89_glue_awdl_hold_channel(uint16_t freq);
 
 /* An Ethernet frame the family sent to awdl0, to go out as an AWDL data
  * frame. Returns 0, or a negative errno when there is nothing to send it on. */
-int rtw89_glue_awdl_data_tx(const uint8_t *eth, size_t len);
-void rtw89_glue_awdl_data_counts(uint32_t *sent, uint32_t *failed);
 
 /* The sync frame template IO80211 built, and the AWDL address it is for. */
-void rtw89_glue_awdl_template(const uint8_t *tlvs, size_t len, const uint8_t mac[6]);
 
 /* Called from inside the compat layer when one arrives. */
-void rtw89_glue_awdl_frame(const uint8_t *frame, size_t len, const uint8_t peer[6],
-                           uint32_t channel, int8_t rssi);
-void rtw89_glue_awdl_data(const uint8_t *eth, size_t len);
-void rtw89_glue_awdl_window(uint32_t aw_seq, const uint8_t *master);
 
 /*
  * For testing on the real card. rtw89_glue_probe_ap() acts as if the driver

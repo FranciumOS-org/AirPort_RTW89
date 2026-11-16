@@ -862,7 +862,8 @@ void rtw89_cam_fill_addr_cam_info(struct rtw89_dev *rtwdev,
 			  le32_encode_bits(addr_cam->len, ADDR_CAM_W1_V1_LEN);
 
 	h2c->w2 = le32_encode_bits(addr_cam->valid, ADDR_CAM_W2_VALID) |
-		  le32_encode_bits(rtwvif_link->net_type, ADDR_CAM_W2_NET_TYPE) |
+		  le32_encode_bits(sta && sta_to_rtwsta(sta)->owly_awdl ?
+				 RTW89_NET_TYPE_AD_HOC : rtwvif_link->net_type, ADDR_CAM_W2_NET_TYPE) |
 		  le32_encode_bits(rtwvif_link->bcn_hit_cond, ADDR_CAM_W2_BCN_HIT_COND) |
 		  le32_encode_bits(rtwvif_link->hit_rule, ADDR_CAM_W2_HIT_RULE) |
 		  le32_encode_bits(rtwvif_link->phy_idx, ADDR_CAM_W2_BB_SEL) |

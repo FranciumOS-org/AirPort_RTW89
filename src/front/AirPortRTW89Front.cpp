@@ -1,5 +1,33 @@
 // SPDX-License-Identifier: GPL-2.0
+/* Gate14 RC3: default fail-closed. Native VIF must be explicitly armed via
+ * both Makefile switches. Set these before the class header is parsed. */
+#ifndef OWLY_GATE14_REAL_VIF
+#define OWLY_GATE14_REAL_VIF 0
+#endif
+#ifndef RTW89_AWDL_NATIVE_FRONT_OBSERVE
+#define RTW89_AWDL_NATIVE_FRONT_OBSERVE 0
+#endif
+#if OWLY_GATE14_REAL_VIF && RTW89_AWDL_NATIVE_FRONT_OBSERVE != 1
+#error "Gate14 RC3: real VIF requires native lifecycle build enabled"
+#endif
+#ifndef OWLY_ABI6_NATIVE_P2P_FACTORY
+#define OWLY_ABI6_NATIVE_P2P_FACTORY 0
+#endif
+#if OWLY_ABI6_NATIVE_P2P_FACTORY && !OWLY_GATE14_REAL_VIF
+#error "ABI6 P2P subclass must only run with Gate14 armed"
+#endif
 #include "AirPortRTW89Front.hpp"
+#if defined(OWLY_AWDL_SERVICE_LIFECYCLE) && OWLY_AWDL_SERVICE_LIFECYCLE
+#include "../kext/OwlyAwdlEntitlement.hpp"
+#include <mach/task.h>
+#endif
+#include "owly_gatec_l2.h"
+#include "owly_native_config.h"
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+#include "OwlyLegacyP2PABI.hpp"
+#else
+#include <IOKit/80211/IO80211P2PInterface.h>
+#endif
 #include "../kext/rtw89_chips.h"
 
 #include <IOKit/80211/apple80211_var.h>
@@ -11,6 +39,9 @@
 #include <IOKit/network/IONetworkMedium.h>
 #include <sys/errno.h>
 #include <sys/kpi_mbuf.h>
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+#include "rtw89_awdl_action_decode.h"
+#endif
 
 /*
  * Every front line goes to the driver's log ring, because the front's own
@@ -20,6 +51,155 @@
  * that may well be lost.
  */
 #define LOG(fmt, ...) rtw89FrontLog("AirPortRTW89Front: " fmt, ##__VA_ARGS__)
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+#include "OwlyNativeP2P.inc"
+#endif
+
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+#include "owly_gatec2_inspect.h"
+#if defined(OWLY_ABI6_C3_SCAN_OBSERVER) && OWLY_ABI6_C3_SCAN_OBSERVER
+#include "owly_gatec3_scan_signature.h"
+static volatile SInt32 gOwlyC3ScanSignaturesFront = 0;
+static volatile SInt32 gOwlyC3ScanRejectedFront = 0;
+#endif
+/* We count packets reaching FRONT after the real backend RX demux, NOT
+ * packets injected into Apple's AWDL peer manager. Bounded publication. */
+static volatile SInt32 gOwlyC2Actions = 0;
+static volatile SInt32 gOwlyC2L2IPv6 = 0;
+static volatile SInt32 gOwlyC2Rejected = 0;
+static volatile SInt32 gOwlyC2NotReady = 0;
+static void owlyGateC2Note(IORegistryEntry *front, const char *key, volatile SInt32 *counter)
+{
+    const SInt32 prev = OSIncrementAtomic(counter);
+    if (prev < 0) return; /* never publish an overflowed count */
+    const UInt32 value = (UInt32)prev + 1U;
+    if (value <= 16U || (value <= 65536U && (value & (value - 1U)) == 0U))
+        front->setProperty(key, (unsigned long long)value, 32);
+}
+#endif
+
+/* OWLY_GATE09_BEGIN: bounded, error-only telemetry; no VIF or packet changes. */
+static volatile SInt32 gOwlyG09IoctlErrors = 0;
+static volatile SInt32 gOwlyG09SetErrors = 0;
+static volatile SInt32 gOwlyG09SuperErrors = 0;
+static volatile SInt32 gOwlyG09Request94 = 0;
+/* OWLY_GATE09_END */
+
+/* OWLY_GATE12_TRACE_BEGIN: fail-closed diagnostic; no request payload reads. */
+#define OWLY_GATE12_TRACE_ONLY 1
+/* GATE14: The functional role-6 path is DISABLED by default. Do not arm
+ * without the measured Gate13C request version and a sacrificial USB EFI.
+ * The old M2.3 copyin/copyout envelope is NEVER invoked by this gate.
+ */
+/* OWLY_GATE14_REAL_VIF is opt-in via compiler; default is 0. */
+#ifndef OWLY_GATE14_REQ94_VERSION
+#define OWLY_GATE14_REQ94_VERSION 0U
+#endif
+#if OWLY_GATE14_REAL_VIF
+#ifndef RTW89_AWDL_NATIVE_FRONT_OBSERVE
+#define RTW89_AWDL_NATIVE_FRONT_OBSERVE 1
+#endif
+#if !RTW89_AWDL_NATIVE_FRONT_OBSERVE
+#error "Gate14 requires backend/native lifecycle integration"
+#endif
+#if OWLY_GATE14_REQ94_VERSION == 0xFFFFFFFFU
+#error "Gate14 refuses an unverified 94 version; supply observed Gate13C value"
+#endif
+#endif
+static volatile SInt32 gOwlyG12Ioctl = 0;
+static volatile SInt32 gOwlyG12Set = 0;
+static volatile SInt32 gOwlyG12Request = 0;
+static volatile SInt32 gOwlyG12VifFactory = 0;
+/* OWLY_GATE12_TRACE_END */
+
+/* OWLY_GATE12F_MATRIX_BEGIN: passive legacy dispatch counters.
+ * Never dereference IOCTL buffers, alter results, create VIFs or change ABI.
+ * The low-frequency publication is bounded: first 24 hits, then each 64th
+ * to 4096 and each 1024th to 65536. Values after 24 are checkpoints,
+ * NOT guaranteed exact totals. Run a before/after session for correlation.
+ */
+static volatile SInt32 gOwlyFIOCTLAny = 0;
+static volatile SInt32 gOwlyFIOCTLSetCmd = 0;
+static volatile SInt32 gOwlyFIOCTLSetCallback = 0;
+static volatile SInt32 gOwlyFSuperIOCTL = 0;
+static volatile SInt32 gOwlyFSuperSet = 0;
+static volatile SInt32 gOwlyFBackendIOCTL = 0;
+static volatile SInt32 gOwlyFBackendSet = 0;
+static volatile SInt32 gOwlyFFallbackIOCTL = 0;
+static volatile SInt32 gOwlyFFallbackSet = 0;
+static volatile SInt32 gOwlyFRequestAny = 0;
+static volatile SInt32 gOwlyFRequest94 = 0;
+static volatile SInt32 gOwlyFRequest95 = 0;
+static volatile SInt32 gOwlyFRole6 = 0;
+/* ABI5 factory/attach telemetry: bounded counters; no VIF behaviour changes.
+ * Four outcome categories below are mutually exclusive for each role-6 call.
+ * The last outcome is advisory only if another role-6 call races it.
+ * Allocation/init outcome is never inferred from an Apple attach failure.
+ */
+static volatile SInt32 gOwlyDiagFNoMac = 0;
+static volatile SInt32 gOwlyDiagFAllocFail = 0;
+static volatile SInt32 gOwlyDiagFInitFail = 0;
+static volatile SInt32 gOwlyDiagFReady = 0;
+static inline void owlyGate12FHit(IORegistryEntry *entry, const char *key,
+                                 volatile SInt32 *counter)
+{
+    const SInt32 old = OSIncrementAtomic(counter);
+    if (old < 0) return; /* overflow guard; do not publish a wrapped count */
+    const UInt32 value = (UInt32)old + 1U;
+    if (value <= 24U ||
+        (value <= 4096U && (value % 64U) == 0U) ||
+        (value <= 65536U && (value % 1024U) == 0U))
+        entry->setProperty(key, (unsigned long long)value, 32);
+}
+/* OWLY_GATE12F_MATRIX_END */
+
+/* OWLY_GATE13A_SHAPE_BEGIN: metadata-only, never dereference IOCTL94 data.
+ * These compile-time assertions verify the PROJECT'S 32-byte layout only.
+ * They do NOT prove the Apple dispatcher uses this layout or that its
+ * data pointer refers to a readable kernel-resident object.
+ */
+struct OwlyGate13AExpectedCreateLayout {
+    uint32_t version;
+    uint8_t mac[6];
+    uint16_t reserved;
+    uint32_t role;
+    uint8_t bsd_name[16];
+} __attribute__((packed));
+static_assert(sizeof(OwlyGate13AExpectedCreateLayout) == 32, "Gate13A local create layout must be 32 bytes");
+static_assert(__builtin_offsetof(OwlyGate13AExpectedCreateLayout, version) == 0, "version offset");
+static_assert(__builtin_offsetof(OwlyGate13AExpectedCreateLayout, mac) == 4, "mac offset");
+static_assert(__builtin_offsetof(OwlyGate13AExpectedCreateLayout, reserved) == 10, "reserved offset");
+static_assert(__builtin_offsetof(OwlyGate13AExpectedCreateLayout, role) == 12, "role offset");
+static_assert(__builtin_offsetof(OwlyGate13AExpectedCreateLayout, bsd_name) == 16, "bsd_name offset");
+static volatile SInt32 gOwly13A94Seen = 0;
+static volatile SInt32 gOwly13A94TypeSet = 0;
+static volatile SInt32 gOwly13A94TypeOther = 0;
+static volatile SInt32 gOwly13A94Primary = 0;
+static volatile SInt32 gOwly13A94NotPrimary = 0;
+static volatile SInt32 gOwly13A94DataNonNull = 0;
+static volatile SInt32 gOwly13A94DataNull = 0;
+static volatile SInt32 gOwly13A94DataAligned8 = 0;
+static volatile SInt32 gOwly13A94DataUnaligned8 = 0;
+/* OWLY_GATE13A_SHAPE_END */
+
+/* OWLY_GATE13B_PAYLOAD_BEGIN: experimental read-only request94 probe.
+ * REQUIRES pinned IO80211FamilyLegacy image + loaded UUID verification before
+ * USB-only installation. The matched Apple setVirtualInterfaceCreate function
+ * calls IO80211Controller::copyIn into its own 32-byte stack local and
+ * passes &local to apple80211RequestIoctl(0x803069c8, 94, primary, &local).
+ * This is NOT a universal contract for arbitrary direct callback callers.
+ * This probe reads ONLY 4 bytes of version and 4 bytes of role, not MAC/name.
+ * No userspace copyin, IORegistry pointer, VIF attach, or return-code change.
+ */
+#define OWLY_GATE13B_PAYLOAD_PROBE 1
+static volatile SInt32 gOwly13B94_eligible = 0;
+static volatile SInt32 gOwly13B94_version_expected = 0;
+static volatile SInt32 gOwly13B94_version_other = 0;
+static volatile SInt32 gOwly13B94_role6 = 0;
+static volatile SInt32 gOwly13B94_role_other = 0;
+static volatile SInt32 gOwly13B94_combo_expected = 0;
+/* OWLY_GATE13B_PAYLOAD_END */
+
 
 /* Until the driver proper has read the real address from the chip. */
 static const IOEthernetAddress kPlaceholderMac = {{ 0x02, 0x00, 0x00, 0x00, 0x00, 0x00 }};
@@ -39,130 +219,6 @@ OSDefineMetaClassAndStructors(AirPortRTW89FrontInterface, IO80211Interface)
 /* One card, one front: set through rtw89_front_ops.set_apple_rsn(). */
 static volatile bool gAppleRsn;
 
-/*
- * IO80211PeerManager::enable(), by its symbol for the same reason as
- * bpfTapInput() above: it is not in MacKernelSDK's headers and it is not a
- * virtual method, so a direct call is what the compiler would emit anyway.
- *
- * The family calls this itself from the link-up branch of setLinkState(), and
- * on this machine the result is that nothing is enabled: the peer manager's
- * _enabling byte stays 0, which means enableGated() -- four instructions,
- * the first of which sets that byte -- never ran. Calling it here says which
- * half is at fault, because the pointer chain it walks has been checked and
- * is whole.
- */
-/*
- * The family's decompression buffers. All twelve guard checks in the family
- * compare these two bytes with 0xaa and panic otherwise, and nothing in it ever
- * writes them, so the first peer TLV it decompresses panics the machine. The
- * output is bounded to 0x200 by its callers, so the guards are never reached.
- */
-extern "C" unsigned char bufout[];
-#define RTW89_BUFOUT_GUARD_1    0x200
-#define RTW89_BUFOUT_GUARD_2    0x410
-
-extern "C" IOReturn rtw89_peer_manager_enable(void *peerManager, const char *why)
-    __asm__("__ZN18IO80211PeerManager6enableEPKc");
-
-/*
- * The two steps past enable() that actually switch the engine on, by their
- * symbols for the same reason as the call above.
- *
- * doEnable() ends by calling interfaceStateChange(7) -- the 7 is taken from
- * its own call site -- and only past that is enableAWDL(), which is the only
- * thing in the family that sets the bit actionFrameProcessInput() tests.
- * With the link up that chain should run on its own; if it does not, these
- * say so, and enableAWDL() is the step that matters.
- */
-extern "C" void rtw89_awdl_interface_state_change(void *peerManager, unsigned int source)
-    __asm__("__ZN22IO80211AWDLPeerManager20interfaceStateChangeE18StateChangedSource");
-extern "C" int rtw89_awdl_enable_awdl(void *peerManager)
-    __asm__("__ZN22IO80211AWDLPeerManager10enableAWDLEv");
-
-/*
- * The other half of the gate on received frames, and the half that was still
- * shut. actionFrameProcessInput() looks at nothing unless both the state
- * flag bit above and the word at 0xcd4 are set, and 0xcd4 is written in
- * exactly one place in the family:
- *
- *   setAwdlSyncState(p):  ...  do_ioctl(SET, AWDL_SYNC_STATE, p)
- *                              if (ok) _syncState = p->state
- *                              do_ioctl(SET, AWDL_SYNC_ENABLED, { .enabled = 1 })
- *
- * and the only caller of that is the ioctl table -- so it happens when
- * userspace asks for it, which on this machine it never does, because the
- * engine was brought up here rather than along the family's own path. It
- * skips configure() when the configured bit is already set, which it is by
- * the time this runs, so the call is just the two settings and the write.
- */
-struct rtw89_awdl_sync_state { unsigned int version; unsigned int state; };
-
-extern "C" int rtw89_awdl_set_sync_state(void *peerManager,
-                                         struct rtw89_awdl_sync_state *state)
-    __asm__("__ZN22IO80211AWDLPeerManager16setAwdlSyncStateEP26apple80211_awdl_sync_state");
-
-/*
- * Delivery to awdl0 itself, past the peer manager.
- *
- * inputPacket() is the obvious door and it does not open: it hands the packet
- * to IO80211AWDLPeerManager::inputPacket() first, and frees it when that
- * returns false. That filter looks the sender up with findPeer() and rejects
- * anything from a peer it has not built an object for, so the first frame
- * from a peer -- the only one that could start a conversation -- is always
- * the one thrown away. A data frame from a real iPhone reached that call 214
- * bytes long and awdl0's Ipkts stayed at 0.
- *
- * pushPacket() is the half that delivers: it sets the receive interface,
- * strips the 14-byte header it expects to find and calls ifnet_input(). What
- * is given up is the filter's own bookkeeping, which decides when the family
- * switches the schedule into data mode -- worth coming back to once a
- * transfer runs at all.
- */
-extern "C" void rtw89_vif_push_packet(void *virtualInterface, mbuf_t m)
-    __asm__("__ZN23IO80211VirtualInterface10pushPacketEP6__mbuf");
-
-/*
- * Telling the family which availability window it is in.
- *
- * It keeps its own idea of the timeline and nothing we have done so far
- * touches it, which is the last input it has never had: its service
- * parameters TLV goes out as nine zero bytes, so we advertise no services and
- * a peer has nothing to display even once it adopts us.
- *
- * Event 41 is the window start, and apple80211_availability_window_start is
- * in no header here. The layout below is what the family reads out of it,
- * from reportDataPathEvents(), monitorTimeline() and logAWStart():
- *
- *   +0x00  the window number, as a word
- *   +0x04  the driver's synchronisation state
- *   +0x08  a six byte address, compared against the peer manager's own
- *   +0x0e  the master's address, which the peer manager adopts as its top
- *          master (reportDataPathEvents copies it to peerManager + 0x27fb and
- *          calls topMasterChanged() whenever it differs)
- *   +0x14  a word read big-endian and logged
- *   +0x18  a timestamp, kept as-is
- *   +0x20  a word, kept as-is
- *
- * The field at +0x04 is the one that decides whether anything we hand up is
- * looked at. reportDataPathEvents() stores it at peerManager + 0xcd4, and
- * actionFrameProcessInput() throws away every frame while that word is zero.
- * It was never filled in, so a zeroed buffer told the family we were not
- * synchronised on every single window: awdl0 came up, peers were discovered
- * over BLE, AirDrop opened, and not one action frame was ever processed. One
- * is the synchronised value the family's own code compares against
- * (setAwdlSyncState, logAWStart, updatePrimaryPayloadMI all test for 1).
- *
- * Every one of those is a scalar or an array read out of the buffer we pass
- * and none is a pointer followed, so a field misread here is a wrong value
- * rather than a fault. The buffer is larger than the struct and zeroed, so
- * anything read past what is understood reads zero.
- */
-extern "C" int rtw89_awdl_report_event(void *peerManager, unsigned int event,
-                                       void *payload, unsigned long len)
-    __asm__("__ZN22IO80211AWDLPeerManager20reportDataPathEventsEjPvm");
-
-#define RTW89_AWDL_EVENT_AW_START   41
-
 /* The front whose back takes the log lines; see LOG above. */
 static AirPortRTW89Front *gLogFront;
 
@@ -181,534 +237,6 @@ static void rtw89FrontLog(const char *fmt, ...)
     if (front && front->logLine(line))
         return;
     IOLog("%s\n", line);
-}
-
-/*
- * The one front, for the AWDL interface to hand its packets back to. The
- * interface is built by the family through createVirtualInterface() and has
- * no pointer of its own to the controller that owns it; there is one card and
- * one front, the same assumption gAppleRsn above already makes.
- */
-static AirPortRTW89Front *gFront;
-
-OSDefineMetaClassAndStructors(AirPortRTW89AwdlInterface, IO80211P2PInterface)
-
-/*
- * Everything the family sends over awdl0: the mDNS that finds a peer and then
- * the TCP that carries the transfer. It arrives as a plain Ethernet frame,
- * the same shape the controller's own outputPacket() takes, and goes to the
- * driver to be put inside an AWDL data frame.
- *
- * This subclass is needed, not merely convenient. The family's own
- * IO80211VirtualInterface::outputPacket() hands a packet to the controller
- * only when the interface has no peer manager; awdl0 has one, so instead the
- * packet goes on a flow queue, and _outputStartGated() later pulls it back off
- * and calls outputPacket() again -- on this class. IO80211P2PInterface does
- * not override it, so without us the packet goes round that loop and never
- * leaves the machine. That is what "Waiting..." was.
- *
- * It was tried once before and the front then failed to load, with no Wi-Fi
- * and nothing to say why: subclassing puts the whole of IO80211P2PInterface's
- * vtable in ours, and three of its slots named methods the family does not
- * have. See the note in IO80211VirtualInterface.h; `make kext` now checks
- * every imported symbol against the family rather than finding out at boot.
- */
-UInt32 AirPortRTW89AwdlInterface::outputPacket(mbuf_t m, void *param)
-{
-    AirPortRTW89Front *front = gFront;
-
-    if (front)
-        return front->awdlOutput(m);
-    if (m)
-        mbuf_freem(m);
-    return kIOReturnOutputDropped;
-}
-
-OSDefineMetaClassAndStructors(IO80211P2PDaemonUserClient, IOUserClient)
-
-/*
- * The framework's event ring, from Apple80211EventMonitoringHelper. ringState
- * holds the read offset at +0 and the write offset at +4. A record is a header
- * then payload then padding, with magic 0x57 at +0, payload length (u16) at
- * +0x18, padding (u16) at +0x1a, the APPLE80211_M_ code at +0x1c and the interface
- * name at +0x20. _eventRead() compares those 16 bytes with the name its handle was
- * bound to and drops the event in silence if they differ. The header never wraps: a word of 0x50 is skipped by the reader, and so is the tail of
- * the ring when a header no longer fits. The payload may wrap.
- */
-#define AWDL_RING_HDR_LEN   0x30
-#define AWDL_RING_MAX_EVENT 0x1000
-
-static IOSimpleLock *gEventLock;
-static IO80211P2PDaemonUserClient *gEventClient;
-
-void IO80211P2PDaemonUserClient::postEvent(const char *ifname, unsigned int msg,
-                                           const void *data, size_t len)
-{
-    UInt8 *ring;
-    volatile UInt32 *state;
-    size_t size, wr, rd, used, pad, tail;
-    IOInterruptState is;
-
-    if (!_ringBuffer || !_ringState || len > AWDL_RING_MAX_EVENT || (len && !data))
-        return;
-    ring = static_cast<UInt8 *>(_ringBuffer->getBytesNoCopy());
-    state = static_cast<volatile UInt32 *>(_ringState->getBytesNoCopy());
-    size = _ringBuffer->getCapacity();
-    pad = (4 - (len & 3)) & 3;
-
-    is = IOSimpleLockLockDisableInterrupt(gEventLock);
-    rd = state[0];
-    wr = state[1];
-    if (rd < size && wr < size && !(wr & 3)) {
-        used = (wr + size - rd) % size;
-        tail = size - wr;
-        /* one word kept free, or a full ring would read as empty */
-        if (used + (tail < AWDL_RING_HDR_LEN ? tail : 0) + AWDL_RING_HDR_LEN + len + pad + 4 < size) {
-            UInt8 hdr[AWDL_RING_HDR_LEN];
-            UInt32 magic = 0x57, code = msg;
-            UInt16 l = (UInt16)len, p = (UInt16)pad;
-
-            if (tail < AWDL_RING_HDR_LEN) {
-                UInt32 skip = 0x50;
-
-                for (size_t i = 0; i < tail; i += 4)
-                    memcpy(ring + wr + i, &skip, 4);
-                wr = 0;
-            }
-            bzero(hdr, sizeof(hdr));
-            memcpy(hdr, &magic, 4);
-            memcpy(hdr + 0x18, &l, 2);
-            memcpy(hdr + 0x1a, &p, 2);
-            memcpy(hdr + 0x1c, &code, 4);
-            if (ifname)
-                strlcpy(reinterpret_cast<char *>(hdr + 0x20), ifname, 16);
-            memcpy(ring + wr, hdr, sizeof(hdr));
-            wr = (wr + AWDL_RING_HDR_LEN) % size;
-            tail = size - wr;
-            if (len <= tail) {
-                memcpy(ring + wr, data, len);
-            } else {
-                memcpy(ring + wr, data, tail);
-                memcpy(ring, static_cast<const UInt8 *>(data) + tail, len - tail);
-            }
-            wr = (wr + len + pad) % size;
-            OSSynchronizeIO();
-            state[1] = (UInt32)wr;
-        }
-    }
-    IOSimpleLockUnlockEnableInterrupt(gEventLock, is);
-}
-
-void IO80211P2PDaemonUserClient::wake()
-{
-    if (_haveAsyncRef)
-        sendAsyncResult64(_asyncRef, kIOReturnSuccess, nullptr, 0);
-}
-
-/*
- * What BroadTek's route of IO80211VirtualInterface::IO80211InterfacePostMessage
- * calls. The family gives its events to the client at +0xa0, which stays null
- * (see below), and on AWDL routeEventViaBSD() is false, so without this they
- * reach nobody. It finds this function through the platform expert's
- * "rtw89-awdl-post" property, so the driver needs no Lilu.
- */
-static void rtw89_awdl_post_event(void *vif, unsigned int msg, void *data, size_t len)
-{
-    static UInt32 logged[8];
-    static UInt32 counts[256], total, presence;
-    IO80211P2PDaemonUserClient *uc;
-    IOInterruptState is;
-
-    if (!gEventLock)
-        return;
-    is = IOSimpleLockLockDisableInterrupt(gEventLock);
-    uc = gEventClient;
-    if (uc)
-        uc->retain();
-    IOSimpleLockUnlockEnableInterrupt(gEventLock, is);
-    if (!uc)
-        return;
-    if (uc->eventProvider() == vif) {
-        if (msg < 256 && !(logged[msg / 32] & (1u << (msg % 32)))) {
-            logged[msg / 32] |= 1u << (msg % 32);
-            LOG("awdl: the family's first event %u, %u bytes, goes to the ring",
-                msg, (unsigned int)len);
-        }
-        if (msg < 256)
-            counts[msg]++;
-        if (++total % 32 == 0) {
-            char line[160];
-            int at = 0;
-
-            for (unsigned int i = 0; i < 256 && at < (int)sizeof(line) - 16; i++)
-                if (counts[i])
-                    at += snprintf(line + at, sizeof(line) - at, " %u:%u", i, counts[i]);
-            line[at] = 0;
-            LOG("awdl: %u family events, by code:%s", total, line);
-        }
-        if (msg == 47 && presence++ < 64) {
-            char hex[100];
-            size_t n = len < 32 ? len : 32;
-
-            for (size_t i = 0; i < n; i++)
-                snprintf(hex + 3 * i, sizeof(hex) - 3 * i, "%02x ", static_cast<UInt8 *>(data)[i]);
-            hex[3 * n] = 0;
-            LOG("awdl: peer presence, %u bytes: %s", (unsigned int)len, hex);
-        }
-        uc->postEvent(static_cast<IO80211VirtualInterface *>(vif)->getBSDName(), msg, data, len);
-        uc->wake();
-    }
-    uc->release();
-}
-
-/*
- * The selectors the framework calls, decoded in HANDOFF.md. Named here so the
- * switch below reads as the protocol rather than as numbers.
- */
-enum {
-    kAwdlUCSanity        = 0,  /* struct in 0x3c30, struct out 0x180: a version */
-    kAwdlUCEventRead     = 1,  /* one byte out, kept by the framework at +0x179 */
-    kAwdlUCStartEvents   = 2,  /* async, carries the wake port */
-    kAwdlUCArm           = 3,  /* no arguments */
-    kAwdlUCUseEventPipe  = 5,  /* one byte out; false makes the framework give up */
-    kAwdlUCPipeReady     = 7,  /* one byte out, kept at +0x17a */
-};
-
-/* What the framework asks for by memory type in IOConnectMapMemory64. */
-enum {
-    kAwdlUCRingBuffer = 1,
-    kAwdlUCRingState  = 2,
-};
-
-/*
- * The entitlement the family's own IO80211AsyncEventUserClient::initWithTask
- * looks for on an AWDL interface: a table of four names indexed by the
- * interface type, which is 2 for role 6.
- *
- * It is recorded, not required. The family's initWithTask takes the missing
- * case (`je` to a branch that only zeroes the flag) straight back into the
- * rest of its initialisation; the one thing that does fail it is an
- * interfaceType of 4 or more. So this must not be a gate either -- making it
- * one is what had IOServiceOpen returning kIOReturnNotPermitted, which is this
- * file's own code, not the family's.
- */
-#define RTW89_AWDL_EVENT_ENTITLEMENT "com.apple.wifi_awdl.event_monitor"
-
-bool IO80211P2PDaemonUserClient::initWithTask(task_t owningTask, void *securityID, UInt32 type,
-                                              OSDictionary *properties)
-{
-    OSObject *ent;
-    OSBoolean *flag;
-
-    if (!IOUserClient::initWithTask(owningTask, securityID, type, properties)) {
-        LOG("awdl: IOUserClient::initWithTask() refused the event client");
-        return false;
-    }
-
-    /* A cast and isTrue(), not a pointer comparison against kOSBooleanTrue:
-     * copyClientEntitlement hands back a copy, and nothing promises it is the
-     * singleton. */
-    ent = IOUserClient::copyClientEntitlement(owningTask, RTW89_AWDL_EVENT_ENTITLEMENT);
-    flag = OSDynamicCast(OSBoolean, ent);
-    _entitled = flag && flag->isTrue();
-    if (ent)
-        ent->release();
-    if (!_entitled)
-        LOG("awdl: the event client's task does not hold "
-            RTW89_AWDL_EVENT_ENTITLEMENT "; carrying on, as the family does");
-
-    return true;
-}
-
-/*
- * The regions are allocated on the first request for each and then kept, so
- * that mapping the same type twice hands back the same memory -- which is what
- * ringBuffer and ringState have to be. Doing it here rather than in
- * initWithTask() keeps an allocation failure from failing the whole open,
- * which would come back to the framework as a refusal to create the client at
- * all and tell us nothing about why.
- */
-IOBufferMemoryDescriptor *IO80211P2PDaemonUserClient::region(IOBufferMemoryDescriptor **slot)
-{
-    if (!*slot) {
-        *slot = IOBufferMemoryDescriptor::inTaskWithOptions(
-            kernel_task, kIOMemoryKernelUserShared | kIODirectionInOut, page_size, page_size);
-        if (!*slot) {
-            LOG("awdl: out of memory for an event ring region");
-            return nullptr;
-        }
-        bzero((*slot)->getBytesNoCopy(), (*slot)->getCapacity());
-    }
-    return *slot;
-}
-
-/*
- * One thing this deliberately does not do: the family's own
- * startAsyncEventUserClientForTask() puts its client in the interface's
- * _asyncEventUserClient (+0xa0) and then calls back into it through its
- * vtable, so that the family can post events of its own. Ours is not of that
- * class, and leaving a foreign object there would have the family calling its
- * own slots on us. So +0xa0 stays null, which also means the family's "cannot
- * have more than one user client per interface" check no longer fires. If
- * events the family raises itself turn out to be needed in userspace, this is
- * where that thread starts.
- */
-bool IO80211P2PDaemonUserClient::start(IOService *provider)
-{
-    if (!IOUserClient::start(provider))
-        return false;
-    LOG("awdl: the event user client is open%s",
-        _entitled ? "" : " (unentitled)");
-    return true;
-}
-
-void IO80211P2PDaemonUserClient::stop(IOService *provider)
-{
-    IOUserClient::stop(provider);
-}
-
-/*
- * clientClose() is the ordinary way out, but it is not the only one: a client
- * whose initWithTask() refuses the task is released without ever being closed,
- * and so is one torn down from below. The regions are let go here so that
- * neither path leaks a page pair.
- */
-void IO80211P2PDaemonUserClient::free()
-{
-    if (_ringBuffer) {
-        _ringBuffer->release();
-        _ringBuffer = nullptr;
-    }
-    if (_ringState) {
-        _ringState->release();
-        _ringState = nullptr;
-    }
-    IOUserClient::free();
-}
-
-IOReturn IO80211P2PDaemonUserClient::clientClose()
-{
-    if (gEventLock) {
-        IOInterruptState is = IOSimpleLockLockDisableInterrupt(gEventLock);
-
-        if (gEventClient == this)
-            gEventClient = nullptr;
-        IOSimpleLockUnlockEnableInterrupt(gEventLock, is);
-    }
-    if (_wakePort != MACH_PORT_NULL) {
-        /* Balances the port registerNotificationPort() was given. */
-        IOUserClient::releaseNotificationPort(_wakePort);
-        _wakePort = MACH_PORT_NULL;
-    }
-    /* The regions are released in free(), which every path reaches. */
-    _armed = false;
-    terminate();
-    return kIOReturnSuccess;
-}
-
-IOReturn IO80211P2PDaemonUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
-                                                         IOMemoryDescriptor **memory)
-{
-    IOBufferMemoryDescriptor *md;
-
-    switch (type) {
-    case kAwdlUCRingBuffer: md = region(&_ringBuffer); break;
-    case kAwdlUCRingState:  md = region(&_ringState);  break;
-    default:
-        LOG("awdl: the event client was asked for memory type %u, which it has no region for",
-            (unsigned int)type);
-        return kIOReturnBadArgument;
-    }
-    if (!md)
-        return kIOReturnNoMemory;
-
-    LOG("awdl: the framework mapped the %s",
-        type == kAwdlUCRingBuffer ? "ring buffer" : "ring state");
-    md->retain();   /* the caller releases what it is handed */
-    *memory = md;
-    *options = 0;
-    return kIOReturnSuccess;
-}
-
-IOReturn IO80211P2PDaemonUserClient::registerNotificationPort(mach_port_t port, UInt32 type,
-                                                              io_user_reference_t refCon)
-{
-    _wakePort = port;
-    return kIOReturnSuccess;
-}
-
-IOReturn IO80211P2PDaemonUserClient::externalMethod(uint32_t selector,
-                                                    IOExternalMethodArguments *args,
-                                                    IOExternalMethodDispatch *dispatch,
-                                                    OSObject *target, void *reference)
-{
-    if (!args)
-        return kIOReturnBadArgument;
-
-    switch (selector) {
-    case kAwdlUCSanity:
-        /*
-         * The handshake. The framework hands over a 0x3c30 struct stamped
-         * 0xc02869c9 -- which arrives as a descriptor rather than inline,
-         * being well over a page -- and reads 0x180 bytes back. The only use
-         * it makes of the answer is "%s" in its own "Sanity test passed.
-         * Version - %s", so a string is the whole contract.
-         */
-        if (args->structureOutput && args->structureOutputSize) {
-            bzero(args->structureOutput, args->structureOutputSize);
-            strlcpy(static_cast<char *>(args->structureOutput), "AirPort_RTW89",
-                    args->structureOutputSize);
-        }
-        return kIOReturnSuccess;
-
-    case kAwdlUCUseEventPipe:
-        /*
-         * Answering false here is not a way out: the framework jumps straight
-         * to its -3903 exit rather than falling back to anything older.
-         */
-    case kAwdlUCEventRead:
-    case kAwdlUCPipeReady:
-        if (args->structureOutput && args->structureOutputSize >= 1) {
-            *static_cast<UInt8 *>(args->structureOutput) = 1;
-            return kIOReturnSuccess;
-        }
-        if (args->scalarOutputCount >= 1) {
-            args->scalarOutput[0] = 1;
-            return kIOReturnSuccess;
-        }
-        return kIOReturnBadArgument;
-
-    case kAwdlUCArm:
-        _armed = true;
-        return kIOReturnSuccess;
-
-    case kAwdlUCStartEvents:
-        /*
-         * The async one. Nothing is posted yet, so the port and reference are
-         * only kept: the framework waits on them and an empty ring simply
-         * means no events, not an error.
-         */
-        if (args->asyncWakePort != MACH_PORT_NULL)
-            _wakePort = args->asyncWakePort;
-        if (args->asyncReference && gEventLock) {
-            IOInterruptState is;
-
-            bcopy(args->asyncReference, _asyncRef, sizeof(_asyncRef));
-            _haveAsyncRef = true;
-            is = IOSimpleLockLockDisableInterrupt(gEventLock);
-            if (!gEventClient)
-                gEventClient = this;
-            IOSimpleLockUnlockEnableInterrupt(gEventLock, is);
-        }
-        LOG("awdl: wifip2pd is listening for events%s",
-            _armed ? "" : " (before the arm, which is unexpected)");
-        return kIOReturnSuccess;
-
-    default:
-        /*
-         * Anything else is answered as "nothing to report" rather than
-         * refused. The framework treats a non-zero return as fatal and gives
-         * up on the interface, and every call it makes here is a query about
-         * an event pipe that is legitimately empty, so success with a zeroed
-         * answer is the truthful reply and a refusal is not. Each selector is
-         * named once so the set the framework actually uses can be read off
-         * the log instead of costing a boot apiece.
-         */
-        if (selector < 32 && !(_loggedSelectors & (1u << selector))) {
-            _loggedSelectors |= 1u << selector;
-            LOG("awdl: the event client answered selector %u as empty "
-                "(%u bytes of struct out, %u scalars)",
-                (unsigned int)selector, (unsigned int)args->structureOutputSize,
-                (unsigned int)args->scalarOutputCount);
-        }
-        if (args->structureOutput && args->structureOutputSize)
-            bzero(args->structureOutput, args->structureOutputSize);
-        for (uint32_t i = 0; i < args->scalarOutputCount; i++)
-            args->scalarOutput[i] = 0;
-        return kIOReturnSuccess;
-    }
-}
-
-/*
- * The user client wifip2pd needs, and the reason AirDrop got no further than a
- * peer in the list.
- *
- * Apple80211BindToInterfaceWithService() opens a user client on the interface
- * and keeps the connection at +0x17c of its handle. Every later event call
- * reads it, and Apple80211EventMonitoringInitIOUC() returns -3900 (Invalid
- * Parameters) the moment it finds it zero -- which is what
- * Apple80211RawP2PEventMonitoringInit() hands back to wifip2pd, so wifip2pd
- * throws, tears awdl0 down again and turns sharingd away.
- *
- * It was zero because the two halves of the stack disagree about one number.
- * The IO80211 framework on the system passes a hardcoded type 0 to
- * IOServiceOpen (`xorl %edx, %edx` right before the call), while
- * IO80211VirtualInterface::newUserClient() in the Ventura family we inject
- * takes type 4 for an AWDL role and 5 for NAN, and answers anything else with
- * kIOReturnBadArgument after logging "Invalid userClient type request". A real
- * Mac never meets this because its Wi-Fi comes with the matching family.
- *
- * Translating type 0 to the 4 the family wants was enough to get the client
- * created, and not enough to keep it: the framework then calls external
- * methods the family does not have, and closes the client when the first one
- * fails. So type 0 now gets IO80211P2PDaemonUserClient, which answers the
- * protocol the framework actually speaks. Every other type is still the
- * family's, reached by its symbol rather than by writing
- * IO80211VirtualInterface::newUserClient(), which clang compiles into
- * a jump through a slot of the imported IO80211VirtualInterface vtable. That
- * vtable is the one MacKernelSDK's header describes, and this header is known
- * to disagree with the family about three slots already (see the note above
- * outputPacket), so a slot that is off by one would land in some other method
- * of the family. The symbol is exported, `make kext` checks it against the
- * family, and a direct call is what a qualified call is meant to be anyway.
- */
-extern "C" IOReturn
-rtw89_vif_new_user_client(IO80211VirtualInterface *vif, task_t owningTask, void *securityID,
-                          UInt type, OSDictionary *properties, IOUserClient **handler)
-    __asm__("__ZN23IO80211VirtualInterface13newUserClientEP4taskPvjP12OSDictionaryPP12IOUserClient");
-
-IOReturn AirPortRTW89AwdlInterface::newUserClient(task_t owningTask, void *securityID, UInt type,
-                                                  OSDictionary *properties,
-                                                  IOUserClient **handler)
-{
-    IO80211P2PDaemonUserClient *uc;
-
-    /*
-     * Type 0 is what the framework asks for, and what the family answers with
-     * kIOReturnBadArgument. It is also the only type whose protocol the family
-     * cannot speak, so this is where our own client goes; anything else is
-     * still the family's business.
-     */
-    if (type != 0)
-        return rtw89_vif_new_user_client(this, owningTask, securityID, type, properties, handler);
-
-    if (!handler)
-        return kIOReturnBadArgument;
-
-    LOG("awdl: the framework is asking for an event user client");
-    uc = OSTypeAlloc(IO80211P2PDaemonUserClient);
-    if (!uc) {
-        LOG("awdl: out of memory for the event user client");
-        return kIOReturnNoMemory;
-    }
-    if (!uc->initWithTask(owningTask, securityID, type, properties)) {
-        LOG("awdl: the event user client would not initialise");
-        uc->release();
-        return kIOReturnNotPermitted;
-    }
-    if (!uc->attach(this)) {
-        LOG("awdl: the event user client would not attach");
-        uc->release();
-        return kIOReturnInternalError;
-    }
-    if (!uc->start(this)) {
-        LOG("awdl: the event user client would not start");
-        uc->detach(this);
-        uc->release();
-        return kIOReturnInternalError;
-    }
-    *handler = uc;
-    return kIOReturnSuccess;
 }
 
 UInt32 AirPortRTW89FrontInterface::inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options,
@@ -750,24 +278,15 @@ bool AirPortRTW89Front::start(IOService *provider)
     _pci = OSDynamicCast(IOPCIDevice, provider);
     if (!_pci)
         return false;
-    bufout[RTW89_BUFOUT_GUARD_1] = 0xaa;
-    bufout[RTW89_BUFOUT_GUARD_2] = 0xaa;
-    if (!gEventLock)
-        gEventLock = IOSimpleLockAlloc();
-    {
-        void *post = reinterpret_cast<void *>(rtw89_awdl_post_event);
-        OSData *d = OSData::withBytes(&post, sizeof(post));
-        IORegistryEntry *platform = IOService::getPlatform();
-
-        if (d && platform)
-            platform->setProperty("rtw89-awdl-post", d);
-        OSSafeReleaseNULL(d);
-    }
     _backLock = IOLockAlloc();
     if (!_backLock)
         return false;
-    _awdlEnableCall = thread_call_allocate(awdlEnableThread, this);
-    _awdlWatchCall = thread_call_allocate(awdlWatchThread, this);
+    _owlyVifLock = IOLockAlloc();
+    if (!_owlyVifLock) {
+        IOLockFree(_backLock);
+        _backLock = nullptr;
+        return false;
+    }
     _mac = kPlaceholderMac;
 
     if (!super::start(provider)) {
@@ -775,37 +294,174 @@ bool AirPortRTW89Front::start(IOService *provider)
         return false;
     }
     _superStarted = true;
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    if(!owlyNativeStart())return false;
+#endif
 
     /* The network interface is attached when the driver proper connects for
      * the first time: only it can read the card's address. Until then this
      * is a controller without an interface, which the driver finds by class. */
     setProperty("RTW89 Front API", RTW89_FRONT_API_VERSION, 32);
     setProperty("RTW89 Back Connected", kOSBooleanFalse);
+    setProperty("OWLY Gate09 Trace", "ABI4.1 diagnostic; no AWDL TX or RX");
+    setProperty("OWLY Gate12 Trace", "trace-only; no IOCTL94/95 bridge; role6 factory refused");
+    setProperty("OWLY Gate12F Trace", "legacy-entry-matrix; no IOCTL94/95 bridge; VIF disabled");
+    setProperty("OWLY Gate12F ioctl_any", 0ULL, 32);
+    setProperty("OWLY Gate12F ioctl_set_command", 0ULL, 32);
+    setProperty("OWLY Gate12F ioctl_set_callback", 0ULL, 32);
+    setProperty("OWLY Gate12F super_ioctl", 0ULL, 32);
+    setProperty("OWLY Gate12F super_ioctl_set", 0ULL, 32);
+    setProperty("OWLY Gate12F backend_ioctl", 0ULL, 32);
+    setProperty("OWLY Gate12F backend_ioctl_set", 0ULL, 32);
+    setProperty("OWLY Gate12F fallback_ioctl", 0ULL, 32);
+    setProperty("OWLY Gate12F fallback_ioctl_set", 0ULL, 32);
+    setProperty("OWLY Gate12F request_any", 0ULL, 32);
+    setProperty("OWLY Gate12F request94", 0ULL, 32);
+    setProperty("OWLY Gate12F request95", 0ULL, 32);
+    setProperty("OWLY Gate12F role6_factory", 0ULL, 32);
+    /* OWLY_GATE13A_PROPERTIES_BEGIN: no payload bytes, raw pointer or MAC stored. */
+    setProperty("OWLY Gate13A Trace", "request94-shape-only; no data dereference; 94/95 fail-closed");
+    setProperty("OWLY Gate13A local_layout_bytes", 32ULL, 32);
+    setProperty("OWLY Gate13A 94_seen", 0ULL, 32);
+    setProperty("OWLY Gate13A 94_type_set", 0ULL, 32);
+    setProperty("OWLY Gate13A 94_type_other", 0ULL, 32);
+    setProperty("OWLY Gate13A 94_primary", 0ULL, 32);
+    setProperty("OWLY Gate13A 94_not_primary", 0ULL, 32);
+    setProperty("OWLY Gate13A 94_data_nonnull", 0ULL, 32);
+    setProperty("OWLY Gate13A 94_data_null", 0ULL, 32);
+    setProperty("OWLY Gate13A 94_data_aligned8", 0ULL, 32);
+    setProperty("OWLY Gate13A 94_data_unaligned8", 0ULL, 32);
+    /* OWLY_GATE13A_PROPERTIES_END */
+    /* OWLY_GATE13B_PROPERTIES_BEGIN: aggregate flags, no payload values. */
+    setProperty("OWLY Gate13B Trace", "pinned-legacy-stack-payload; read-version-role-only; 94/95 fail-closed");
+    setProperty("OWLY Gate13C Trace", "last-version-value-only; same Gate13B 8-byte read; 94/95 fail-closed");
+    setProperty("OWLY Gate13B 94_eligible", 0ULL, 32);
+    setProperty("OWLY Gate13B 94_version_expected", 0ULL, 32);
+    setProperty("OWLY Gate13B 94_version_other", 0ULL, 32);
+    setProperty("OWLY Gate13B 94_role6", 0ULL, 32);
+    setProperty("OWLY Gate13B 94_role_other", 0ULL, 32);
+    setProperty("OWLY Gate13B 94_combo_expected", 0ULL, 32);
+    /* Gate13C: no value recorded yet (sentinel 0xFFFFFFFF). */
+    setProperty("OWLY Gate13C 94_version_value", 0xFFFFFFFFULL, 32);
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    __atomic_store_n(&_owlyGateC2Ready, 0, __ATOMIC_RELEASE);
+    setProperty("OWLY C2 native_vif_ready", 0ULL, 32);
+    setProperty("OWLY C2 action_front", 0ULL, 32);
+    setProperty("OWLY C2 ipv6_l2_front", 0ULL, 32);
+    setProperty("OWLY C2 rejected", 0ULL, 32);
+    setProperty("OWLY C2 not_ready", 0ULL, 32);
+    setProperty("OWLY C2 apple_rx_delivered", 0ULL, 32);
+#if defined(OWLY_ABI6_C3_SCAN_OBSERVER) && OWLY_ABI6_C3_SCAN_OBSERVER
+    setProperty("OWLY C3 scan_signature_front", 0ULL, 32);
+    setProperty("OWLY C3 scan_rejected_front", 0ULL, 32);
+#endif
+#endif
+    setProperty("OWLY Gate14 path", OWLY_GATE14_REAL_VIF ?
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        "native role6; observed-peer action/IPv6 RX; queued radio TX; AirDrop unproven" :
+#else
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+        "native role6; Gate C2 RX observer ONLY; no Apple RX/TX" :
+#else
+        "opt-in real role6 attach; no TX/RX datapath" :
+#endif
+#endif
+        "disabled; Gate13C semantics");
+    setProperty("OWLY Gate14 attach_attempt", 0ULL, 32);
+    setProperty("OWLY Gate14 attach_succeeded", 0ULL, 32);
+    setProperty("OWLY Gate14 bsd_name_ready", 0ULL, 32);
+    setProperty("OWLY Gate14 backend_ack", 0ULL, 32);
+    setProperty("OWLY Gate14 pending_bsd", 0ULL, 32);
+    setProperty("OWLY Gate14 pending_rechecks", 0ULL, 32);
+    setProperty("OWLY Gate14 mac_valid", 0ULL, 32);
+    setProperty("OWLY Gate14 rollback_ok", 0ULL, 32);
+    /* ABI5 diagnostics: read-only IORegistry state; no MAC/pointers recorded.
+     * Factory: 0=never, 1=no MAC, 2=allocation failed, 3=init failed,
+     * 4=object returned. Attach: 0=not attempted, 1=true+object,
+     * 2=false+null, 3=false+object, 4=true+null.
+     * Counters are bounded publication checkpoints, not live atomic values.
+     */
+    setProperty("OWLY ABI5Diag version", 1ULL, 32);
+    setProperty("OWLY ABI5Diag factory_no_mac", 0ULL, 32);
+    setProperty("OWLY ABI5Diag factory_alloc_fail", 0ULL, 32);
+    setProperty("OWLY ABI5Diag factory_init_fail", 0ULL, 32);
+    setProperty("OWLY ABI5Diag factory_ready", 0ULL, 32);
+    setProperty("OWLY ABI5Diag factory_last", 0ULL, 32);
+    setProperty("OWLY ABI5Diag attach_last", 0ULL, 32);
+    /* Role-6 virtual GET(12) bridge: sentinel distinguishes never called
+     * from backend returning success (0). No data payload is exposed. */
+    setProperty("OWLY ABI5Cap12 request_seen", 0ULL, 32);
+    setProperty("OWLY ABI5Cap12 backend_rc", 0xFFFFFFFFULL, 32);
+    setProperty("OWLY ABI5Cap12 success", 0ULL, 32);
+    /* OWLY_GATE13B_PROPERTIES_END */
     registerService();
+    LOG("OWLY Gate09: trace ready, ABI4.1 lifecycle unchanged");
     LOG("started; waiting for the driver");
     return true;
 }
 
+/* M2.2: Stop never waits on a timed IOSleep loop. All IOCTL94/95 work,
+ * identity callbacks and stop-side VIF cleanup share IO80211's workloop gate.
+ * The gate is recursive: a backend callback can reenter stop() on the same
+ * thread. Defer that nested stop until the enclosing operation finishes. */
 void AirPortRTW89Front::stop(IOService *provider)
 {
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    /* Shutdown admission before Apple starts detaching its P2P object.
+     * RX callbacks use only copied bytes and controller-held counters. */
+    __atomic_store_n(&_owlyGateC2Ready, 0, __ATOMIC_RELEASE);
+    setProperty("OWLY C2 native_vif_ready", 0ULL, 32);
+#endif
+#if defined(RTW89_AWDL_NATIVE_FRONT_OBSERVE) && RTW89_AWDL_NATIVE_FRONT_OBSERVE
+    if (_owlyVifLock) {
+        const bool nested = (_workLoop && _workLoop->inGate())
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+            || _owlyNativeOwnerThread==current_thread()
+#endif
+            ;
+        IOLockLock(_owlyVifLock);
+        _owlyAWDLStopping = true;
+        const bool active = _owlyAWDLRequestBusy || _owlyVifBusy || _owlyVifMethodBusy;
+        if (nested && active) {
+            /* Cannot wait for ourselves or tear down an object which Apple
+             * is still attaching. Keep provider alive for the deferred stop. */
+            if (!_owlyDeferredStopProvider && provider) {
+                provider->retain();
+                _owlyDeferredStopProvider = provider;
+            }
+            IOLockUnlock(_owlyVifLock);
+            LOG("OWLY M2.2: nested stop deferred until callback unwinds");
+            return;
+        }
+        if (_owlyStopFinalizing) {
+            IOLockUnlock(_owlyVifLock);
+            return; /* another thread is already finishing stop */
+        }
+        _owlyStopFinalizing = true;
+        IOLockUnlock(_owlyVifLock);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        owlyNativeStop();
+#endif
+        if (_workLoop) {
+            const IOReturn rc = _workLoop->runAction(
+                [](OSObject *owner, void *, void *, void *, void *) -> IOReturn {
+                    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(owner);
+                    self->owlyStopVifOnGate();
+                    return kIOReturnSuccess;
+                }, this);
+            if (rc != kIOReturnSuccess)
+                LOG("OWLY M2.2: gated VIF stop failed rc=0x%x", (unsigned)rc);
+        } else {
+            LOG("OWLY M2.2: no workloop; refusing unsafe VIF detach");
+        }
+    }
+#endif
     disconnectBack();
-    if (_awdlEnableCall) {
-        /* Nothing new starts once this is set, and one already running is
-         * waited for: thread_call_cancel() does not wait, and the interface
-         * is about to be detached underneath it. Same reason, and the same
-         * shape, as the AWDL clock's stop in the driver. */
-        _awdlEnableAsked = true;
-        thread_call_cancel(_awdlEnableCall);
-        for (unsigned int ms = 0; _awdlEnableBusy && ms < 2000; ms++)
-            IOSleep(1);
+    if (_owlyVifLock) {
+        IOLockLock(_owlyVifLock);
+        rtw89_front_native_vif_reset(&_owlyAirlink);
+        IOLockUnlock(_owlyVifLock);
     }
-    if (_awdlWatchCall) {
-        _awdlWatchStop = true;
-        thread_call_cancel(_awdlWatchCall);
-        for (unsigned int ms = 0; _awdlWatchBusy && ms < 2000; ms++)
-            IOSleep(1);
-    }
-    opDestroyVif(this);
     if (_netif) {
         detachInterface(_netif, true);
         _netif->release();
@@ -817,17 +473,88 @@ void AirPortRTW89Front::stop(IOService *provider)
     }
 }
 
+#if defined(RTW89_AWDL_NATIVE_FRONT_OBSERVE) && RTW89_AWDL_NATIVE_FRONT_OBSERVE
+void AirPortRTW89Front::owlyStopVifOnGate()
+{
+    /* Only called with the workloop gate held. Requests cannot run in
+     * parallel; reentrant stop was deferred before entering this routine. */
+    if (!_owlyVifLock) return;
+    IOLockLock(_owlyVifLock);
+    const bool busy = _owlyAWDLRequestBusy || _owlyVifBusy || _owlyVifMethodBusy;
+    IO80211VirtualInterface *vif = busy ? nullptr : _owlyAttachedAWDL;
+    IOLockUnlock(_owlyVifLock);
+    if (busy) {
+        LOG("OWLY M2.2: active VIF transaction during stop; quarantine");
+        IOLockLock(_owlyVifLock);
+        _owlyAWDLQuarantined = true;
+        IOLockUnlock(_owlyVifLock);
+        return;
+    }
+    if (!vif) return;
+    const bool tracked = owlyVifIsTracked(vif);
+    const bool detached = detachVirtualInterface(vif, true);
+    bool ack = !tracked;
+    if (detached && tracked) {
+        const bool disabled = owlyVifEvent(vif, RTW89_FRONT_ROLE_AIRLINK_OBSERVED,
+                                             RTW89_FRONT_VIF_DISABLED);
+        const bool destroyed = disabled && owlyVifEvent(
+            vif, RTW89_FRONT_ROLE_AIRLINK_OBSERVED, RTW89_FRONT_VIF_DESTROYED);
+        ack = disabled && destroyed;
+    }
+    IOLockLock(_owlyVifLock);
+    if (detached) {
+        _owlyAttachedAWDL = nullptr;
+        _owlyAWDLPendingBSD = false;
+        _owlyAWDLPendingChecks = 0;
+        for (unsigned i = 0; i < 6; ++i) _owlyAWDLRequestMac[i] = 0;
+        for (unsigned i = 0; i < 16; ++i) _owlyAWDLBSDName[i] = 0;
+    }
+    if (!detached || !ack) _owlyAWDLQuarantined = true;
+    IOLockUnlock(_owlyVifLock);
+    if (detached) vif->release(); /* matched own retain at create */
+    if (!detached) LOG("OWLY M2.2: stop-side detach failed; VIF still Apple-owned");
+}
+
+void AirPortRTW89Front::owlyFinishDeferredStop()
+{
+    if (!_owlyVifLock) return;
+    IOService *provider = nullptr;
+    IOLockLock(_owlyVifLock);
+    if (!_owlyAWDLRequestBusy && !_owlyVifBusy && !_owlyVifMethodBusy) {
+        provider = _owlyDeferredStopProvider;
+        _owlyDeferredStopProvider = nullptr;
+    }
+    IOLockUnlock(_owlyVifLock);
+    if (provider) {
+        /* Call only after releasing the workloop gate; stop may destroy its
+         * command gate. The caller holds a self-reference while returning. */
+        stop(provider);
+        provider->release();
+    }
+}
+#endif
+
 void AirPortRTW89Front::free()
 {
-    if (_awdlEnableCall) {
-        thread_call_cancel(_awdlEnableCall);
-        thread_call_free(_awdlEnableCall);
-        _awdlEnableCall = nullptr;
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    owlyNativeStop();
+    if(_owlyNativeCall) {thread_call_free(_owlyNativeCall);_owlyNativeCall=nullptr;}
+#endif
+#if defined(RTW89_AWDL_NATIVE_FRONT_OBSERVE) && RTW89_AWDL_NATIVE_FRONT_OBSERVE
+    if (_owlyDeferredStopProvider) {
+        _owlyDeferredStopProvider->release();
+        _owlyDeferredStopProvider = nullptr;
     }
-    if (_awdlWatchCall) {
-        thread_call_cancel(_awdlWatchCall);
-        thread_call_free(_awdlWatchCall);
-        _awdlWatchCall = nullptr;
+    if (_owlyAttachedAWDL) {
+        /* Detach may have failed or Apple may have detached externally.
+         * Drop only our explicit retain, never a borrowed Apple reference. */
+        _owlyAttachedAWDL->release();
+        _owlyAttachedAWDL = nullptr;
+    }
+#endif
+    if (_owlyVifLock) {
+        IOLockFree(_owlyVifLock);
+        _owlyVifLock = nullptr;
     }
     if (_backLock) {
         IOLockFree(_backLock);
@@ -885,110 +612,6 @@ void AirPortRTW89Front::backLeave()
  * receive path and the call itself is made on a thread_call, which is
  * neither.
  */
-void AirPortRTW89Front::awdlEnableThread(thread_call_param_t p0, thread_call_param_t p1)
-{
-    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(p0);
-    IO80211VirtualInterface *vif;
-    const uint8_t *pm;
-    IOReturn ret;
-
-    OSIncrementAtomic(&self->_awdlEnableBusy);
-    vif = self->_vif;
-    if (!vif) {
-        OSDecrementAtomic(&self->_awdlEnableBusy);
-        return;
-    }
-    pm = *reinterpret_cast<const uint8_t *const *>(reinterpret_cast<const uint8_t *>(vif) + 0xb0);
-    if (!pm) {
-        OSDecrementAtomic(&self->_awdlEnableBusy);
-        return;
-    }
-    /*
-     * The link has to be up before this, not after. doEnable() ends by
-     * calling interfaceStateChange(), and that returns at its first branch --
-     * "Interface link is down, nothing to do" -- while the interface's link
-     * state at 0xfc is 1. Past that branch is the only call to enableAWDL(),
-     * which is the only thing that sets the bit actionFrameProcessInput()
-     * tests. So with the link down the engine enables itself and still looks
-     * at nothing: _enabled 1 and state flags 0x21, bit 1 clear, every frame
-     * dropped, which is exactly what was measured.
-     *
-     * Here rather than at interface creation also means the family has
-     * everything else by now -- the interface is up and configure() has had
-     * its settings taken -- and this is not the workloop thread.
-     */
-    vif->setLinkState(kIO80211NetworkLinkUp, 1);
-    LOG("brought the AWDL link up before enabling: state %d",
-        *reinterpret_cast<const int *>(reinterpret_cast<const uint8_t *>(vif) + 0xfc));
-
-    ret = rtw89_peer_manager_enable(const_cast<uint8_t *>(pm), "rtw89 front");
-    LOG("asked the family to enable AWDL: 0x%x, _enabling %u, _enabled %u, state flags 0x%x",
-        ret, pm[0x2f5], pm[0x2f4], *reinterpret_cast<const unsigned int *>(pm + 0x8528));
-
-    /*
-     * Bit 1 of the state flags is the whole question for received frames, and
-     * enable() alone has never set it: the flags come back 0x21, which is
-     * what configure() leaves, with no sign of enableAWDL() having run. So
-     * the two steps after it are taken here when they have not happened by
-     * themselves. interfaceStateChange(7) first, since that is what doEnable()
-     * calls and it does the surrounding work; enableAWDL() after, since that
-     * is the step that sets the bit, and knowing which of the two was needed
-     * is worth the line it costs.
-     */
-    if (!(*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2)) {
-        rtw89_awdl_interface_state_change(const_cast<uint8_t *>(pm), 7);
-        LOG("    after interfaceStateChange(7): state flags 0x%x",
-            *reinterpret_cast<const unsigned int *>(pm + 0x8528));
-    }
-    if (!(*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2)) {
-        int e = rtw89_awdl_enable_awdl(const_cast<uint8_t *>(pm));
-
-        LOG("    after enableAWDL(): %d, state flags 0x%x, sync state %u", e,
-            *reinterpret_cast<const unsigned int *>(pm + 0x8528),
-            *reinterpret_cast<const unsigned int *>(pm + 0xcd4));
-    }
-
-    /*
-     * The sync state is not set from here. It is the driver's own answer and
-     * the family wants it in the availability window report, which is where
-     * opAwdlWindow() now puts it: reportDataPathEvents() takes it out of the
-     * event and stores it. setAwdlSyncState() reaches the same word, but it
-     * is a full reconfigure on the way -- it clears the receive gate bit,
-     * resets the election and lands on sync off -- so calling it per enable
-     * undid the thing it was called for.
-     */
-    OSDecrementAtomic(&self->_awdlEnableBusy);
-}
-
-void AirPortRTW89Front::awdlEnableIfReady()
-{
-    IO80211VirtualInterface *vif = _vif;
-    const uint8_t *vraw, *pm;
-
-    /* The watch runs from the first received frame on, whoever enables AWDL. */
-    if (vif && _awdlWatchCall && !_awdlWatchStarted && !_awdlWatchStop) {
-        _awdlWatchStarted = true;
-        thread_call_enter_delayed(_awdlWatchCall, awdlWatchDeadline());
-    }
-    if (_awdlEnableAsked || !vif || !_awdlEnableCall)
-        return;
-    vraw = reinterpret_cast<const uint8_t *>(vif);
-    if (!vraw[0x169])           /* the interface is not up yet */
-        return;
-    pm = *reinterpret_cast<const uint8_t *const *>(vraw + 0xb0);
-    if (!pm || pm[0x2f5] || pm[0x2f4])  /* already enabling, or enabled */
-        return;
-    _awdlEnableAsked = true;
-    thread_call_enter(_awdlEnableCall);
-}
-
-uint64_t AirPortRTW89Front::awdlWatchDeadline()
-{
-    uint64_t deadline;
-
-    clock_interval_to_deadline(5, kSecondScale, &deadline);
-    return deadline;
-}
 
 /*
  * The family's AWDL state every five seconds, as properties, and the link put
@@ -1007,51 +630,6 @@ uint64_t AirPortRTW89Front::awdlWatchDeadline()
  * elsewhere in this file; everything here only reads them, except the
  * setLinkState() call, which is the one awdlEnableThread() already makes.
  */
-void AirPortRTW89Front::awdlWatchThread(thread_call_param_t p0, thread_call_param_t p1)
-{
-    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(p0);
-    IO80211VirtualInterface *vif;
-    const uint8_t *vraw, *pm;
-    int link;
-    unsigned int flags = 0, enabled = 0, configured = 0;
-
-    OSIncrementAtomic(&self->_awdlWatchBusy);
-    vif = self->_vif;
-    if (self->_awdlWatchStop || !vif)
-        goto out;
-    vraw = reinterpret_cast<const uint8_t *>(vif);
-    link = *reinterpret_cast<const int *>(vraw + 0xfc);
-    pm = *reinterpret_cast<const uint8_t *const *>(vraw + 0xb0);
-    if (pm) {
-        flags = *reinterpret_cast<const unsigned int *>(pm + 0x8528);
-        enabled = pm[0x2f4];
-        configured = *reinterpret_cast<const unsigned int *>(pm + 0xcd4);
-    }
-    if (link != self->_awdlLastLink || flags != self->_awdlLastFlags) {
-        LOG("awdl0 link state %d, AWDL state flags 0x%x, enabled %u, 0xcd4 %u",
-            link, flags, enabled, configured);
-        self->_awdlLastLink = link;
-        self->_awdlLastFlags = flags;
-    }
-    self->setProperty("rtw89-awdl-link-state", (unsigned long long)link, 32);
-    self->setProperty("rtw89-awdl-state-flags", (unsigned long long)flags, 32);
-    self->setProperty("rtw89-awdl-enabled", (unsigned long long)enabled, 32);
-    self->setProperty("rtw89-awdl-link-raised", (unsigned long long)self->_awdlLinkRaised, 32);
-    self->setProperty("rtw89-awdl-out-packets", (unsigned long long)self->_awdlOutSeen, 32);
-
-    /* Only once the family has enabled AWDL: before that, bringing the link up
-     * is awdlEnableThread()'s job, and it has to come first there. */
-    if (enabled && vraw[0x169] && link != kIO80211NetworkLinkUp) {
-        self->_awdlLinkRaised++;
-        LOG("awdl0's link was %d with AWDL enabled; bringing it up again (%u)", link,
-            self->_awdlLinkRaised);
-        vif->setLinkState(kIO80211NetworkLinkUp, 1);
-    }
-out:
-    if (!self->_awdlWatchStop && self->_awdlWatchCall)
-        thread_call_enter_delayed(self->_awdlWatchCall, awdlWatchDeadline());
-    OSDecrementAtomic(&self->_awdlWatchBusy);
-}
 
 bool AirPortRTW89Front::logLine(const char *line)
 {
@@ -1137,11 +715,9 @@ IOReturn AirPortRTW89Front::connectBack(const struct rtw89_back_ops *back,
     front->super_ioctl = opSuperIoctl;
     front->super_ioctl_set = opSuperIoctlSet;
     front->set_apple_rsn = opSetAppleRsn;
-    front->create_vif = opCreateVif;
-    front->destroy_vif = opDestroyVif;
-    front->awdl_rx = opAwdlRx;
-    front->awdl_data_rx = opAwdlDataRx;
-    front->awdl_window = opAwdlWindow;
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    front->owly_rx_handoff = opOwlyRxHandoff;
+#endif
 
     gLogFront = this;
     setProperty("RTW89 Back Connected", kOSBooleanTrue);
@@ -1160,6 +736,10 @@ IOReturn AirPortRTW89Front::disconnectBack()
     IOLockLock(_backLock);
     was = _connected;
     _connected = false;
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    /* No further frontend packet admission when the backend disconnects. */
+    __atomic_store_n(&_owlyGateC2Ready, 0, __ATOMIC_RELEASE);
+#endif
     gAppleRsn = false;
     for (unsigned int ms = 1; _backCalls; ms++) {
         IOSleep(1);
@@ -1167,11 +747,19 @@ IOReturn AirPortRTW89Front::disconnectBack()
             LOG("still waiting for %d call(s) into the driver to return", (int)_backCalls);
     }
     bzero(&_back, sizeof(_back));
+    if (_owlyVifLock) {
+        IOLockLock(_owlyVifLock);
+        rtw89_front_native_vif_reset(&_owlyAirlink);
+        IOLockUnlock(_owlyVifLock);
+    }
     IOLockUnlock(_backLock);
 
     if (was) {
         /* the last line that can still reach the ring */
         LOG("driver disconnected");
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+        setProperty("OWLY C2 native_vif_ready", 0ULL, 32);
+#endif
         setProperty("RTW89 Back Connected", kOSBooleanFalse);
         if (_netif)
             opSetLink(this, false, 0, 0);
@@ -1222,130 +810,11 @@ void AirPortRTW89Front::opSetAppleRsn(void *ctx, bool on)
 }
 
 /*
- * The old family's own IO80211Controller::createVirtualInterface() builds only
- * the P2P roles (3, 4, 5, as "p2p") and the soft-AP role (7, as "ap"); role 6,
- * AWDL, falls off the end of its range check and it returns nothing, which is
- * why awdl0 never appeared. AirPort_BrcmNIC overrides the method for exactly
- * this reason: it takes one role more and names that one "awdl". We do the
- * same, with the family's plain IO80211P2PInterface, since what Broadcom adds
- * on top of it is Broadcom's own firmware state.
- *
- * attachVirtualInterface() calls this through the vtable and then attaches and
- * publishes what comes back, so the rest of the path is the family's and is
- * the same one p2p already uses.
- */
-IO80211VirtualInterface *AirPortRTW89Front::createVirtualInterface(ether_addr *addr, UInt role)
-{
-    AirPortRTW89AwdlInterface *vif;
-
-    if (role != APPLE80211_VIF_AWDL)
-        return super::createVirtualInterface(addr, role);
-
-    /* Ours, not the family's plain one, only so that outputPacket() is a
-     * method we own: everything else about it is IO80211P2PInterface. */
-    vif = OSTypeAlloc(AirPortRTW89AwdlInterface);
-    if (!vif) {
-        LOG("out of memory for the AWDL interface");
-        return nullptr;
-    }
-    /* A literal, not a buffer on the stack: Broadcom passes a stack buffer, so
-     * init() copies the name, but a literal is right either way. */
-    if (!vif->init(this, addr, role, "awdl")) {
-        LOG("IO80211P2PInterface::init() refused role %u", (unsigned int)role);
-        vif->release();
-        return nullptr;
-    }
-    /* So that a later failure cannot be blamed on this method again */
-    LOG("built the AWDL interface %s for role %u", vif->getBSDName() ? vif->getBSDName() : "(unnamed)",
-        (unsigned int)role);
-    return vif;
-}
-
-/*
  * The family builds the virtual interface, through the override above:
  * attachVirtualInterface() calls createVirtualInterface(), attaches what it
  * gets and gives it a BSD name (awdl0). We keep the one we were given; macOS
  * asks for a second one only for P2P.
  */
-int AirPortRTW89Front::opCreateVif(void *ctx, const uint8_t mac[6], uint32_t role, char *bsd_name)
-{
-    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
-    IO80211VirtualInterface *vif = nullptr;
-    ether_addr addr = {};
-    const char *name;
-
-    if (self->_vif)
-        return EBUSY;
-    memcpy(addr.octet, mac, sizeof(addr.octet));
-    /* The three outcomes are told apart by the errno, because the driver's log
-     * ring is the only one we can read back: EIO the family refusing the role
-     * outright, ENODEV it claiming success without an interface, and success
-     * with an empty name an interface that never reached BSD. */
-    if (!self->attachVirtualInterface(&vif, &addr, role, true)) {
-        /* Which of its two steps failed is in the log above: it calls
-         * createVirtualInterface() first, which says when it has built one, and
-         * then IO80211VirtualInterface::attach(), which is IOService::attach(). */
-        LOG("attachVirtualInterface() failed for role %u", (unsigned int)role);
-        return EIO;
-    }
-    if (!vif) {
-        LOG("attachVirtualInterface() said yes to role %u but built nothing", (unsigned int)role);
-        return ENODEV;
-    }
-    self->_vif = vif;
-    gFront = self;
-    name = vif->getBSDName();
-    if (bsd_name) {
-        bzero(bsd_name, IFNAMSIZ);
-        if (name)
-            strlcpy(bsd_name, name, IFNAMSIZ);
-    }
-    /*
-     * The AWDL link is brought up in awdlEnableThread(), not here.
-     *
-     * It belongs immediately before the enable, because the family reads it
-     * there: doEnable() ends in interfaceStateChange(), which returns at
-     * "Interface link is down, nothing to do" unless the link state is up,
-     * and past that branch is the only call to enableAWDL() -- the only
-     * thing that sets the bit actionFrameProcessInput() tests before it will
-     * look at a received frame.
-     *
-     * At creation it is too early for any of that: the interface is not yet
-     * up, so configure() refuses to take the settings, and the enable that
-     * the link-up branch triggers is spent on an engine that cannot
-     * configure itself. That was measured -- _enabled 1, state flags 0x21,
-     * bit 1 clear, every frame still dropped.
-     *
-     * But it is still called here, because this call is what gets the
-     * interface up in the first place. Taking it out stopped everything: no
-     * enable, no frames handed over, nothing in the log at all. The link
-     * state it writes does not stick -- it has read back 1 every time -- yet
-     * setLinkState() also posts the kernel event userspace watches, and
-     * without it nothing ever brings awdl0 up, so the enabled byte at 0x169
-     * that awdlEnableIfReady() waits for is never set. The one before the
-     * enable is the one the family reads; this one is the one that starts
-     * the sequence.
-     */
-    if (role == APPLE80211_VIF_AWDL)
-        vif->setLinkState(kIO80211NetworkLinkUp, 1);
-    LOG("virtual interface %s up, role %u", name && name[0] ? name : "(unnamed)",
-        (unsigned int)role);
-    return 0;
-}
-
-/*
- * IO80211VirtualInterface::bpfTapInput() is not in MacKernelSDK's header, so
- * it is declared here by its own symbol rather than by editing the vendored
- * SDK. It is not a virtual method -- it appears in neither
- * IO80211VirtualInterface's vtable nor IO80211P2PInterface's -- so a direct
- * call to the exported symbol is what the compiler would have emitted anyway,
- * and is what AirPort_BrcmNIC does: it imports this exact symbol.
- */
-extern "C" UInt32
-rtw89_vif_bpf_tap_input(IO80211VirtualInterface *vif, mbuf_t m, UInt dlt, void *header,
-                        size_t header_len)
-    __asm__("__ZN23IO80211VirtualInterface11bpfTapInputEP6__mbufjPvm");
-
 
 /*
  * A received AWDL action frame, handed to the family's AWDL engine.
@@ -1375,134 +844,6 @@ rtw89_vif_bpf_tap_input(IO80211VirtualInterface *vif, mbuf_t m, UInt dlt, void *
  * The mbuf stays ours: after its own bpfTapInput() Broadcom hands the packet
  * straight to its free routine, so the family does not take it.
  */
-void AirPortRTW89Front::opAwdlRx(void *ctx, const uint8_t *frame, size_t len,
-                                 const uint8_t peer[6], uint32_t channel, int8_t rssi)
-{
-    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
-    IO80211VirtualInterface *vif = self->_vif;
-    uint8_t hdr[72] = {};
-    uint32_t *chan = reinterpret_cast<uint32_t *>(hdr + 12);
-    mbuf_t m;
-
-    /* Say what became of the frames, thinly: the first one, then every
-     * hundredth.  "recognised N frames" in the driver's log only means the
-     * driver saw them, and every way this can fail from here is silent. */
-    self->_awdlRxSeen++;
-    if (!vif) {
-        if (!self->_awdlRxNoVif++)
-            LOG("an AWDL frame arrived with no interface to hand it to");
-        return;
-    }
-    if (!frame || !len)
-        return;
-    m = self->allocatePacket((unsigned int)len);
-    if (!m) {
-        if (!self->_awdlRxNoBuf++)
-            LOG("out of packets for an AWDL frame");
-        return;
-    }
-    memcpy(mbuf_data(m), frame, len);
-
-memcpy(hdr, peer, 6);
-    chan[0] = APPLE80211_VERSION;   /* apple80211_channel.version */
-    chan[1] = channel;              /* .channel, the one updateAFStats reads */
-    chan[2] = channel <= 14 ? APPLE80211_C_FLAG_2GHZ : APPLE80211_C_FLAG_5GHZ;
-    /* The strength, which decides whether the peer is created at all. A chip
-     * that gave us nothing would read as "unreachable", so an absent figure
-     * is reported as a weak but usable one rather than as none. */
-    *reinterpret_cast<int32_t *>(hdr + 0x2c) = rssi ? rssi : -60;
-
-    /* The first frame's own first bytes, once: this is exactly what
-     * isValidAF() reads, and it is the difference between the family looking
-     * at our frames and discarding all of them. */
-    if (!self->_awdlRxFed)
-        LOG("the first AWDL frame handed over starts %02x %02x %02x %02x %02x %02x "
-            "(IO80211 wants .. 00 17 f2 08 00), %u bytes, %d dBm",
-            frame[0], len > 1 ? frame[1] : 0, len > 2 ? frame[2] : 0,
-            len > 3 ? frame[3] : 0, len > 4 ? frame[4] : 0, len > 5 ? frame[5] : 0,
-            (unsigned int)len, (int)rssi);
-
-    /* The packet stays ours, and goes back to the pool it came from rather than
-     * to mbuf_freem(): Broadcom pairs its own bpfTapInput() with freePacket()
-     * the same way.  Nothing the family does with it conflicts.  Its action
-     * frame ring, the one path that would keep the packet, is dead code -- the
-     * flag that selects it is set to false at peer manager init and written
-     * nowhere else -- so actionFrameInput() always takes the
-     * actionFrameProcessInput() branch, which frees only a copy it made
-     * itself, never the packet it was handed. */
-    rtw89_vif_bpf_tap_input(vif, m, 12, hdr, sizeof(hdr));
-    self->freePacket(m);
-    self->awdlEnableIfReady();
-    if (self->_awdlRxFed++ % 100 == 0) {
-        /*
-         * What becomes of the frame, as the family decides it.
-         * actionFrameProcessInput() looks at a frame only when the AWDL peer
-         * manager's 0xcd4 is non-zero and bit 1 of its 0x8528 is set; both
-         * are set by configure(), which runs from enable(), which the link-up
-         * branch of setLinkState() calls. The link state at 0xfc is what that
-         * branch is chosen by, and it has been seen going back down to 1
-         * after we set it up, which is why it is printed every time rather
-         * than once. All three offsets are read-only and come from
-         * IO80211FamilyLegacy's disassembly.
-         */
-        const uint8_t *vraw = reinterpret_cast<const uint8_t *>(vif);
-        const uint8_t *pm = *reinterpret_cast<const uint8_t *const *>(vraw + 0xb0);
-
-        LOG("handed AWDL frame %u to IO80211 (channel %u, from %02x:%02x:%02x:%02x:%02x:%02x)",
-            self->_awdlRxFed, channel, peer[0], peer[1], peer[2], peer[3], peer[4], peer[5]);
-        if (pm) {
-            /*
-             * The chain IO80211PeerManager::enable() walks before it will do
-             * anything: getController() takes the interface from the peer
-             * manager's 0xb8 and the controller from that interface's 0xc8,
-             * and returns nothing if either is missing -- in which case
-             * enable() skips its executeCommand() and returns in silence,
-             * leaving exactly the zeroed flags seen here.
-             */
-            const void *pmIface = *reinterpret_cast<const void *const *>(pm + 0xb8);
-            const void *ifCtrl = *reinterpret_cast<const void *const *>(vraw + 0xc8);
-
-            LOG("    link state %d, sync state %u, state flags 0x%x -> frame %s",
-                *reinterpret_cast<const int *>(vraw + 0xfc),
-                *reinterpret_cast<const unsigned int *>(pm + 0xcd4),
-                *reinterpret_cast<const unsigned int *>(pm + 0x8528),
-                (*reinterpret_cast<const unsigned int *>(pm + 0xcd4) &&
-                 (*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2)) ? "looked at" : "DROPPED");
-            LOG("    peer manager's interface %s, that interface's controller %s us",
-                pmIface == vif ? "is ours" : (pmIface ? "is SOMETHING ELSE" : "is MISSING"),
-                ifCtrl == self ? "is" : (ifCtrl ? "is NOT" : "is MISSING;"));
-            /*
-             * enableGated() is four instructions: if _enabling at 0x2f5 is
-             * already set it returns, otherwise it sets it and calls
-             * doEnable(). So _enabling says whether executeCommand() ever
-             * dispatched the action at all -- 0 means it did not, and the
-             * fault is in our controller's command gate rather than anywhere
-             * in the family; 1 with the flags still zero means doEnable()
-             * ran and gave up inside. _enabled at 0x2f4 is the other half.
-             */
-            LOG("    peer manager _enabling %u, _enabled %u",
-                *reinterpret_cast<const uint8_t *>(pm + 0x2f5),
-                *reinterpret_cast<const uint8_t *>(pm + 0x2f4));
-            /*
-             * Whether any of this has produced a peer, which is the thing
-             * everything else waits on: sharingd has nothing to talk to and
-             * the service parameters TLV nothing to describe until the family
-             * holds an IO80211AWDLPeer for the phone. The peer queue is at
-             * the peer manager's 0x58 and its count at 0x34 of that --
-             * addAWDLPeer() asserts on the first and enqueuePeerInOrder()
-             * reads the second -- and 0x8ede is the running count of peers
-             * added, bumped at the end of addAWDLPeer().
-             */
-            {
-                const uint8_t *q = *reinterpret_cast<const uint8_t *const *>(pm + 0x58);
-
-                LOG("    peers known %u, peers ever added %u",
-                    q ? *reinterpret_cast<const unsigned int *>(q + 0x34) : 0,
-                    *reinterpret_cast<const uint8_t *>(pm + 0x8ede));
-            }
-        }
-    }
-}
 
 /*
  * A received AWDL data frame on its way to awdl0, which is where a transfer
@@ -1519,85 +860,12 @@ memcpy(hdr, peer, 6);
  * family only passes the pointer along and never reads through it on this
  * path, so a zeroed one of generous size is enough and is what is sent.
  */
-void AirPortRTW89Front::opAwdlDataRx(void *ctx, const uint8_t *eth, size_t len)
-{
-    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
-    IO80211VirtualInterface *vif = self->_vif;
-    mbuf_t m;
-
-    self->_awdlDataInSeen++;
-    if (!vif || !eth || !len)
-        return;
-    m = self->allocatePacket((unsigned int)len);
-    if (!m)
-        return;
-    memcpy(mbuf_data(m), eth, len);
-    rtw89_vif_push_packet(vif, m);
-    if (!self->_awdlDataInUp++)
-        LOG("the first data frame from a peer went up to awdl0, %u bytes",
-            (unsigned int)len);
-}
 
 /*
  * One availability window, reported to the family. See the declaration of
  * rtw89_awdl_report_event() above for where the layout comes from and why a
  * misread field here cannot fault.
  */
-void AirPortRTW89Front::opAwdlWindow(void *ctx, uint32_t aw_seq,
-                                     const uint8_t master[6])
-{
-    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
-    IO80211VirtualInterface *vif = self->_vif;
-    const uint8_t *vraw, *pm;
-    uint8_t payload[64] = {};
-
-    if (!vif || !master)
-        return;
-    vraw = reinterpret_cast<const uint8_t *>(vif);
-    pm = *reinterpret_cast<const uint8_t *const *>(vraw + 0xb0);
-    if (!pm)
-        return;
-    /* the engine has to be enabled, or this is reported into nothing */
-    if (!(*reinterpret_cast<const unsigned int *>(pm + 0x8528) & 2))
-        return;
-
-    *reinterpret_cast<uint32_t *>(payload) = aw_seq;
-    /* synchronised: the clock is running and this window is one of its own */
-    *reinterpret_cast<uint32_t *>(payload + 0x04) = 1;
-    memcpy(payload + 0x08, master, 6);
-    /*
-     * The master, not us. Our own address went here while a real device was
-     * the master, so every window overwrote the peer manager's top master
-     * with this machine and fired topMasterChanged() against the election's
-     * own choice. When we keep our own time the compat side passes our
-     * address as the master anyway, so this is right either way.
-     */
-    memcpy(payload + 0x0e, master, 6);
-    *reinterpret_cast<uint32_t *>(payload + 0x14) = OSSwapHostToBigInt32(aw_seq);
-    *reinterpret_cast<uint64_t *>(payload + 0x18) = mach_absolute_time();
-    *reinterpret_cast<uint32_t *>(payload + 0x20) = 16;   /* the window, in TU */
-
-    rtw89_awdl_report_event(const_cast<uint8_t *>(pm), RTW89_AWDL_EVENT_AW_START,
-                            payload, 0x24);
-    if (!self->_awdlWindows++)
-        LOG("told the family about the first availability window (%u on the "
-            "master's numbering)", aw_seq);
-}
-
-void AirPortRTW89Front::opDestroyVif(void *ctx)
-{
-    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
-    IO80211VirtualInterface *vif = self->_vif;
-
-    if (!vif)
-        return;
-    self->_vif = nullptr;
-    /* before the detach, so no packet can arrive with nowhere to go */
-    if (gFront == self)
-        gFront = nullptr;
-    self->detachVirtualInterface(vif, true);
-    LOG("virtual interface down");
-}
 
 bool AirPortRTW89Front::useAppleRSNSupplicant(IO80211Interface *interface)
 {
@@ -1620,6 +888,60 @@ void AirPortRTW89Front::opInputPacket(void *ctx, mbuf_t m)
     self->_netif->inputPacket(m, (UInt32)mbuf_pkthdr_len(m), 0);
 }
 
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+bool AirPortRTW89Front::opOwlyRxHandoff(void *ctx, const struct owly_abi6_packet *pkt)
+{
+    AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    if(self && pkt && pkt->kind!=OWLY_ABI6_PACKET_C3_SCAN_SIGNATURE)
+        return self->owlyNativeReceive(pkt);
+#endif
+    /* Real cross-KEXT RX on the hardware thread, but NO packet touches
+     * Apple's private inputPacket/actionFrameInput ABI. The controller is
+     * held by the backend's front reference until RX gate drains. */
+    if (!self || !pkt || pkt->length > OWLY_ABI6_PACKET_MAX) return false;
+    if (__atomic_load_n(&self->_owlyGateC2Ready, __ATOMIC_ACQUIRE) != 1) {
+        owlyGateC2Note(self, "OWLY C2 not_ready", &gOwlyC2NotReady);
+        return false;
+    }
+#if defined(OWLY_ABI6_C3_SCAN_OBSERVER) && OWLY_ABI6_C3_SCAN_OBSERVER
+    if (pkt->kind == OWLY_ABI6_PACKET_C3_SCAN_SIGNATURE) {
+        /* Separate metric: does NOT imply complete TLVs, peer auth, or Apple RX. */
+        if (owly_c3_scan_signature(pkt->bytes, pkt->length) &&
+            memcmp(pkt->bytes+10,pkt->src,6)==0 &&
+            memcmp(pkt->bytes+4,pkt->dst,6)==0) {
+            owlyGateC2Note(self, "OWLY C3 scan_signature_front", &gOwlyC3ScanSignaturesFront);
+        } else {
+            owlyGateC2Note(self, "OWLY C3 scan_rejected_front", &gOwlyC3ScanRejectedFront);
+        }
+        return false; /* Intentionally NO Apple inputPacket; not an ACK. */
+    }
+#endif
+    /* No large RX-thread stack buffers; heap allocations are bounded,
+     * and only IPv6 packets require the Ethernet scratch. */
+    uint8_t *l2 = nullptr;
+    size_t l2_len = 0;
+    if (pkt->kind == OWLY_ABI6_PACKET_IPV6) {
+        l2 = static_cast<uint8_t *>(IOMalloc(OWLY_GATEC_ETH_FRAME_MAX));
+        if (!l2) {
+            owlyGateC2Note(self, "OWLY C2 rejected", &gOwlyC2Rejected);
+            return false;
+        }
+    }
+    const enum owly_gatec2_inspect_kind kind =
+        owly_gatec2_inspect(pkt, l2, l2 ? OWLY_GATEC_ETH_FRAME_MAX : 0u, &l2_len);
+    if (l2) IOFree(l2, OWLY_GATEC_ETH_FRAME_MAX);
+    if (kind == OWLY_GATEC2_ACTION)
+        owlyGateC2Note(self, "OWLY C2 action_front", &gOwlyC2Actions);
+    else if (kind == OWLY_GATEC2_IPV6_L2)
+        owlyGateC2Note(self, "OWLY C2 ipv6_l2_front", &gOwlyC2L2IPv6);
+    else
+        owlyGateC2Note(self, "OWLY C2 rejected", &gOwlyC2Rejected);
+
+    return false; /* Apple did NOT consume a packet. No false ACK. */
+}
+#endif
+
 void AirPortRTW89Front::opTxWake(void *ctx)
 {
     IOOutputQueue *queue = static_cast<AirPortRTW89Front *>(ctx)->getOutputQueue();
@@ -1628,24 +950,142 @@ void AirPortRTW89Front::opTxWake(void *ctx)
         queue->service(IOBasicOutputQueue::kServiceAsync);
 }
 
+
+#if defined(OWLY_AWDL_SERVICE_LIFECYCLE) && OWLY_AWDL_SERVICE_LIFECYCLE
+/* Exact pinned Legacy BSD SET120 path only. The outer envelope is a kernel
+ * local already parsed by the backend. Embedded userspace data is NEVER read
+ * here; Apple's original handler retains all copyIn/validation/copyOut work.
+ * This is not used for the ambiguous split ioctl_set callback. */
+bool AirPortRTW89Front::owlyServiceIoctl(IO80211Interface *interface,
+    IO80211VirtualInterface *vif, ifnet_t net, unsigned long command,
+    void *envelope, int *result)
+{
+    if (!result || command != SIOCSA80211 || !vif || !envelope ||
+        !_owlyVifLock || !_workLoop) return false;
+    IOLockLock(_owlyVifLock);
+    const bool ours = vif == _owlyAttachedAWDL && !_owlyAWDLPendingBSD;
+    IOLockUnlock(_owlyVifLock);
+    if (!ours) return false;
+    const auto *request = static_cast<const apple80211req *>(envelope);
+    if (request->req_type != APPLE80211_IOC_AWDL_PEER_SERVICE_REQUEST ||
+        request->req_len < 20 || request->req_len > 4096) return false;
+    /* Do not activate anything before authenticating the real caller. */
+    if (current_task() != kernel_task) {
+        OwlyEntitlement::Result auth;
+        if (!OwlyEntitlement::authorize(current_task(), auth)) {
+            *result = EPERM;
+            return true;
+        }
+    }
+    retain();
+    IOWorkLoop *loop = _workLoop;
+    loop->retain();
+    OwlyServiceCall call = {interface, vif, net, command, envelope, ENXIO};
+    const IOReturn rc = loop->runAction(
+        [](OSObject *owner, void *opaque, void *, void *, void *) -> IOReturn {
+            auto *self = static_cast<AirPortRTW89Front *>(owner);
+            auto *args = static_cast<OwlyServiceCall *>(opaque);
+            args->result = self->owlyServiceIoctlOnGate(args);
+            return kIOReturnSuccess;
+        }, this, &call);
+    *result = rc == kIOReturnSuccess ? call.result : ENXIO;
+    loop->release();
+    /* Deferred stop is finished in apple80211_ioctl AFTER backLeave(). */
+    release();
+    return true;
+}
+
+int AirPortRTW89Front::owlyServiceIoctlOnGate(OwlyServiceCall *call)
+{
+    if (!call || !_owlyVifLock || !_workLoop || !_workLoop->inGate()) return ENXIO;
+    IOLockLock(_owlyVifLock);
+    if (_owlyAWDLStopping || _owlyAWDLQuarantined || _owlyAWDLRequestBusy ||
+        _owlyVifBusy || _owlyVifMethodBusy || _owlyAWDLPendingBSD ||
+        !call->vif || call->vif != _owlyAttachedAWDL ||
+        _owlyAirlink.cookie != call->vif ||
+        _owlyAirlink.role != RTW89_FRONT_ROLE_AIRLINK_OBSERVED) {
+        IOLockUnlock(_owlyVifLock);
+        return ENXIO;
+    }
+    _owlyVifMethodBusy = true; /* Protect from reentrant stop/delete. */
+    call->vif->retain();
+    IOLockUnlock(_owlyVifLock);
+
+    const bool there = backEnter();
+    const bool ready = there && _back.vif_event && _back.vif_event(_back.ctx,
+        call->vif, RTW89_FRONT_ROLE_AIRLINK_OBSERVED,
+        RTW89_FRONT_VIF_SERVICE_READY, nullptr);
+    backLeave();
+    IOLockLock(_owlyVifLock);
+    bool stopping = _owlyAWDLStopping;
+    IOLockUnlock(_owlyVifLock);
+    const bool prepare = ready && !stopping;
+    /* Qualified base call: exact exported Legacy implementation, no new
+     * vtable layout/offset. Link-up enables the real Apple peer manager.
+     * This describes a prepared interface, NOT a peer, sync or RF success.
+     * RF remains controlled by the unmodified SET117/151 and SCC guards. */
+    call->vif->IO80211VirtualInterface::setEnabledBySystem(prepare);
+    call->vif->IO80211VirtualInterface::setLinkState(
+        prepare ? kIO80211NetworkLinkUp : kIO80211NetworkLinkDown, 1);
+    setProperty("OwlyServiceReadinessLast", ready ? 1ULL : 0ULL, 32);
+    setProperty("OwlyServiceCarrierPrepared", prepare ? 1ULL : 0ULL, 32);
+    setProperty("OwlyServiceSystemEnableRequested", prepare ? 1ULL : 0ULL, 32);
+    IOLockLock(_owlyVifLock);
+    stopping = _owlyAWDLStopping;
+    IOLockUnlock(_owlyVifLock);
+    int result = ENXIO;
+    if (!stopping) {
+        result = IO80211Controller::apple80211_ioctl(call->interface, call->vif,
+            call->net, call->command, call->envelope);
+        setProperty("OwlyServiceAppleResultLast",
+            static_cast<unsigned long long>(static_cast<uint32_t>(result)), 32);
+    } else {
+        call->vif->IO80211VirtualInterface::setEnabledBySystem(false);
+        call->vif->IO80211VirtualInterface::setLinkState(kIO80211NetworkLinkDown, 1);
+        setProperty("OwlyServiceCarrierPrepared", 0ULL, 32);
+        setProperty("OwlyServiceSystemEnableRequested", 0ULL, 32);
+    }
+    IOLockLock(_owlyVifLock);
+    _owlyVifMethodBusy = false;
+    IOLockUnlock(_owlyVifLock);
+    call->vif->release();
+    return result; /* Preserve Apple's actual service error or success. */
+}
+#endif
+
 int AirPortRTW89Front::opSuperIoctl(void *ctx, void *interface, void *vif, void *ifnet,
                                     unsigned long cmd, void *data)
 {
     AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+    owlyGate12FHit(self, "OWLY Gate12F super_ioctl", &gOwlyFSuperIOCTL);
 
-    return self->IO80211Controller::apple80211_ioctl(static_cast<IO80211Interface *>(interface),
-                                                     static_cast<IO80211VirtualInterface *>(vif),
-                                                     static_cast<ifnet_t>(ifnet), cmd, data);
+#if defined(OWLY_AWDL_SERVICE_LIFECYCLE) && OWLY_AWDL_SERVICE_LIFECYCLE
+    int serviceResult = ENXIO;
+    if (self->owlyServiceIoctl(static_cast<IO80211Interface *>(interface),
+            static_cast<IO80211VirtualInterface *>(vif), static_cast<ifnet_t>(ifnet),
+            cmd, data, &serviceResult))
+        return serviceResult;
+#endif
+    const int result = self->IO80211Controller::apple80211_ioctl(
+        static_cast<IO80211Interface *>(interface), static_cast<IO80211VirtualInterface *>(vif),
+        static_cast<ifnet_t>(ifnet), cmd, data);
+    if (result != 0 && OSIncrementAtomic(&gOwlyG09SuperErrors) < 48)
+        LOG("OWLY Gate09: inherited ioctl cmd=0x%lx rc=%d", cmd, result);
+    return result;
 }
 
 int AirPortRTW89Front::opSuperIoctlSet(void *ctx, void *interface, void *vif, void *skywalk,
                                        void *data)
 {
     AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(ctx);
+    owlyGate12FHit(self, "OWLY Gate12F super_ioctl_set", &gOwlyFSuperSet);
 
-    return self->IO80211Controller::apple80211_ioctl_set(
+    const int result = self->IO80211Controller::apple80211_ioctl_set(
         static_cast<IO80211Interface *>(interface), static_cast<IO80211VirtualInterface *>(vif),
         static_cast<IO80211SkywalkInterface *>(skywalk), data);
+    if (result != 0 && OSIncrementAtomic(&gOwlyG09SuperErrors) < 48)
+        LOG("OWLY Gate09: inherited ioctl_set rc=%d", result);
+    return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1655,28 +1095,552 @@ int AirPortRTW89Front::opSuperIoctlSet(void *ctx, void *interface, void *vif, vo
 SInt32 AirPortRTW89Front::apple80211_ioctl(IO80211Interface *interface, IO80211VirtualInterface *vif,
                                            ifnet_t net, unsigned long cmd, void *data)
 {
+    owlyGate12FHit(this, "OWLY Gate12F ioctl_any", &gOwlyFIOCTLAny);
+    if (cmd == SIOCSA80211)
+        owlyGate12FHit(this, "OWLY Gate12F ioctl_set_command", &gOwlyFIOCTLSetCmd);
+    /* No dereference of data or request payload. Bounded trace on set IOCTLs. */
+    const SInt32 gate12Seq = (cmd == SIOCSA80211) ?
+        OSIncrementAtomic(&gOwlyG12Ioctl) : 1000;
+    const bool gate12Log = gate12Seq < 64;
+    if (gate12Log)
+        LOG("OWLY Gate12: ioctl ENTER seq=%d set=1 primary=%u vif=%u data=%u cmd=0x%lx",
+            (int)gate12Seq, interface == _netif ? 1U : 0U, vif ? 1U : 0U,
+            data ? 1U : 0U, cmd);
     bool handled = false;
     SInt32 ret = 0;
 
+#if 0 /* Gate14: old M2.3 envelope is prohibited */
+    /* The legacy IOCTL envelope can arrive here, not only at
+     * apple80211Request(). Intercept exclusively request 94/95 on our own
+     * primary en1 interface; everything else preserves its old path. */
+    if (cmd == SIOCSA80211) {
+        ret = owlyBridgeVifSetEnvelope(interface, vif, data, &handled);
+        if (handled) return ret;
+    }
+#endif
+
     const bool there = backEnter();
-    if (there && _back.ioctl)
+    if (there && _back.ioctl) {
+        owlyGate12FHit(this, "OWLY Gate12F backend_ioctl", &gOwlyFBackendIOCTL);
         ret = _back.ioctl(_back.ctx, interface, vif, net, cmd, data, &handled);
+    }
     backLeave();
-    return handled ? ret : super::apple80211_ioctl(interface, vif, net, cmd, data);
+    if (!handled)
+        owlyGate12FHit(this, "OWLY Gate12F fallback_ioctl", &gOwlyFFallbackIOCTL);
+    const SInt32 result = handled ? ret : super::apple80211_ioctl(interface, vif, net, cmd, data);
+#if defined(OWLY_AWDL_SERVICE_LIFECYCLE) && OWLY_AWDL_SERVICE_LIFECYCLE
+    /* The service callback ran inside _back.ioctl(). Wait until backLeave()
+     * above before finishing a recursively deferred stop: disconnectBack()
+     * must never wait for our own outstanding backend call. */
+    owlyFinishDeferredStop();
+#endif
+    if (gate12Log)
+        LOG("OWLY Gate12: ioctl EXIT seq=%d backend=%u handled=%u rc=%d",
+            (int)gate12Seq, there ? 1U : 0U, handled ? 1U : 0U, (int)result);
+    if (result != 0 && OSIncrementAtomic(&gOwlyG09IoctlErrors) < 48)
+        LOG("OWLY Gate09: ioctl cmd=0x%lx backend=%u handled=%u rc=%d",
+            cmd, there ? 1U : 0U, handled ? 1U : 0U, (int)result);
+    return result;
 }
 
 SInt32 AirPortRTW89Front::apple80211_ioctl_set(IO80211Interface *interface,
                                                IO80211VirtualInterface *vif,
                                                IO80211SkywalkInterface *skywalk, void *data)
 {
+    owlyGate12FHit(this, "OWLY Gate12F ioctl_set_callback", &gOwlyFIOCTLSetCallback);
+    /* The set callback has no explicit request number in its C++ signature.
+     * Log only the envelope; never guess that data is apple80211req. */
+    const SInt32 gate12Seq = OSIncrementAtomic(&gOwlyG12Set);
+    const bool gate12Log = gate12Seq < 64;
+    if (gate12Log)
+        LOG("OWLY Gate12: ioctl_set ENTER seq=%d primary=%u vif=%u skywalk=%u data=%u",
+            (int)gate12Seq, interface == _netif ? 1U : 0U, vif ? 1U : 0U,
+            skywalk ? 1U : 0U, data ? 1U : 0U);
     bool handled = false;
     SInt32 ret = 0;
 
+#if 0 /* Gate14: old M2.3 envelope is prohibited */
+    ret = owlyBridgeVifSetEnvelope(interface, vif, data, &handled);
+    if (handled) return ret;
+#endif
+
     const bool there = backEnter();
-    if (there && _back.ioctl_set)
+    if (there && _back.ioctl_set) {
+        owlyGate12FHit(this, "OWLY Gate12F backend_ioctl_set", &gOwlyFBackendSet);
         ret = _back.ioctl_set(_back.ctx, interface, vif, skywalk, data, &handled);
+    }
     backLeave();
-    return handled ? ret : super::apple80211_ioctl_set(interface, vif, skywalk, data);
+    if (!handled)
+        owlyGate12FHit(this, "OWLY Gate12F fallback_ioctl_set", &gOwlyFFallbackSet);
+    const SInt32 result = handled ? ret : super::apple80211_ioctl_set(interface, vif, skywalk, data);
+    if (gate12Log)
+        LOG("OWLY Gate12: ioctl_set EXIT seq=%d backend=%u handled=%u rc=%d",
+            (int)gate12Seq, there ? 1U : 0U, handled ? 1U : 0U, (int)result);
+    if (result != 0 && OSIncrementAtomic(&gOwlyG09SetErrors) < 48)
+        LOG("OWLY Gate09: ioctl_set backend=%u handled=%u rc=%d",
+            there ? 1U : 0U, handled ? 1U : 0U, (int)result);
+    return result;
+}
+
+#if OWLY_GATE14_REAL_VIF
+/* OWLY M2 REQUEST94 BEGIN
+ * Apple IO80211FamilyLegacy setVirtualInterfaceCreate() copies <=32 bytes,
+ * calls apple80211RequestIoctl(type=SIOCSA80211, number=94, data=stack copy),
+ * then copies that structure back after successful request.  This mirrors the
+ * apple80211_virt_if_create_data ABI used by MacKernelSDK.  The definition is
+ * purposely local to make ABI assumptions explicit and compile-time checked.
+ */
+struct OwlyM2CreateRequest {
+    uint32_t version;
+    uint8_t mac[6];
+    uint16_t unknown;
+    uint32_t role;
+    uint8_t bsd_name[16];
+} __attribute__((packed));
+struct OwlyM2DeleteRequest {
+    uint32_t version;
+    uint8_t bsd_name[16];
+} __attribute__((packed));
+static_assert(sizeof(OwlyM2CreateRequest) == 32, "IOCTL94 layout changed");
+static_assert(sizeof(OwlyM2DeleteRequest) == 20, "IOCTL95 layout changed");
+
+/* OWLY M2.3: 94/95 must also be received at the IOCTL envelope boundary.
+ * On this IO80211 legacy family, apple80211_ioctl_set() is a distinct
+ * virtual method from apple80211Request(); the Apple handler may never call
+ * our apple80211Request override on some IOCTL paths. The envelope's payload
+ * is a userspace address: use the kernel copyin/copyout functions.
+ * No fabricated awdl0, no fake success, no AWDL RF TX/RX. */
+#if 0 /* Gate14: never compile the old userspace envelope bridge */
+SInt32 AirPortRTW89Front::owlyBridgeVifSetEnvelope(IO80211Interface *interface,
+    IO80211VirtualInterface *vif, void *data, bool *handled)
+{
+    if (!handled) return EINVAL;
+    *handled = false;
+    if (!data || !interface || interface != _netif || vif)
+        return 0; /* The Apple/Realtek legacy path handles other interfaces. */
+
+    const apple80211req *req = static_cast<const apple80211req *>(data);
+    const int number = req->req_type;
+    if (number != APPLE80211_IOC_VIRTUAL_IF_CREATE &&
+        number != APPLE80211_IOC_VIRTUAL_IF_DELETE)
+        return 0;
+    *handled = true;
+
+    const bool create = number == APPLE80211_IOC_VIRTUAL_IF_CREATE;
+    const unsigned expected = create ? sizeof(OwlyM2CreateRequest) :
+                                        sizeof(OwlyM2DeleteRequest);
+    if ((unsigned)req->req_len != expected || !req->req_data)
+        return EINVAL;
+    if (!_workLoop || !_owlyVifLock)
+        return EBUSY;
+
+    const uint64_t userAddress = (uint64_t)(uintptr_t)req->req_data;
+    union { OwlyM2CreateRequest create; OwlyM2DeleteRequest remove; } payload = {};
+    /* Copy from userspace with the kernel copyin() API (0 means success).
+     * Never dereference req_data as a kernel address. */
+    if (::copyin(userAddress, &payload, expected) != 0)
+        return EFAULT;
+
+    const SInt32 result = apple80211Request(SIOCSA80211, number, interface, &payload);
+    if (result != kIOReturnSuccess) {
+        LOG("OWLY M2.3: ioctl%u create/delete rejected role=%u version=%u rc=0x%x",
+            (unsigned)number, create ? (unsigned)payload.create.role : 0U,
+            create ? (unsigned)payload.create.version : (unsigned)payload.remove.version,
+            (unsigned)result);
+        return errnoFromReturn(result);
+    }
+
+    if (!create) return 0; /* Delete has no output payload. */
+
+    /* The BSD name is produced by attachVirtualInterface. Return it to
+     * wifip2pd exactly as the Apple handler would; otherwise it cannot
+     * discover the actual interface. */
+    if (::copyout(&payload.create, userAddress, expected) != 0) {
+        /* A successfully attached but unnamed-to-user VIF must not remain
+         * silently live. Request95 performs the existing gated cleanup. */
+        OwlyM2DeleteRequest undo = {};
+        undo.version = payload.create.version;
+        for (unsigned i = 0; i < sizeof(undo.bsd_name); ++i)
+            undo.bsd_name[i] = payload.create.bsd_name[i];
+        const SInt32 undone = apple80211Request(
+            SIOCSA80211, APPLE80211_IOC_VIRTUAL_IF_DELETE, interface, &undo);
+        if (undone != kIOReturnSuccess)
+            LOG("OWLY M2.3: copyOut failed; cleanup rejected rc=0x%x",
+                (unsigned)undone);
+        return EFAULT;
+    }
+    LOG("OWLY M2.3: IOCTL94 completed with a real Apple-attached VIF");
+    return 0;
+}
+
+#endif /* old unsafe envelope bridge */
+
+/* A BSD name may be published after the initial attach returns.  Only
+ * accept the actual name supplied by the Apple object; never fabricate awdl0.
+ * This helper runs on the IO80211 workloop; caller holds a VIF retain.
+ * The copied name is bounded to the 16-byte request output slot. */
+static bool owlyGate14CopyBSDName(IO80211VirtualInterface *vif, char out[16])
+{
+    if (!vif || !out) return false;
+    const char *name = vif->getBSDName();
+    if (!name || name[0] != 'a' || name[1] != 'w' ||
+        name[2] != 'd' || name[3] != 'l') return false;
+    unsigned n = 4;
+    if (name[n] < '0' || name[n] > '9') return false;
+    while (n < 15 && name[n] >= '0' && name[n] <= '9') ++n;
+    if (name[n] != '\0') return false;
+    for (unsigned i = 0; i < 16; ++i) out[i] = i < n ? name[i] : 0;
+    return true;
+}
+
+SInt32 AirPortRTW89Front::owlyRequestAWDLCreate(unsigned int type, void *data)
+{
+    if (type != SIOCSA80211 || !data || !_owlyVifLock)
+        return kIOReturnBadArgument;
+    OwlyM2CreateRequest *req = static_cast<OwlyM2CreateRequest *>(data);
+    if (req->version != OWLY_GATE14_REQ94_VERSION ||
+        req->role != RTW89_FRONT_ROLE_AIRLINK_OBSERVED)
+        return kIOReturnUnsupported;
+    bool nonzero = false;
+    for (unsigned i = 0; i < 6; ++i) nonzero |= req->mac[i] != 0;
+    const bool validMac = nonzero && !(req->mac[0] & 1);
+    setProperty("OWLY Gate14 mac_valid", validMac ? 1ULL : 0ULL, 32);
+    if (!validMac) return kIOReturnBadArgument;
+
+    IO80211VirtualInterface *newVif = nullptr;
+    bool retryPending = false;
+    unsigned checks = 0;
+    IOLockLock(_owlyVifLock);
+    if (_owlyAWDLStopping || _owlyAWDLRequestBusy || _owlyAWDLQuarantined
+#if defined(OWLY_AWDL_SERVICE_LIFECYCLE) && OWLY_AWDL_SERVICE_LIFECYCLE
+        || _owlyVifMethodBusy
+#endif
+    ) {
+        IOLockUnlock(_owlyVifLock);
+        return kIOReturnBusy;
+    }
+    if (_owlyAttachedAWDL) {
+        if (!_owlyAWDLPendingBSD) {
+            IOLockUnlock(_owlyVifLock);
+            return kIOReturnBusy; /* Existing committed identity; do not replace. */
+        }
+        for (unsigned i = 0; i < 6; ++i) {
+            if (_owlyAWDLRequestMac[i] != req->mac[i]) {
+                IOLockUnlock(_owlyVifLock);
+                return kIOReturnBusy; /* Another request must not inherit pending VIF. */
+            }
+        }
+        retryPending = true;
+        newVif = _owlyAttachedAWDL; /* explicit retained ownership */
+        checks = ++_owlyAWDLPendingChecks;
+    }
+    _owlyAWDLRequestBusy = true;
+    IOLockUnlock(_owlyVifLock);
+
+    bool attached = retryPending;
+    if (!retryPending) {
+        struct ether_addr mac = {};
+        for (unsigned i = 0; i < 6; ++i) mac.octet[i] = req->mac[i];
+        setProperty("OWLY Gate14 attach_attempt", 1ULL, 32);
+        attached = attachVirtualInterface(&newVif, &mac,
+                              RTW89_FRONT_ROLE_AIRLINK_OBSERVED, true);
+        /* Preserve both pieces of the raw Apple return. Never dereference
+         * newVif on a failed attach: its lifetime belongs to Apple. */
+        setProperty("OWLY ABI5Diag attach_last",
+                    attached ? (newVif ? 1ULL : 4ULL)
+                             : (newVif ? 3ULL : 2ULL), 32);
+        setProperty("OWLY Gate14 attach_succeeded", attached && newVif ? 1ULL : 0ULL, 32);
+        if (attached && newVif) newVif->retain(); /* own ref across detach */
+    }
+
+    char bsdSnapshot[16] = {};
+    const bool validBSD = attached && newVif &&
+                          owlyGate14CopyBSDName(newVif, bsdSnapshot);
+    setProperty("OWLY Gate14 bsd_name_ready", validBSD ? 1ULL : 0ULL, 32);
+
+    /* ABI5 transaction: a successful Apple attach is sufficient to ask the
+     * hardware to register its second P2P-client VIF. BSD-name publication
+     * is independent and may lag. Do not claim the CREATE ioctl succeeded
+     * until a real awdlN BSD name is visible.
+     *
+     * On the pending retry, _owlyAirlink is the already-ACKed identity;
+     * reusing it does not send a second hardware add_interface().
+     */
+    bool stopping = false;
+    IOLockLock(_owlyVifLock);
+    stopping = _owlyAWDLStopping;
+    IOLockUnlock(_owlyVifLock);
+#if OWLY_ABI6_NATIVE_P2P_FACTORY
+    /* A base VIF is NOT a substitute for a native Apple P2P class. Reject
+     * it before hardware ACK, so the existing detach/rollback path runs. */
+    const bool appleP2PClass = newVif &&
+        (OSDynamicCast(IO80211P2PInterface, newVif) != nullptr);
+#else
+    const bool appleP2PClass = true; /* original Gate14 base-class path */
+#endif
+    const bool trackedBefore = attached && newVif && owlyVifIsTracked(newVif);
+    const bool acknowledged = attached && newVif && appleP2PClass && !stopping &&
+        (trackedBefore ||
+         (!retryPending && owlyVifEvent(newVif, RTW89_FRONT_ROLE_AIRLINK_OBSERVED,
+                                        RTW89_FRONT_VIF_CREATED, req->mac)));
+    setProperty("OWLY ABI5 hardware_vif_ack", acknowledged ? 1ULL : 0ULL, 32);
+    setProperty("OWLY Gate14 backend_ack", acknowledged ? 1ULL : 0ULL, 32);
+#if OWLY_ABI6_NATIVE_P2P_FACTORY
+    setProperty("OWLY ABI6 P2P instance verified", appleP2PClass ? 1ULL : 0ULL, 32);
+#endif
+
+    if (acknowledged && !validBSD && (!retryPending || checks < 4U)) {
+        /* Hardware ACKed, but Apple has not yet named its VIF. Keep one
+         * retained object; return NotReady, not false success. This pending
+         * state is NOT time-bounded if Apple never retries; stop() owns the
+         * remaining cleanup. Experimental: no boot without lifecycle review. */
+        IOLockLock(_owlyVifLock);
+        _owlyAttachedAWDL = newVif;
+        _owlyAWDLPendingBSD = true;
+        if (!retryPending) {
+            _owlyAWDLPendingChecks = 0;
+            for (unsigned i = 0; i < 6; ++i) _owlyAWDLRequestMac[i] = req->mac[i];
+        }
+        _owlyAWDLRequestBusy = false;
+        IOLockUnlock(_owlyVifLock);
+        setProperty("OWLY Gate14 pending_bsd", 1ULL, 32);
+        setProperty("OWLY Gate14 pending_rechecks", (unsigned long long)checks, 32);
+        LOG("OWLY ABI5: hardware VIF registered, BSD name pending; request94 NotReady");
+        return kIOReturnNotReady;
+    }
+
+    if (!acknowledged || !validBSD) {
+        /* No successful IOCTL without both Apple BSD registration and
+         * hardware ACK. An attached object retains an explicit reference
+         * until detach completes. Backend removal happens ONLY after a
+         * successful detach, and a failed remove quarantines this boot. */
+        const bool ambiguous = !attached && newVif != nullptr;
+        bool rolledBack = !attached && !ambiguous;
+        bool backendGone = !trackedBefore && !acknowledged;
+        if (attached && newVif) {
+            const bool liveIdentity = owlyVifIsTracked(newVif);
+            rolledBack = detachVirtualInterface(newVif, true);
+            if (rolledBack && liveIdentity) {
+                const bool disabled = owlyVifEvent(
+                    newVif, RTW89_FRONT_ROLE_AIRLINK_OBSERVED,
+                    RTW89_FRONT_VIF_DISABLED);
+                const bool destroyed = disabled && owlyVifEvent(
+                    newVif, RTW89_FRONT_ROLE_AIRLINK_OBSERVED,
+                    RTW89_FRONT_VIF_DESTROYED);
+                backendGone = disabled && destroyed;
+            } else if (rolledBack && !liveIdentity) {
+                backendGone = true;
+            }
+            if (rolledBack) newVif->release();
+        } else if (attached && !newVif) {
+            rolledBack = false;
+        }
+        IOLockLock(_owlyVifLock);
+        if (rolledBack) {
+            _owlyAttachedAWDL = nullptr;
+            _owlyAWDLPendingBSD = false;
+            _owlyAWDLPendingChecks = 0;
+            for (unsigned i = 0; i < 6; ++i) _owlyAWDLRequestMac[i] = 0;
+            for (unsigned i = 0; i < 16; ++i) _owlyAWDLBSDName[i] = 0;
+        } else {
+            _owlyAttachedAWDL = attached ? newVif : nullptr;
+        }
+        if (!rolledBack || !backendGone || ambiguous)
+            _owlyAWDLQuarantined = true;
+        _owlyAWDLRequestBusy = false;
+        IOLockUnlock(_owlyVifLock);
+        setProperty("OWLY Gate14 rollback_ok", rolledBack && backendGone ? 1ULL : 0ULL, 32);
+        setProperty("OWLY Gate14 pending_bsd", 0ULL, 32);
+        LOG("OWLY ABI5: create declined attach=%u BSD=%u HW=%u AppleRollback=%u backRemoved=%u",
+            (unsigned)attached, (unsigned)validBSD, (unsigned)acknowledged,
+            (unsigned)rolledBack, (unsigned)backendGone);
+        return kIOReturnNotReady;
+    }
+
+    IOLockLock(_owlyVifLock);
+    _owlyAttachedAWDL = newVif;
+    _owlyAWDLPendingBSD = false;
+    _owlyAWDLPendingChecks = 0;
+    for (unsigned i = 0; i < 6; ++i) _owlyAWDLRequestMac[i] = 0;
+    for (unsigned i = 0; i < 16; ++i) {
+        _owlyAWDLBSDName[i] = bsdSnapshot[i];
+        req->bsd_name[i] = (uint8_t)bsdSnapshot[i];
+    }
+    _owlyAWDLRequestBusy = false;
+    IOLockUnlock(_owlyVifLock);
+    setProperty("OWLY Gate14 pending_bsd", 0ULL, 32);
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    __atomic_store_n(&_owlyGateC2Ready, 1, __ATOMIC_RELEASE);
+    setProperty("OWLY C2 native_vif_ready", 1ULL, 32);
+#endif
+    LOG("OWLY G14 RC3: VIF attached and backend ACKed (NO DATA PATH)");
+    return kIOReturnSuccess;
+}
+
+SInt32 AirPortRTW89Front::owlyRequestAWDLDelete(unsigned int type, void *data)
+{
+    if (type != SIOCSA80211 || !data || !_owlyVifLock)
+        return kIOReturnBadArgument;
+    OwlyM2DeleteRequest *req = static_cast<OwlyM2DeleteRequest *>(data);
+    if (req->version != OWLY_GATE14_REQ94_VERSION) return kIOReturnBadArgument;
+    IOLockLock(_owlyVifLock);
+    if (_owlyAWDLStopping || _owlyAWDLRequestBusy || !_owlyAttachedAWDL
+#if defined(OWLY_AWDL_SERVICE_LIFECYCLE) && OWLY_AWDL_SERVICE_LIFECYCLE
+        || _owlyVifMethodBusy
+#endif
+    ) {
+        IOLockUnlock(_owlyVifLock);
+        return kIOReturnNotReady;
+    }
+    /* Pending object is owned by us but not yet named or ACKed. Only an
+     * all-zero request95 name may cancel it; never match another interface. */
+    const bool pendingBSD = _owlyAWDLPendingBSD;
+    if (!_owlyAWDLBSDName[0] && !pendingBSD) {
+        IOLockUnlock(_owlyVifLock);
+        return kIOReturnNotReady;
+    }
+    bool matches = true;
+    for (unsigned i = 0; i < 16; i++)
+        matches &= req->bsd_name[i] == (uint8_t)(pendingBSD ? 0 : _owlyAWDLBSDName[i]);
+    if (!matches) {
+        IOLockUnlock(_owlyVifLock);
+        return kIOReturnBadArgument;
+    }
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    __atomic_store_n(&_owlyGateC2Ready, 0, __ATOMIC_RELEASE);
+    setProperty("OWLY C2 native_vif_ready", 0ULL, 32);
+#endif
+    _owlyAWDLRequestBusy = true;
+    IO80211VirtualInterface *target = _owlyAttachedAWDL;
+    IOLockUnlock(_owlyVifLock);
+
+    /* Snapshot the identity before Apple may free the object. This is purely
+     * an opaque token; no pointer dereference after detach. */
+    const bool tracked = owlyVifIsTracked(target);
+    const bool detached = detachVirtualInterface(target, true);
+    bool ackOK = !tracked; /* pending (unACKed) identity needs no backend events */
+    if (detached && tracked) {
+        /* These callbacks only accept opaque identity tokens, not objects. */
+        const bool disabled = owlyVifEvent(target, RTW89_FRONT_ROLE_AIRLINK_OBSERVED,
+                                            RTW89_FRONT_VIF_DISABLED);
+        const bool destroyed = disabled && owlyVifEvent(
+            target, RTW89_FRONT_ROLE_AIRLINK_OBSERVED, RTW89_FRONT_VIF_DESTROYED);
+        ackOK = disabled && destroyed;
+    }
+    IOLockLock(_owlyVifLock);
+    if (detached) {
+        _owlyAttachedAWDL = nullptr;
+        _owlyAWDLPendingBSD = false;
+        _owlyAWDLPendingChecks = 0;
+        for (unsigned i = 0; i < 6; ++i) _owlyAWDLRequestMac[i] = 0;
+        for (unsigned i = 0; i < 16; i++) _owlyAWDLBSDName[i] = 0;
+        if (!ackOK) _owlyAWDLQuarantined = true;
+    }
+    _owlyAWDLRequestBusy = false;
+    IOLockUnlock(_owlyVifLock);
+    if (detached) target->release(); /* matched own retain at create */
+    if (!detached)
+        LOG("OWLY M2.1: request95 detach failed; VIF retained for a retry");
+    else if (!ackOK)
+        LOG("OWLY M2.1: request95 detached but lifecycle ACK incomplete; quarantined");
+    return !detached ? kIOReturnError : (ackOK ? kIOReturnSuccess : kIOReturnNotReady);
+}
+/* OWLY M2 REQUEST94 END */
+#endif
+
+/* Apple IO80211FamilyLegacy 1200.12.2b1 calls this virtual dispatch
+ * during role-6 IO80211VirtualInterface::init()->attachToBpf().
+ * Its inherited implementation returns 0x66 (ENOTSUP) unconditionally;
+ * it is DISTINCT from apple80211Request() and apple80211_ioctl().
+ * Bridge only the GET(12) capabilities query to the already-working STA
+ * nativeRequest() implementation. Never invent AWDL capabilities or ACK
+ * any AWDL TX/RX/configuration request. The caller owns the kernel buffer. */
+SInt32 AirPortRTW89Front::apple80211VirtualRequest(UInt type, int number,
+                                                    IO80211VirtualInterface *vif, void *data)
+{
+#if OWLY_GATE14_REAL_VIF
+    if (type == SIOCGA80211 && number == APPLE80211_IOC_CARD_CAPABILITIES &&
+        vif && data && _netif &&
+        vif->getInterfaceRole() == RTW89_FRONT_ROLE_AIRLINK_OBSERVED) {
+        setProperty("OWLY ABI5Cap12 request_seen", 1ULL, 32);
+        /* This calls the real backend with the original, initialized
+         * Apple caller-owned capability buffer. No copyIn/copyOut here. */
+        const SInt32 rc = apple80211Request(type, number, _netif, data);
+        setProperty("OWLY ABI5Cap12 backend_rc",
+                    static_cast<unsigned long long>(static_cast<uint32_t>(rc)), 32);
+        setProperty("OWLY ABI5Cap12 success", rc == kIOReturnSuccess ? 1ULL : 0ULL, 32);
+        return rc;
+    }
+#endif
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    /* The virtual radio shares the station's power, regulatory channels and
+     * hardware HT subset. The native peer manager queries these during
+     * configure, before the VIF is tracked. Forward the backend answer and
+     * buffer through the primary interface without starting a session. */
+    if (type==SIOCGA80211 &&
+        (number==APPLE80211_IOC_POWER || number==APPLE80211_IOC_SUPPORTED_CHANNELS ||
+         number==APPLE80211_IOC_HT_CAPABILITY) &&
+        vif && data && _netif &&
+        vif->getInterfaceRole()==RTW89_FRONT_ROLE_AIRLINK_OBSERVED) {
+        const SInt32 rc=apple80211Request(type,number,_netif,data);
+        setProperty(number==APPLE80211_IOC_HT_CAPABILITY ? "OwlyAWDLHTCapabilityResult" :
+                    number==APPLE80211_IOC_POWER ? "OwlyAWDLPowerQueryResult" :
+                    "OwlyAWDLChannelsQueryResult",
+                    static_cast<unsigned long long>(static_cast<uint32_t>(rc)),32);
+        return rc;
+    }
+    const bool syncRequest =
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        (type==SIOCSA80211 && (number==APPLE80211_IOC_AWDL_OOB_AUTO_REQUEST ||
+                             number==APPLE80211_IOC_AWDL_OOB_REQUEST)) ||
+#endif
+        number==APPLE80211_IOC_AWDL_SYNC_ENABLED ||
+        number==APPLE80211_IOC_AWDL_SYNC_FRAME_TEMPLATE ||
+        owly_cfg_known(static_cast<unsigned>(number));
+    if (syncRequest && (type==SIOCGA80211 || type==SIOCSA80211) && vif && data &&
+        _owlyVifLock && vif->getInterfaceRole()==RTW89_FRONT_ROLE_AIRLINK_OBSERVED) {
+        IOLockLock(_owlyVifLock);
+        const bool ours=!_owlyAWDLStopping && _owlyAttachedAWDL==vif && !_owlyAWDLPendingBSD;
+        IOLockUnlock(_owlyVifLock);
+        if (ours) {
+            const bool there=backEnter();
+            const SInt32 rc=there && _back.request ?
+                _back.request(_back.ctx,type,number,vif,data) : kIOReturnNotReady;
+            backLeave();
+            if (owly_cfg_known(static_cast<unsigned>(number))) {
+                setProperty("OwlyNativeConfigLastRequest",static_cast<unsigned long long>(number),32);
+                setProperty("OwlyNativeConfigLastType",type==SIOCSA80211 ? 1ULL : 0ULL,32);
+                setProperty("OwlyNativeConfigLastResult",static_cast<unsigned long long>(static_cast<uint32_t>(rc)),32);
+            }
+            return rc;  // Never fall back into the family after a backend refusal.
+        }
+        return kIOReturnNotReady;
+    }
+#elif defined(OWLY_ABI6_GET117_CONTRACT) && OWLY_ABI6_GET117_CONTRACT
+    /* wifip2pd GET(117) against awdl0.  The current driver DOES NOT
+     * synchronize the AWDL radio.  Answer the 12-byte status truthfully
+     * (enabled=0); do not assert a live AWDL session, touch RF, or ACK SET.
+     * This only repairs a missing status query in the virtual path.
+     */
+    if (type == SIOCGA80211 && number == APPLE80211_IOC_AWDL_SYNC_ENABLED &&
+        vif && data && _owlyVifLock &&
+        vif->getInterfaceRole() == RTW89_FRONT_ROLE_AIRLINK_OBSERVED) {
+        IOLockLock(_owlyVifLock);
+        const bool ours = !_owlyAWDLStopping && (_owlyAttachedAWDL == vif);
+        IOLockUnlock(_owlyVifLock);
+        if (ours) {
+            static_assert(sizeof(apple80211_awdl_sync_enabled) == 12,
+                          "Unexpected Apple80211 GET117 buffer ABI");
+            auto *s = static_cast<apple80211_awdl_sync_enabled *>(data);
+            s->version = APPLE80211_VERSION;
+            s->unk1 = 0;
+            s->enabled = 0; /* NO AWDL RF synchronization currently exists. */
+            setProperty("OWLY GET117 truthful_disabled", 1ULL, 32);
+            return kIOReturnSuccess;
+        }
+    }
+#endif
+    return super::apple80211VirtualRequest(type, number, vif, data);
 }
 
 /* The legacy family has separate virtual slots for Skywalk. Its two-argument
@@ -1731,34 +1695,126 @@ SInt32 AirPortRTW89Front::apple80211_ioctl_set(IO80211SkywalkInterface *skywalk,
 SInt32 AirPortRTW89Front::apple80211Request(unsigned int type, int number,
                                             IO80211Interface *interface, void *data)
 {
+    owlyGate12FHit(this, "OWLY Gate12F request_any", &gOwlyFRequestAny);
+    if (number == APPLE80211_IOC_VIRTUAL_IF_CREATE)
+        owlyGate12FHit(this, "OWLY Gate12F request94", &gOwlyFRequest94);
+    else if (number == APPLE80211_IOC_VIRTUAL_IF_DELETE)
+        owlyGate12FHit(this, "OWLY Gate12F request95", &gOwlyFRequest95);
+    /* OWLY_GATE13A_PROBE_BEGIN: request94 entry, no payload/req_data accesses.
+     * A non-null, 8-byte-aligned address is NOT proof of kernel residency.
+     */
+    if (number == APPLE80211_IOC_VIRTUAL_IF_CREATE) {
+        owlyGate12FHit(this, "OWLY Gate13A 94_seen", &gOwly13A94Seen);
+        if (type == SIOCSA80211)
+            owlyGate12FHit(this, "OWLY Gate13A 94_type_set", &gOwly13A94TypeSet);
+        else
+            owlyGate12FHit(this, "OWLY Gate13A 94_type_other", &gOwly13A94TypeOther);
+        if (interface && _netif && interface == _netif)
+            owlyGate12FHit(this, "OWLY Gate13A 94_primary", &gOwly13A94Primary);
+        else
+            owlyGate12FHit(this, "OWLY Gate13A 94_not_primary", &gOwly13A94NotPrimary);
+        if (data) {
+            owlyGate12FHit(this, "OWLY Gate13A 94_data_nonnull", &gOwly13A94DataNonNull);
+            if ((reinterpret_cast<uintptr_t>(data) & 7U) == 0)
+                owlyGate12FHit(this, "OWLY Gate13A 94_data_aligned8", &gOwly13A94DataAligned8);
+            else
+                owlyGate12FHit(this, "OWLY Gate13A 94_data_unaligned8", &gOwly13A94DataUnaligned8);
+        } else {
+            owlyGate12FHit(this, "OWLY Gate13A 94_data_null", &gOwly13A94DataNull);
+        }
+    }
+    /* OWLY_GATE13A_PROBE_END */
+    /* OWLY_GATE13B_PROBE_BEGIN: experimental limited kernel-stack read.
+     * Instrument the exact matched IO80211FamilyLegacy 94 primary path ONLY.
+     * Never call on a different Apple Legacy binary. Conditions alone do not
+     * prove safety if another caller directly invokes apple80211Request().
+     */
+#if OWLY_GATE13B_PAYLOAD_PROBE
+    if (number == APPLE80211_IOC_VIRTUAL_IF_CREATE &&
+        type == SIOCSA80211 && interface && _netif && interface == _netif &&
+        data && ((reinterpret_cast<uintptr_t>(data) & 7U) == 0U)) {
+        owlyGate12FHit(this, "OWLY Gate13B 94_eligible", &gOwly13B94_eligible);
+        const OwlyGate13AExpectedCreateLayout *req =
+            static_cast<const OwlyGate13AExpectedCreateLayout *>(data);
+        /* Read at offsets 0 and 12 only, within Apple's zeroed 32-byte local. */
+        const uint32_t version = req->version;
+        const uint32_t role = req->role;
+        /* OWLY_GATE13C_VERSION_VALUE: publish only the already-read 32-bit
+         * version, without any new payload dereference, pointer or MAC data.
+         * IOCTL94 volume is very low; keep the last observed numeric value.
+         * UINT32_MAX is the initialization sentinel, not a valid observation.
+         */
+        setProperty("OWLY Gate13C 94_version_value", static_cast<unsigned long long>(version), 32);
+        const bool versionOK = version == APPLE80211_VERSION;
+        const bool role6 = role == RTW89_FRONT_ROLE_AIRLINK_OBSERVED;
+        if (versionOK)
+            owlyGate12FHit(this, "OWLY Gate13B 94_version_expected", &gOwly13B94_version_expected);
+        else
+            owlyGate12FHit(this, "OWLY Gate13B 94_version_other", &gOwly13B94_version_other);
+        if (role6)
+            owlyGate12FHit(this, "OWLY Gate13B 94_role6", &gOwly13B94_role6);
+        else
+            owlyGate12FHit(this, "OWLY Gate13B 94_role_other", &gOwly13B94_role_other);
+        if (versionOK && role6)
+            owlyGate12FHit(this, "OWLY Gate13B 94_combo_expected", &gOwly13B94_combo_expected);
+    }
+#endif
+    /* OWLY_GATE13B_PROBE_END */
+#if OWLY_GATE12_TRACE_ONLY && !OWLY_GATE14_REAL_VIF
+    if (number == APPLE80211_IOC_VIRTUAL_IF_CREATE ||
+        number == APPLE80211_IOC_VIRTUAL_IF_DELETE) {
+        const SInt32 seq = OSIncrementAtomic(&gOwlyG12Request);
+        if (seq < 64)
+            LOG("OWLY Gate12: request ENTER/REFUSE seq=%d number=%d primary=%u data=%u",
+                (int)seq, number, interface == _netif ? 1U : 0U, data ? 1U : 0U);
+        return kIOReturnUnsupported; /* No create, detach, copyin or copyout. */
+    }
+#endif
+    /* The legacy Apple IOCTL94/95 handlers delegate to this virtual request.
+     * Do not send these two operations into the hardware backend's ordinary
+     * station request table; create/attach is owned by the IO80211 frontend. */
+#if OWLY_GATE14_REAL_VIF
+    if (number == APPLE80211_IOC_VIRTUAL_IF_CREATE ||
+        number == APPLE80211_IOC_VIRTUAL_IF_DELETE) {
+        /* Only Apple's measured primary-interface SET request route; refuse
+         * unexpected dispatch; never inspect a userspace ioctl envelope. */
+        if (type != SIOCSA80211 || !interface || interface != _netif ||
+            !data || ((reinterpret_cast<uintptr_t>(data) & 7U) != 0U))
+            return kIOReturnUnsupported;
+        if (!_workLoop || !_owlyVifLock) return kIOReturnNotReady;
+        struct RequestCall { unsigned type; int number; void *data; SInt32 result; };
+        RequestCall call = { type, number, data, kIOReturnNotReady };
+        retain(); /* stop/free cannot invalidate controller while gate is queued */
+        IOWorkLoop *loop = _workLoop;
+        loop->retain();
+        const IOReturn rc = loop->runAction(
+            [](OSObject *owner, void *opaque, void *, void *, void *) -> IOReturn {
+                AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(owner);
+                RequestCall *args = static_cast<RequestCall *>(opaque);
+                args->result = args->number == APPLE80211_IOC_VIRTUAL_IF_CREATE ?
+                    self->owlyRequestAWDLCreate(args->type, args->data) :
+                    self->owlyRequestAWDLDelete(args->type, args->data);
+                return kIOReturnSuccess;
+            }, this, &call);
+        loop->release();
+        /* runAction has returned, so a nested stop can now finish without
+         * destroying the workloop gate while its action is still running. */
+        owlyFinishDeferredStop();
+        release();
+        return rc == kIOReturnSuccess ? call.result : (SInt32)rc;
+    }
+#endif
     SInt32 ret = ENXIO;     /* nobody there to ask */
 
     const bool there = backEnter();
     if (there)
         ret = _back.request(_back.ctx, type, number, interface, data);
     backLeave();
-    return ret;
-}
-
-/*
- * Requests on a virtual interface (awdl0). The family routes its own
- * apple80211_ioctl() here when the ioctl names a virtual interface; the
- * driver proper logs what AWDL asks for and answers what it can.
- */
-SInt32 AirPortRTW89Front::apple80211VirtualRequest(UInt type, int number,
-                                                   IO80211VirtualInterface *vif, void *data)
-{
-    SInt32 ret = ENXIO;
-    bool there;
-
-    there = backEnter();
-    if (there && _back.virtual_request)
-        ret = _back.virtual_request(_back.ctx, type, number, vif, data);
-    else
-        ret = EOPNOTSUPP;
-    backLeave();
-    if (ret == EOPNOTSUPP)
-        return super::apple80211VirtualRequest(type, number, vif, data);
+    /* Numeric 94 was observed as APPLE80211_IOC_VIRTUAL_IF_CREATE in Tahoe logs.
+     * This probe does not dereference the request or modify its result. */
+    if (number == 94 && OSIncrementAtomic(&gOwlyG09Request94) < 48)
+        LOG("OWLY Gate09: apple80211Request type=0x%x number=94 backend=%u rc=%d",
+            type, there ? 1U : 0U, (int)ret);
     return ret;
 }
 
@@ -1795,48 +1851,9 @@ IOReturn AirPortRTW89Front::disable(IONetworkInterface *iface)
     return ret;
 }
 
-/* The same path as outputPacket() below, for awdl0 rather than en1. */
-UInt32 AirPortRTW89Front::awdlOutput(mbuf_t m)
-{
-    UInt32 ret;
-
-    /* awdl0 has started sending -- its Opkts moved off zero for the first
-     * time once the link came up -- and whether any of it reaches here is a
-     * separate question from whether it reaches the air. */
-    if (!_awdlOutSeen++)
-        LOG("the first packet from awdl0 reached the driver, %u bytes",
-            m ? (unsigned int)mbuf_pkthdr_len(m) : 0);
-
-    const bool there = backEnter();
-    if (there && _back.awdl_output) {
-        ret = _back.awdl_output(_back.ctx, m);
-    } else {
-        if (m)
-            mbuf_freem(m);
-        ret = kIOReturnOutputDropped;
-    }
-    backLeave();
-    return ret;
-}
-
 UInt32 AirPortRTW89Front::outputPacket(mbuf_t m, void *param)
 {
     UInt32 ret;
-
-    /*
-     * Which interface the packet came from. The family passes the virtual
-     * interface as the param for one of its own, so a packet carrying the
-     * AWDL interface we were given is one awdl0 sent. Logged once either way:
-     * whether vif packets reach the controller at all is the open question,
-     * and the answer decides whether the data path can live here.
-     */
-    if (param && _vif && param == _vif)
-        return awdlOutput(m);
-    if (param && !_awdlParamLogged) {
-        _awdlParamLogged = true;
-        LOG("outputPacket carried a param (%p) that is not the AWDL interface (%p)",
-            param, _vif);
-    }
 
     const bool there = backEnter();
     if (there) {
@@ -1861,7 +1878,11 @@ const OSString *AirPortRTW89Front::newVendorString() const
 
 const OSString *AirPortRTW89Front::newModelString() const
 {
-    return OSString::withCString(rtw89_chip_name(_pci ? _pci->configRead16(kIOPCIConfigDeviceID) : 0));
+    /* Modified 2026-11-15: display branding; retain the detected Realtek chip. */
+    char model[96];
+    snprintf(model, sizeof(model), "RTLAirLink (%s)",
+             rtw89_chip_name(_pci ? _pci->configRead16(kIOPCIConfigDeviceID) : 0));
+    return OSString::withCString(model);
 }
 
 IONetworkInterface *AirPortRTW89Front::createInterface()
@@ -1874,6 +1895,281 @@ IONetworkInterface *AirPortRTW89Front::createInterface()
     }
     return interface;
 }
+
+/* OWLY_NATIVEFRONT_VIF_OBSERVER_BEGIN
+ * Passive native IO80211 VIF lifecycle interception (no new VIF is made here).
+ * Intentionally no outputStart/requestPacketTx/Skywalk or backend P2P binding.
+ * These are Apple callbacks; use the inherited implementation unchanged.
+ */
+/* OWLY_NATIVE_IDENTITY_BRIDGE_BEGIN */
+#if defined(RTW89_AWDL_NATIVE_FRONT_OBSERVE) && RTW89_AWDL_NATIVE_FRONT_OBSERVE
+/* ABI4.1: This checks only our previously ACKed opaque AirLink identity.
+ * Do not guess a role for other Apple virtual interfaces. */
+bool AirPortRTW89Front::owlyVifIsTracked(IO80211VirtualInterface *vif)
+{
+    if (!_owlyVifLock || !vif) return false;
+    IOLockLock(_owlyVifLock);
+    const bool tracked = _owlyAirlink.cookie == vif &&
+                         _owlyAirlink.role == RTW89_FRONT_ROLE_AIRLINK_OBSERVED;
+    IOLockUnlock(_owlyVifLock);
+    return tracked;
+}
+
+/* The callback MUST NOT run under _owlyVifLock: a callback can reenter
+ * IO80211 or disconnect. Reserve one in-flight transaction under the lock,
+ * release it for the backend call, and commit only after ACK. Reentrancy
+ * fails closed instead of blocking. backEnter() is done BEFORE taking the
+ * local lock, so disconnectBack() can drain before resetting identity.
+ * Neither this path nor ABI4 supplies a Skywalk/AWDL data path. */
+bool AirPortRTW89Front::owlyVifEventOnGate(IO80211VirtualInterface *vif, UInt role, uint32_t event,
+                                                const uint8_t request_mac[6])
+{
+    if (!_owlyVifLock || !vif) return false;
+    const bool there = backEnter();
+    if (!there) {
+        backLeave();
+        LOG("OWLY ABI4.1: backend disconnected, event=%u rejected", (unsigned int)event);
+        return false;
+    }
+    IOLockLock(_owlyVifLock);
+    if (_owlyVifBusy) {
+        IOLockUnlock(_owlyVifLock);
+        backLeave();
+        LOG("OWLY ABI4.1: in-flight event, event=%u rejected", (unsigned int)event);
+        return false;
+    }
+    struct rtw89_front_native_vif_state next = _owlyAirlink;
+    if (!rtw89_front_native_vif_update(&next, vif, role, event)) {
+        IOLockUnlock(_owlyVifLock);
+        backLeave();
+        LOG("OWLY ABI4.1: invalid VIF transition event=%u", (unsigned int)event);
+        return false;
+    }
+    _owlyVifBusy = true;
+    IOLockUnlock(_owlyVifLock);
+
+    const bool accepted = _back.vif_event &&
+                          _back.vif_event(_back.ctx, vif, role, event, request_mac);
+
+    IOLockLock(_owlyVifLock);
+    if (accepted) {
+        _owlyAirlink = next;
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        if (event==RTW89_FRONT_VIF_DISABLED && vif==_owlyNativePeerVif) {
+            _owlyNativeEnabled=false;
+            _owlyNativeEnableIssued=false;
+            _owlyNativeHaveWindow=false;
+        }
+#endif
+    }
+    _owlyVifBusy = false;
+    IOLockUnlock(_owlyVifLock);
+    backLeave();
+    if (!accepted)
+        LOG("OWLY ABI4.1: backend NACK event=%u", (unsigned int)event);
+    return accepted;
+}
+
+bool AirPortRTW89Front::owlyVifEvent(IO80211VirtualInterface *vif, UInt role, uint32_t event,
+                                       const uint8_t request_mac[6])
+{
+    if (!_workLoop) return false;
+    struct VifCall {
+        IO80211VirtualInterface *vif;
+        UInt role;
+        uint32_t event;
+        bool result;
+        bool has_mac;
+        uint8_t mac[6];
+    };
+    VifCall call = { vif, role, event, false, request_mac != nullptr, {} };
+    if (request_mac)
+        for (unsigned i = 0; i < 6; ++i) call.mac[i] = request_mac[i];
+    /* The caller/IO80211 must already own the VIF. Never dereference a
+     * detached object: callback uses only the opaque identity token. */
+    const IOReturn rc = _workLoop->runAction(
+        [](OSObject *owner, void *opaque, void *, void *, void *) -> IOReturn {
+            AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(owner);
+            VifCall *args = static_cast<VifCall *>(opaque);
+            args->result = self->owlyVifEventOnGate(args->vif, args->role, args->event,
+                                                 args->has_mac ? args->mac : nullptr);
+            return kIOReturnSuccess;
+        }, this, &call);
+    return rc == kIOReturnSuccess && call.result;
+}
+
+IO80211VirtualInterface *AirPortRTW89Front::createVirtualInterface(struct ether_addr *address,
+                                                                    UInt role)
+{
+    if (role == RTW89_FRONT_ROLE_AIRLINK_OBSERVED)
+        owlyGate12FHit(this, "OWLY Gate12F role6_factory", &gOwlyFRole6);
+#if OWLY_GATE12_TRACE_ONLY && !OWLY_GATE14_REAL_VIF
+    if (role == RTW89_FRONT_ROLE_AIRLINK_OBSERVED) {
+        const SInt32 seq = OSIncrementAtomic(&gOwlyG12VifFactory);
+        if (seq < 32)
+            LOG("OWLY Gate12: role6 factory REFUSED seq=%d mac_arg=%u",
+                (int)seq, address ? 1U : 0U);
+        return nullptr; /* Diagnostic must not allocate an AirLink VIF. */
+    }
+#endif
+    IO80211VirtualInterface *vif = nullptr;
+    if (role == RTW89_FRONT_ROLE_AIRLINK_OBSERVED) {
+        /* Role 6 is AWDL. The original P2P subclass trials were made
+         * BEFORE the Apple Virtual GET12 / Cap12 bridge was fixed. Their
+         * init failures are not sufficient evidence the subclass is invalid.
+         * CAP12 was subsequently observed working; retry the subclass ONLY
+         * as a compile-time opt-in, with the existing init/attach/rollback.
+         * A successful init remains INSUFFICIENT to prove AWDL RX/TX. */
+        if (!address) {
+            owlyGate12FHit(this, "OWLY ABI5Diag factory_no_mac", &gOwlyDiagFNoMac);
+            setProperty("OWLY ABI5Diag factory_last", 1ULL, 32);
+            LOG("OWLY M1: refusing AirLink VIF without MAC address");
+            return nullptr;
+        }
+#if OWLY_ABI6_NATIVE_P2P_FACTORY
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        IO80211VirtualInterface *airlink = OSTypeAlloc(OwlyNativeP2PInterface);
+#else
+        IO80211VirtualInterface *airlink = OSTypeAlloc(IO80211P2PInterface);
+#endif
+#else
+        IO80211VirtualInterface *airlink = OSTypeAlloc(IO80211VirtualInterface);
+#endif
+        if (airlink) {
+            if (airlink->init(this, address, role, "awdl")) {
+                vif = airlink;
+                owlyGate12FHit(this, "OWLY ABI5Diag factory_ready", &gOwlyDiagFReady);
+                setProperty("OWLY ABI5Diag factory_last", 4ULL, 32);
+            } else {
+                owlyGate12FHit(this, "OWLY ABI5Diag factory_init_fail", &gOwlyDiagFInitFail);
+                setProperty("OWLY ABI5Diag factory_last", 3ULL, 32);
+                airlink->release();
+            }
+        } else {
+            owlyGate12FHit(this, "OWLY ABI5Diag factory_alloc_fail", &gOwlyDiagFAllocFail);
+            setProperty("OWLY ABI5Diag factory_last", 2ULL, 32);
+        }
+#if OWLY_ABI6_NATIVE_P2P_FACTORY
+        LOG("OWLY ABI6: role6 P2P SUBCLASS factory object=%s (NO NATIVE RX/TX)",
+            vif ? "yes" : "no");
+#else
+        LOG("OWLY M1: role6 BASE factory object=%s", vif ? "yes" : "no");
+#endif
+    } else {
+        /* All other Apple role behaviour remains exactly inherited. */
+        vif = super::createVirtualInterface(address, role);
+    }
+    LOG("OWLY ABI4.1: createVirtualInterface role=%u object=%s",
+        (unsigned int)role, vif ? "yes" : "no");
+    /* M2: do NOT ACK a class object before Apple has attached it.  A failed
+     * attach releases this object internally and must leave backend identity
+     * empty.  The IOCTL create transaction ACKs after attach succeeds. */
+    return vif;
+}
+
+/* Apple may enable/disable a VIF without a request95 transaction. Serialize
+ * both operations with IOCTL94/95 and stop on the *same* workloop gate. */
+SInt32 AirPortRTW89Front::enableVirtualInterface(IO80211VirtualInterface *interface)
+{
+    if (!_workLoop || !_owlyVifLock) return kIOReturnNotReady;
+    retain();
+    IOWorkLoop *loop = _workLoop;
+    loop->retain();
+    struct Args { IO80211VirtualInterface *vif; SInt32 result; } args = { interface, kIOReturnNotReady };
+    const IOReturn rc = loop->runAction(
+        [](OSObject *owner, void *opaque, void *, void *, void *) -> IOReturn {
+            AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(owner);
+            Args *a = static_cast<Args *>(opaque);
+            a->result = self->owlyEnableVirtualInterfaceOnGate(a->vif);
+            return kIOReturnSuccess;
+        }, this, &args);
+    loop->release();
+    owlyFinishDeferredStop();
+    release();
+    return rc == kIOReturnSuccess ? args.result : (SInt32)rc;
+}
+
+SInt32 AirPortRTW89Front::disableVirtualInterface(IO80211VirtualInterface *interface)
+{
+    if (!_workLoop || !_owlyVifLock) return kIOReturnNotReady;
+    retain();
+    IOWorkLoop *loop = _workLoop;
+    loop->retain();
+    struct Args { IO80211VirtualInterface *vif; SInt32 result; } args = { interface, kIOReturnNotReady };
+    const IOReturn rc = loop->runAction(
+        [](OSObject *owner, void *opaque, void *, void *, void *) -> IOReturn {
+            AirPortRTW89Front *self = static_cast<AirPortRTW89Front *>(owner);
+            Args *a = static_cast<Args *>(opaque);
+            a->result = self->owlyDisableVirtualInterfaceOnGate(a->vif);
+            return kIOReturnSuccess;
+        }, this, &args);
+    loop->release();
+    owlyFinishDeferredStop();
+    release();
+    return rc == kIOReturnSuccess ? args.result : (SInt32)rc;
+}
+
+SInt32 AirPortRTW89Front::owlyEnableVirtualInterfaceOnGate(IO80211VirtualInterface *interface)
+{
+    IOLockLock(_owlyVifLock);
+    if (_owlyAWDLStopping || _owlyVifMethodBusy) {
+        IOLockUnlock(_owlyVifLock);
+        return kIOReturnNotReady;
+    }
+    _owlyVifMethodBusy = true;
+    IOLockUnlock(_owlyVifLock);
+
+    SInt32 ret = super::enableVirtualInterface(interface);
+    LOG("OWLY M2.2: enableVirtualInterface inherited=0x%x", (unsigned int)ret);
+    if (ret == kIOReturnSuccess && interface && owlyVifIsTracked(interface) &&
+        !owlyVifEvent(interface, RTW89_FRONT_ROLE_AIRLINK_OBSERVED,
+                      RTW89_FRONT_VIF_ENABLED)) {
+        LOG("OWLY M2.2: AirLink enable NACK; rolling back Apple enable");
+        SInt32 undo = super::disableVirtualInterface(interface);
+        if (undo != kIOReturnSuccess)
+            LOG("OWLY M2.2: Apple enable rollback failed rc=%d", (int)undo);
+        ret = kIOReturnNotReady;
+    }
+    IOLockLock(_owlyVifLock);
+    _owlyVifMethodBusy = false;
+    IOLockUnlock(_owlyVifLock);
+    return ret;
+}
+
+SInt32 AirPortRTW89Front::owlyDisableVirtualInterfaceOnGate(IO80211VirtualInterface *interface)
+{
+    IOLockLock(_owlyVifLock);
+    /* Apple invokes disable while detachVirtualInterface is running,
+     * including on the stop path. Do not block the teardown itself. */
+    if (_owlyVifMethodBusy) {
+        IOLockUnlock(_owlyVifLock);
+        return kIOReturnNotReady;
+    }
+    _owlyVifMethodBusy = true;
+    IOLockUnlock(_owlyVifLock);
+
+#if defined(OWLY_AWDL_SERVICE_LIFECYCLE) && OWLY_AWDL_SERVICE_LIFECYCLE
+    if (interface && owlyVifIsTracked(interface)) {
+        interface->IO80211VirtualInterface::setEnabledBySystem(false);
+        interface->IO80211VirtualInterface::setLinkState(kIO80211NetworkLinkDown, 1);
+        setProperty("OwlyServiceCarrierPrepared", 0ULL, 32);
+        setProperty("OwlyServiceSystemEnableRequested", 0ULL, 32);
+    }
+#endif
+    if (interface && owlyVifIsTracked(interface) &&
+        !owlyVifEvent(interface, RTW89_FRONT_ROLE_AIRLINK_OBSERVED,
+                      RTW89_FRONT_VIF_DISABLED))
+        LOG("OWLY M2.2: AirLink disable NACK; backend state unverified");
+    SInt32 ret = super::disableVirtualInterface(interface);
+    LOG("OWLY M2.2: disableVirtualInterface inherited=0x%x", (unsigned int)ret);
+    IOLockLock(_owlyVifLock);
+    _owlyVifMethodBusy = false;
+    IOLockUnlock(_owlyVifLock);
+    return ret;
+}
+#endif
+/* OWLY_NATIVE_IDENTITY_BRIDGE_END */
+/* OWLY_NATIVEFRONT_VIF_OBSERVER_END */
 
 IOReturn AirPortRTW89Front::selectMedium(const IONetworkMedium *medium)
 {

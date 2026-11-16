@@ -27,11 +27,90 @@
 #include <stdint.h>
 #include <sys/kernel_types.h>   /* mbuf_t */
 
-#define RTW89_FRONT_API_VERSION 9
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+#include "owly_abi6_packet.h"
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+#include "owly_native_link.h"
+#endif
+#endif
+/* 10: RTLAirLink's native AWDL bridge on top of 9 (the front's log line). */
+#define RTW89_FRONT_API_VERSION 10
 #define RTW89_FRONT_CLASS       "AirPortRTW89Front"
 /* callPlatformFunction(name, true, back ops, front ops out, 0, 0) */
 #define RTW89_FRONT_CONNECT     "RTW89FrontConnect"
 #define RTW89_FRONT_DISCONNECT  "RTW89FrontDisconnect"
+
+
+/* OWLY_NATIVE_IDENTITY_BRIDGE_BEGIN
+ * AirLink (role 6 on the observed Tahoe IO80211Legacy path) is not a
+ * promise of native AWDL support. VIF pointers are identity tokens only.
+ * No data packet and no ownership of a VIF is transferred by this callback.
+ */
+#define RTW89_FRONT_ROLE_AIRLINK_OBSERVED 6u
+#define RTW89_FRONT_VIF_CREATED  1u
+#define RTW89_FRONT_VIF_ENABLED  2u
+#define RTW89_FRONT_VIF_DISABLED 3u
+#define RTW89_FRONT_VIF_DESTROYED 4u
+/* A read-only query through the existing private callback, NOT a transition.
+ * Old backends reject the unknown event. No table size or API version changes.
+ * Requires the exact already-ACKed cookie and no request MAC payload. */
+#define RTW89_FRONT_VIF_SERVICE_READY 5u
+/* OWLY_NATIVE_IDENTITY_BRIDGE_END */
+/* Identity tracking only: no packet ownership or Apple object dereference. */
+/* OWLY ABI4: identity tokens only; neither side owns the Apple object.
+ * The caller must serialize transitions (see _owlyVifLock in the frontend).
+ * Do not infer AWDL TX/RX capability from enabled=true.
+ */
+struct rtw89_front_native_vif_state {
+    void *cookie;
+    uint32_t role;
+    bool enabled;
+};
+static inline void rtw89_front_native_vif_reset(struct rtw89_front_native_vif_state *s)
+{
+    if (!s) return;
+    s->cookie = NULL;
+    s->role = 0;
+    s->enabled = false;
+}
+static inline bool rtw89_front_native_vif_update(struct rtw89_front_native_vif_state *s,
+                                                 void *cookie, uint32_t role, uint32_t event)
+{
+    if (!s || !cookie || role != RTW89_FRONT_ROLE_AIRLINK_OBSERVED)
+        return false;
+    switch (event) {
+    case RTW89_FRONT_VIF_CREATED:
+        /* Same identity is idempotent: never demote an enabled interface.
+         * Another identity cannot replace a live interface. */
+        if (s->cookie == cookie && s->role == role) return true;
+        if (s->cookie) return false; /* no replacement before DESTROYED */
+        s->cookie = cookie;
+        s->role = role;
+        s->enabled = false;
+        return true;
+    case RTW89_FRONT_VIF_ENABLED:
+        if (s->cookie != cookie || s->role != role) return false;
+        s->enabled = true;
+        return true;
+    case RTW89_FRONT_VIF_DISABLED:
+        if (s->cookie != cookie || s->role != role) return false;
+        s->enabled = false;
+        return true;
+    case RTW89_FRONT_VIF_DESTROYED:
+        /* A live interface may not be forgotten before it is disabled. */
+        if (s->cookie != cookie || s->role != role || s->enabled) return false;
+        rtw89_front_native_vif_reset(s);
+        return true;
+    default:
+        return false;
+    }
+}
+/* No Skywalk dequeue/RX support exists: fail closed regardless of VIF state. */
+static inline bool rtw89_front_native_awdl_tx_ready(const struct rtw89_front_native_vif_state *s)
+{
+    (void)s;
+    return false;
+}
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,43 +143,11 @@ struct rtw89_front_ops {
      * received EAPOL frames are handed to IO80211 and the keys come back as
      * APPLE80211_IOC_CIPHER_KEY requests. */
     void (*set_apple_rsn)(void *ctx, bool on);
-    /* A virtual interface of the family's (awdl0 for role 6, AWDL): created
-     * for a VIRTUAL_IF_CREATE request, its BSD name written to @bsd_name
-     * (16 bytes). One at a time. 0 or an errno. */
-    int (*create_vif)(void *ctx, const uint8_t mac[6], uint32_t role, char *bsd_name);
-    void (*destroy_vif)(void *ctx);
-    /* A received AWDL action frame for IO80211's AWDL engine: handed to the
-     * virtual interface, which gives it to IO80211AWDLPeerManager. @frame is
-     * the action frame body with the 802.11 header stripped -- the category
-     * byte first, then the vendor OUI -- which is where isValidAF() looks for
-     * the OUI and getTlvPtrForType() counts the TLVs from. @peer is its
-     * transmitter, @channel the channel it arrived on and @rssi its strength
-     * in dBm, without which the family calls the peer unreachable and refuses
-     * to create it. Only valid during the call. */
-    void (*awdl_rx)(void *ctx, const uint8_t *frame, size_t len,
-                    const uint8_t peer[6], uint32_t channel, int8_t rssi);
-    /*
-     * A received AWDL data frame, already turned into the 802.3 frame awdl0
-     * works in: destination, source, length, and then the payload exactly as
-     * it arrived -- Apple's SNAP header and AWDL data header included, since
-     * the stack above expects to find them there.
-     *
-     * The action frames above only carry discovery. A transfer needs this:
-     * without it awdl0 receives nothing at all (Ipkts 0 with the sync frames
-     * flowing), so the mDNS reply and every packet of the TCP that follows
-     * are lost and AirDrop never gets past "Waiting...".
-     */
-    void (*awdl_data_rx)(void *ctx, const uint8_t *eth, size_t len);
-    /*
-     * An availability window has begun: @aw_seq is its number on the followed
-     * master's timeline and @master that master's address.
-     *
-     * The family keeps its own idea of the timeline and will not move its
-     * data path along without being told. Its service parameters TLV went out
-     * as nine zero bytes -- we advertise no services at all, so a peer has
-     * nothing to show -- and this is the one input it has never had from us.
-     */
-    void (*awdl_window)(void *ctx, uint32_t aw_seq, const uint8_t master[6]);
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    /* Synchronous borrowed pointer to an already owned packet. Return true
+     * ONLY after a real Apple native P2P consumer has consumed it. */
+    bool (*owly_rx_handoff)(void *ctx, const struct owly_abi6_packet *pkt);
+#endif
 };
 
 /* What the back does for the front. */
@@ -126,20 +173,6 @@ struct rtw89_back_ops {
     uint32_t (*output)(void *ctx, mbuf_t m);
     /* The system goes to sleep (false) or has woken (true). */
     void (*power)(void *ctx, bool on);
-    /* IO80211Controller::apple80211VirtualRequest(): a get or set on a
-     * virtual interface (awdl0) */
-    int (*virtual_request)(void *ctx, unsigned int type, int number, void *virtual_interface,
-                           void *data);
-    /*
-     * An Ethernet frame the family handed to awdl0, from
-     * IO80211VirtualInterface::outputPacket(). Same contract as output()
-     * above: the mbuf is the back's unless it stalls.
-     *
-     * Discovery works without this -- a peer finds us from the sync frames
-     * alone -- but a transfer does not: AirDrop stops at "Waiting..." with
-     * every packet of the connection going nowhere.
-     */
-    uint32_t (*awdl_output)(void *ctx, mbuf_t m);
     /*
      * One already-formatted line for the driver's log ring, the one
      * `rtw89ctl log` reads.
@@ -152,6 +185,14 @@ struct rtw89_back_ops {
      * both halves of one event can be read in one place and in order.
      */
     void (*log)(void *ctx, const char *line);
+    /* OWLY_NATIVE_IDENTITY_BRIDGE_BEGIN: ABI v4: acknowledged AirLink VIF lifecycle. */
+    bool (*vif_event)(void *ctx, void *vif_identity, uint32_t role, uint32_t event,
+                      const uint8_t request_mac[6]); /* non-NULL only for CREATED */
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    uint32_t (*native_output)(void *ctx,mbuf_t m);
+    int (*native_window)(void *ctx,struct owly_link_window *window);
+#endif
+    /* OWLY_NATIVE_IDENTITY_BRIDGE_END */
 };
 
 #ifdef __cplusplus

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * The driver's core.c, unmodified, plus one function that needs access to its
+ * The driver's core.c plus one function that needs access to its
  * static helpers. This file is compiled in place of third_party/rtw89/core.c.
  *
  * Why: rtw89_core_rx() parks every received data frame on ppdu_sts.rx_queue
@@ -15,39 +15,20 @@
  */
 #include "core.c"
 
-/*
- * Whether an AWDL frame may be handed to rtw89_ops_tx() for this vif.
- *
- * rtw89_core_tx_write() finds the link with rtw89_get_designated_link(), which
- * is list_first_entry_or_null() over rtwvif->dlink_pool. On a vif whose link
- * pool has never been set up, or has just been torn down, that list head is
- * zeroed: head->next is NULL, which is not equal to head, so the list does not
- * look empty, and container_of(NULL, struct rtw89_vif_link, dlink_schd) comes
- * back as a pointer eight bytes below zero. It survives the driver's own
- * `if (!rtwvif_link)` check and is dereferenced one line later. That is the
- * panic at rtw89_core_tx_write_link+0x2e with CR2 0xfffffffffffffff8, hit by
- * the availability-window clock still firing while the radio was going down.
- *
- * Checking the list head itself is what the driver cannot do for us here, so
- * the AWDL path asks first. Ordinary traffic never reaches this: it is sent
- * with a station, which takes the other branch.
- */
-bool rtw89_compat_vif_can_tx(struct ieee80211_vif *vif);
-bool rtw89_compat_vif_can_tx(struct ieee80211_vif *vif)
+#if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+#include "owly_awdl_self_addr.inc"
+#include "owly_unicast_observe.h"
+void rtw89_compat_awdl_rx_note(const struct rtw89_rx_desc_info *d,const struct sk_buff *skb)
 {
-    struct rtw89_vif *rtwvif;
-
-    if (!vif)
-        return false;
-    rtwvif = vif_to_rtwvif(vif);
-    if (!rtwvif)
-        return false;
-    if (!rtwvif->dlink_pool.next || !rtwvif->dlink_pool.prev)
-        return false;
-    if (list_empty(&rtwvif->dlink_pool))
-        return false;
-    return rtw89_get_designated_link(rtwvif) != NULL;
+    static volatile unsigned long samples;
+    if(!d || !skb || !owly_observe_unicast_frame(skb->data,skb->len))return;
+    const unsigned long count=__sync_add_and_fetch(&samples,1ul);
+    if(count>8ul && (count&(count-1ul)))return;
+    IOLog("OWLY unicast RX hardware: count=%lu crc=%u icv=%u cam_valid=%u cam=%u a1=%u macid=%u bytes=%u\n",
+          count,(unsigned)d->crc32_err,(unsigned)d->icv_err,(unsigned)d->addr_cam_valid,
+          (unsigned)d->addr_cam_id,(unsigned)d->addr1_match,(unsigned)d->mac_id,(unsigned)skb->len);
 }
+#endif
 
 /* Pass on whatever is still waiting for a PPDU status report. Must run on the
  * thread that calls rtw89_core_rx(). Returns the number of frames. */
@@ -91,27 +72,3 @@ unsigned int rtw89_compat_flush_ppdu_rx(struct rtw89_dev *rtwdev)
  * nothing, which is what makes a join putting the station's address back
  * behind the glue's back harmless.
  */
-int rtw89_compat_set_self_addr(struct ieee80211_vif *vif, const u8 *addr);
-int rtw89_compat_set_self_addr(struct ieee80211_vif *vif, const u8 *addr)
-{
-    struct rtw89_vif_link *rtwvif_link;
-    struct rtw89_vif *rtwvif;
-    struct rtw89_dev *rtwdev;
-    int ret;
-
-    if (!vif || !addr)
-        return -EINVAL;
-    if (!rtw89_compat_vif_can_tx(vif))
-        return -ENETDOWN;
-    rtwvif = vif_to_rtwvif(vif);
-    rtwdev = rtwvif->rtwdev;
-    rtwvif_link = rtw89_get_designated_link(rtwvif);
-    if (!rtwdev || !rtwvif_link)
-        return -ENETDOWN;
-    if (ether_addr_equal(rtwvif_link->mac_addr, addr))
-        return 0;               /* already there: nothing was changed */
-    ether_addr_copy(rtwvif_link->mac_addr, addr);
-    ret = rtw89_fw_h2c_cam(rtwdev, rtwvif_link, NULL, addr,
-                           RTW89_ROLE_INFO_CHANGE);
-    return ret ? ret : 1;       /* 1: it was changed, so a caller can say so */
-}

@@ -4,6 +4,7 @@
  * rtw89_net80211.h. Behaviour follows net/wireless/{core,util,chan,scan,reg}.c.
  */
 #include "rtw89_net80211.h"
+#include <linux/etherdevice.h>
 
 /* ------------------------------------------------------------------ */
 /*  wiphy allocation                                                    */
@@ -223,6 +224,75 @@ bool wiphy_delayed_work_pending(struct wiphy *wiphy, struct wiphy_delayed_work *
 /*  Regulatory                                                          */
 /* ------------------------------------------------------------------ */
 
+/* OWLY_WORLD_BEACON_BEGIN
+ * This port has world channel flags and country TX-power notifications,
+ * not a country channel database. Narrow Linux world beacon hinting to
+ * the associated AP on SCC channels44/149. Preserve orig hardware flags,
+ * custom domains, DFS, every other flag and all power caps. No RF here.
+ */
+bool rtw89_cfg80211_link_beacon(struct wiphy *wiphy,
+                              struct ieee80211_channel *channel,
+                              const u8 bssid[6], const u8 source[6], u16 capability)
+{
+#if defined(OWLY_WORLD_BEACON_HINT) && OWLY_WORLD_BEACON_HINT
+    struct rtw89_cfg80211_rdev *rdev;
+    struct ieee80211_supported_band *band;
+    bool owned = false;
+    int i;
+    if (!wiphy || !channel || !bssid || !source)
+        return false;
+    lockdep_assert_wiphy(wiphy);
+    rdev = wiphy_to_rdev(wiphy);
+    if (rdev->owly_beacon_channel || wiphy->regd ||
+        (wiphy->regulatory_flags & (REGULATORY_DISABLE_BEACON_HINTS |
+                                   REGULATORY_WIPHY_SELF_MANAGED |
+                                   REGULATORY_CUSTOM_REG)))
+        return false;
+    if (!(capability & WLAN_CAPABILITY_ESS) || (capability & WLAN_CAPABILITY_IBSS) ||
+        !is_valid_ether_addr(bssid) || !ether_addr_equal(bssid, source))
+        return false;
+    band = wiphy->bands[NL80211_BAND_5GHZ];
+    for (i = 0; band && i < band->n_channels; i++)
+        if (channel == &band->channels[i]) {
+            owned = true;
+            break;
+        }
+    if (!owned || channel->band != NL80211_BAND_5GHZ ||
+        (channel->center_freq != 5220 && channel->center_freq != 5745) ||
+        !(channel->flags & IEEE80211_CHAN_NO_IR) ||
+        (channel->flags & (IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_RADAR)) ||
+        (channel->orig_flags & (IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_RADAR |
+                                IEEE80211_CHAN_NO_IR)))
+        return false;
+    channel->flags &= ~IEEE80211_CHAN_NO_IR;
+    rdev->owly_beacon_channel = channel;
+    return true;
+#else
+    (void)wiphy; (void)channel; (void)bssid; (void)source; (void)capability;
+    return false;
+#endif
+}
+
+bool rtw89_cfg80211_link_beacon_reset(struct wiphy *wiphy)
+{
+#if defined(OWLY_WORLD_BEACON_HINT) && OWLY_WORLD_BEACON_HINT
+    struct rtw89_cfg80211_rdev *rdev;
+    if (!wiphy)
+        return false;
+    lockdep_assert_wiphy(wiphy);
+    rdev = wiphy_to_rdev(wiphy);
+    if (!rdev->owly_beacon_channel)
+        return false;
+    rdev->owly_beacon_channel->flags |= IEEE80211_CHAN_NO_IR;
+    rdev->owly_beacon_channel = NULL;
+    return true;
+#else
+    (void)wiphy;
+    return false;
+#endif
+}
+/* OWLY_WORLD_BEACON_END */
+
 /*
  * There is no regulatory database here. A driver hint is echoed back through
  * wiphy->reg_notifier, as the Linux core does once it has accepted the hint;
@@ -413,6 +483,8 @@ void rtw89_cfg80211_country_ie(struct wiphy *wiphy, const u8 *alpha2)
     /* "XX" and the like: not a country the tables know */
     if (alpha2 && (a0 < 'A' || a0 > 'Z' || a1 < 'A' || a1 > 'Z'))
         return;
+    /* Revoke the owned hint before a country/TX-power transition (RTLAirLink). */
+    rtw89_cfg80211_link_beacon_reset(wiphy);
     rdev->ie_country = alpha2 != NULL;
     if (!alpha2) {
         /* leaving: back to macOS's country, not the world domain */
@@ -438,8 +510,10 @@ void rtw89_cfg80211_set_country(struct wiphy *wiphy, const char *alpha2)
         return;
     rdev->base_alpha2[0] = alpha2[0];
     rdev->base_alpha2[1] = alpha2[1];
-    if (!rdev->ie_country)
+    if (!rdev->ie_country) {
+        rtw89_cfg80211_link_beacon_reset(wiphy);
         rtw89_cfg80211_request_base(rdev);
+    }
 }
 
 /* ------------------------------------------------------------------ */

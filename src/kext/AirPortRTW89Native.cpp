@@ -12,6 +12,7 @@
 #include "AirPortRTW89.hpp"
 #include "rtw89_chips.h"
 #include "rtw89_scan_ioctl.hpp"
+#include "../rtw89_release.h"
 
 #include <IOKit/80211/apple80211_ioctl.h>
 #include <IOKit/80211/apple80211_var.h>
@@ -22,6 +23,10 @@
 #include <sys/errno.h>
 #include <sys/kpi_mbuf.h>
 #include <sys/systm.h>
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+#include "OwlyAwdlEntitlement.hpp"
+#include <kern/task.h>
+#endif
 
 #define LOG(fmt, ...) IOLog("AirPort_RTW89: " fmt "\n", ##__VA_ARGS__)
 
@@ -40,6 +45,7 @@ struct AirPort_RTW89::NativeState {
     unsigned int scanOrderLen = 0;
     bool scanInProgress = false;
     bool scanBootstrapTried = false;
+    uint64_t awdlScansDeferred = 0;
     uint64_t lastConnectedScan = 0;     /* uptime (ns) of the last scan while connected */
     uint32_t authLower = APPLE80211_AUTHTYPE_OPEN;
     uint32_t authUpper = APPLE80211_AUTHTYPE_NONE;
@@ -60,80 +66,15 @@ struct AirPort_RTW89::NativeState {
     /* Request numbers already logged as not answered here, one bit each, so
      * that a request macOS repeats does not fill the log. */
     uint64_t seenUnhandled[RTW89_SEEN_WORDS] = {};
-    uint64_t seenVirtual[RTW89_SEEN_WORDS] = {};
-    char vifName[16] = {};
-    uint8_t vifMac[6] = {};     /* the AWDL address, the sender of our frames */
-    bool vifUp = false;
-    bool awdlSyncEnabled = false;   /* what macOS last asked for on awdl0 */
-    bool awdlSyncOff = false;       /* macOS asked for sync off, explicitly */
-    uint8_t awdlClockChannel = 0;   /* the channel the schedule is describing */
-    bool awdlClockOn = false;       /* whether the window clock is running */
-    unsigned int awdlScanHeld = 0;  /* scans answered from the cache for it */
-    uint8_t awdlMasterChannel = 0;  /* the followed master's own channel */
-    uint16_t awdlHeldFreq = 0;      /* the frequency asked for with nothing joined */
-    uint8_t awdlHoldWhy = 0xff;     /* why it is not being held; see awdlChannelHold() */
-    uint64_t lastAwdlScan = 0;      /* when the last full scan ran under it */
-    bool awdlJoinedOnce = false;    /* a network has been joined since we started */
-    bool awdlDeliverOn = false;     /* whether promiscuous receive is on for AWDL */
-    bool awdlWaitedForJoin = false; /* the wait for a first join has been logged */
-    /* The sync frame the family builds for us to put on air. Broadcom's
-     * setAWDL_SYNC_FRAME_TEMPLATE allocates 0x724 bytes for it, so that is the
-     * size the family expects to be able to hand over. */
-    uint8_t awdlTemplate[1826] = {};
-    size_t awdlTemplateLen = 0;
-    uint32_t awdlElectionMetric = 0;
+    /* OWLY_NATIVE_IDENTITY_BRIDGE_BEGIN: opaque Apple identity only. */
+    struct rtw89_front_native_vif_state airlink = {};
+    /* OWLY_NATIVE_IDENTITY_BRIDGE_END */
 };
 
 /* The AWDL requests we have seen the family make, by number, so the log reads
  * without apple80211_ioctl.h open beside it. */
-static const char *awdlRequestName(int number)
-{
-    switch (number) {
-    case APPLE80211_IOC_SSID:                       return "SSID";
-    case APPLE80211_IOC_CARD_CAPABILITIES:          return "CARD_CAPABILITIES";
-    case APPLE80211_IOC_POWER:                      return "POWER";
-    case APPLE80211_IOC_SUPPORTED_CHANNELS:         return "SUPPORTED_CHANNELS";
-    case APPLE80211_IOC_AWDL_SYNC_PARAMS:           return "AWDL_SYNC_PARAMS";
-    case APPLE80211_IOC_AWDL_SYNC_ENABLED:          return "AWDL_SYNC_ENABLED";
-    case APPLE80211_IOC_AWDL_ELECTION_METRIC:       return "AWDL_ELECTION_METRIC";
-    case APPLE80211_IOC_AWDL_ELECTION_ID:           return "AWDL_ELECTION_ID";
-    case APPLE80211_IOC_AWDL_BSSID:                 return "AWDL_BSSID";
-    case APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE:
-                                                    return "AWDL_SYNC_CHANNEL_SEQUENCE";
-    case APPLE80211_IOC_AWDL_MASTER_CHANNEL:        return "AWDL_MASTER_CHANNEL";
-    case APPLE80211_IOC_AWDL_SYNC_STATE:            return "AWDL_SYNC_STATE";
-    case APPLE80211_IOC_AWDL_PRESENCE_MODE:         return "AWDL_PRESENCE_MODE";
-    case APPLE80211_IOC_AWDL_SYNC_FRAME_TEMPLATE:   return "AWDL_SYNC_FRAME_TEMPLATE";
-    case APPLE80211_IOC_AWDL_PEER_TRAFFIC_REGISTRATION:
-                                                    return "AWDL_PEER_TRAFFIC_REGISTRATION";
-    case APPLE80211_IOC_AWDL_OOB_REQUEST:           return "AWDL_OOB_REQUEST";
-    case APPLE80211_IOC_AWDL_AES_KEY:               return "AWDL_AES_KEY";
-    case APPLE80211_IOC_AWDL_SOCIAL_TIME_SLOTS:     return "AWDL_SOCIAL_TIME_SLOTS";
-    case APPLE80211_IOC_AWDL_DEVICE_CAPABILITIES:   return "AWDL_DEVICE_CAPABILITIES";
-    case APPLE80211_IOC_AWDL_STRATEGY:              return "AWDL_STRATEGY";
-    case APPLE80211_IOC_AWDL_CTL:                   return "AWDL_CTL";
-    default:                                        return "?";
-    }
-}
 
 /* The first bytes of a buffer, for the log. */
-static void logHex(const char *what, const uint8_t *v, size_t len, size_t show)
-{
-    char line[3 * 24 + 1];
-    size_t off, n = len < show ? len : show;
-
-    LOG("awdl: %s, %u bytes%s:", what, (unsigned int)len, len > n ? " (the start of it)" : "");
-    /* in full, 24 to a line with its offset: these are frames we have to put
-     * on air byte for byte, so the tail of one matters as much as its head */
-    for (off = 0; off < n; off += 24) {
-        size_t i, m = n - off < 24 ? n - off : 24;
-
-        for (i = 0; i < m; i++)
-            snprintf(line + 3 * i, sizeof(line) - 3 * i, "%02x ", v[off + i]);
-        line[3 * m - 1] = '\0';
-        LOG("awdl:   %04x  %s", (unsigned int)off, line);
-    }
-}
 
 /* True the first time @number is seen. The bitmap covers every request number
  * the family knows (the highest in apple80211_ioctl.h is 353); a number past
@@ -188,19 +129,6 @@ extern "C" bool rtw89_awdl_own_mac;
  * the virtual interface awdl0 on this card, and every request that arrives on
  * it is logged. Off by default; normal Wi-Fi behaves as before either way.
  */
-static bool awdlEnabled()
-{
-    static int state;   /* 0: not read yet, 1: on, 2: off */
-
-    if (!state) {
-        int dummy;
-
-        state = PE_parse_boot_argn("-rtw89awdl", &dummy, sizeof(dummy)) ? 1 : 2;
-        rtw89_awdl_strip_tlvs = PE_parse_boot_argn("-rtw89awdlstrip", &dummy, sizeof(dummy));
-        rtw89_awdl_own_mac = PE_parse_boot_argn("-rtw89awdlmac", &dummy, sizeof(dummy));
-    }
-    return state == 1;
-}
 
 /*
  * Whether AWDL may cost something while nothing wants it (-rtw89awdlalways).
@@ -220,17 +148,6 @@ static bool awdlEnabled()
  * This boot-arg puts back the old unconditional behaviour, for comparing the
  * two or for a machine that never joins anything.
  */
-static bool awdlAlways()
-{
-    static int state;   /* 0: not read yet, 1: on, 2: off */
-
-    if (!state) {
-        int dummy;
-
-        state = PE_parse_boot_argn("-rtw89awdlalways", &dummy, sizeof(dummy)) ? 1 : 2;
-    }
-    return state == 1;
-}
 
 struct Scratch {
     void *p;
@@ -241,73 +158,6 @@ struct Scratch {
     Scratch(const Scratch &) = delete;
     Scratch &operator=(const Scratch &) = delete;
 };
-
-/* Where 2.4 GHz AWDL peers listen when we have no association to follow. */
-#define AWDL_SOCIAL_CHANNEL 6
-
-/*
- * Which social channel to sit on, unassociated: 6 unless boot-arg
- * rtw89awdlchan says otherwise.
- *
- * Sitting on 6 the card hears almost no AWDL at all -- 11 frames on the AWDL
- * BSSID against 7168 offered to the path in a minute, while every sync frame
- * we sent went out on time. Peers answer on the channel their own schedule
- * names, and the one capture taken from an iPhone gave master channel 6 with
- * the next window on 44, so most of its time is spent on 5 GHz. Which of the
- * three is worth holding is a question for the card rather than for a guess,
- * and this makes it one reboot instead of one build.
- */
-/*
- * Read once and said out loud, because 6 is also the default: every run so
- * far reported "channel 6" whether the boot-arg had been understood or not,
- * and a later switch to the association's channel showed that it had not.
- * Both forms are accepted -- PE_parse_boot_argn fills an int for
- * rtw89awdlchan=44 and a string for some boot loaders -- and what was found
- * is logged rather than assumed.
- */
-static bool gAwdlChanRead;
-static unsigned int gAwdlChan;
-
-static void awdlReadChannelArg()
-{
-    unsigned int n = 0;
-    char str[8] = {};
-
-    if (gAwdlChanRead)
-        return;
-    gAwdlChanRead = true;
-    if (PE_parse_boot_argn("rtw89awdlchan", &n, sizeof(n)) &&
-        (n == 6 || n == 44 || n == 149))
-        gAwdlChan = n;
-    else if (PE_parse_boot_argn("rtw89awdlchan", str, sizeof(str) - 1)) {
-        unsigned int v = 0;
-
-        for (size_t i = 0; i < sizeof(str) && str[i] >= '0' && str[i] <= '9'; i++)
-            v = v * 10 + (unsigned int)(str[i] - '0');
-        if (v == 6 || v == 44 || v == 149)
-            gAwdlChan = v;
-    }
-    if (gAwdlChan)
-        IOLog("AirPort_RTW89: awdl: boot-arg rtw89awdlchan asks for channel %u; "
-              "it is held whatever the association does\n", gAwdlChan);
-    else
-        IOLog("AirPort_RTW89: awdl: no rtw89awdlchan boot-arg, so the channel "
-              "follows the association and falls back to %u\n", AWDL_SOCIAL_CHANNEL);
-}
-
-static uint8_t awdlSocialChannel()
-{
-    awdlReadChannelArg();
-    return gAwdlChan ? (uint8_t)gAwdlChan : AWDL_SOCIAL_CHANNEL;
-}
-
-/* Whether that boot-arg was given, which also makes it outrank the
- * association's channel; see awdlClockUpdate(). */
-static bool awdlChannelAsked()
-{
-    awdlReadChannelArg();
-    return gAwdlChan != 0;
-}
 
 static unsigned int channelOfFreq(unsigned int freq)
 {
@@ -713,17 +563,12 @@ bool AirPort_RTW89::connectFront()
     back.enable = backEnable;
     back.output = backOutput;
     back.power = backPower;
-    back.virtual_request = backVirtualRequest;
-    back.awdl_output = backAwdlOutput;
     back.log = backLog;
-
-    /* The receive half of the AWDL work: log the sync frames Apple devices
-     * are already sending, to measure their timeline before joining it, and
-     * ask whether this host can keep to that timeline at all. */
-    if (awdlEnabled()) {
-        rtw89_glue_awdl_watch(true);
-        rtw89_awdl_timing_start();
-    }
+    back.vif_event = backVifEvent;
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    back.native_output=backNativeOutput;
+    back.native_window=backNativeWindow;
+#endif
 
     _native = true;         /* the callbacks below may come during the call */
     ret = front->callPlatformFunction(name, true, &back, &_ns->front, nullptr, nullptr);
@@ -737,6 +582,18 @@ bool AirPort_RTW89::connectFront()
         return false;
     }
     _front = front;
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    /* No RX callback may enter until both halves of ABI v6 are connected. */
+    IOLockLock(_owlyRxGateLock);
+    _nativeClosing = false;
+    const bool rxGateOpened = owly_abi6_gate_open(&_owlyRxGate);
+    IOLockUnlock(_owlyRxGateLock);
+    if (!rxGateOpened) {
+        LOG("ABI6 RX gate refused open; disconnecting incomplete frontend");
+        disconnectFront();
+        return false;
+    }
+#endif
     _dataReady = true;
     /* macOS decides when to join and when to join again */
     rtw89_glue_set_rejoin(false);
@@ -744,21 +601,141 @@ bool AirPort_RTW89::connectFront()
     return true;
 }
 
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+/* Borrowed radio data is deep-copied and drained before disconnect. P1's
+ * verified frontend owns native RX; older feature modes remain observers. */
+bool AirPort_RTW89::awdlHandoff(uint32_t kind, const uint8_t *raw, size_t len,
+                                const uint8_t src[6], const uint8_t dst[6],
+                                uint8_t channel,int8_t rssi,uint64_t received_us)
+{
+    /* Lock-protected callback admission. _ns may be deleted only AFTER
+     * disconnectFront has CLOSED the gate and drained admitted callbacks.
+     * Never call the frontend while holding this lock: Apple can reenter us.
+     * RX runs on the rtw89 receive thread, not interrupt top half. */
+    bool (*handoff)(void *, const struct owly_abi6_packet *) = nullptr;
+    void *ctx = nullptr;
+    if (!_owlyRxGateLock) return false;
+    IOLockLock(_owlyRxGateLock);
+    if (!_halting && !_asleep && _native && _ns &&
+        _ns->front.owly_rx_handoff && owly_abi6_gate_enter(&_owlyRxGate)) {
+        handoff = _ns->front.owly_rx_handoff;
+        ctx = _ns->front.ctx;
+    }
+    IOLockUnlock(_owlyRxGateLock);
+    if (!handoff) return false;
+
+    bool ok = false;
+    /* Gate B never compiled this branch. In Gate C2, avoid putting a
+     * 1.5KiB packet on the 16KiB kernel RX stack. */
+    if (raw && src && dst && len <= OWLY_ABI6_PACKET_MAX) {
+        struct owly_abi6_packet *packet =
+            static_cast<struct owly_abi6_packet *>(IOMalloc(sizeof(struct owly_abi6_packet)));
+        if (packet) {
+            if (owly_abi6_packet_make(packet, kind, raw, len, src, dst)) {
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+                packet->channel=channel;packet->rssi=rssi;packet->received_us=received_us;
+#else
+                (void)channel;(void)rssi;(void)received_us;
+#endif
+                ok = handoff(ctx, packet);
+            }
+            IOFree(packet, sizeof(struct owly_abi6_packet));
+        }
+    }
+
+    IOLockLock(_owlyRxGateLock);
+    (void)owly_abi6_gate_leave(&_owlyRxGate);
+    IOLockUnlock(_owlyRxGateLock);
+    return ok;
+}
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+bool AirPort_RTW89::nativeRx(void *ctx,uint32_t kind,const uint8_t *raw,size_t len,
+    const uint8_t src[6],const uint8_t dst[6],uint8_t channel,int8_t rssi,uint64_t received_us)
+{
+    return ctx && static_cast<AirPort_RTW89 *>(ctx)->awdlHandoff(kind,raw,len,src,dst,channel,rssi,received_us);
+}
+uint32_t AirPort_RTW89::backNativeOutput(void *ctx,mbuf_t m)
+{
+    auto *self=static_cast<AirPort_RTW89 *>(ctx);
+    if(!m)return kIOReturnOutputDropped;
+    size_t n=mbuf_pkthdr_len(m);int rc=-ENETDOWN;
+    if(self && self->_native && self->_ns && !self->_nativeClosing &&
+       !self->_halting && !self->_asleep && self->_ns->airlink.enabled && n>=14 && n<=2062) {
+        Scratch copied(n);
+        if(copied.p && !mbuf_copydata(m,0,n,copied.p))rc=rtw89_glue_native_output(copied.bytes(),n);
+    }
+    mbuf_freem(m); /* all statuses consume once; bounded queue copies before returning */
+    if(self)self->setProperty("OwlyNativeTXEnqueueResult",static_cast<unsigned long long>(static_cast<uint32_t>(rc)),32);
+    return rc ? kIOReturnOutputDropped : kIOReturnOutputSuccess;
+}
+int AirPort_RTW89::backNativeWindow(void *ctx,struct owly_link_window *out)
+{
+    auto *self=static_cast<AirPort_RTW89 *>(ctx);
+    if(!out)return -EINVAL;
+    bzero(out,sizeof(*out));
+    if(!self || !self->_native || !self->_ns || self->_nativeClosing || self->_halting ||
+       self->_asleep || !self->_ns->airlink.enabled)return -ENETDOWN;
+    return rtw89_glue_native_window(out);
+}
+#endif
+bool AirPort_RTW89::awdlRxAction(void *ctx, const uint8_t src[6],
+                                 unsigned int subtype, unsigned int social_mask,
+                                 const uint8_t *raw, size_t len)
+{
+    (void)subtype; (void)social_mask;
+    /* Address 1 is the 802.11 receiver; packet src came from validated parser. */
+    return static_cast<AirPort_RTW89 *>(ctx)->awdlHandoff(
+        OWLY_ABI6_PACKET_ACTION, raw, len, src, raw ? raw + 4 : nullptr);
+}
+#if defined(OWLY_ABI6_C3_SCAN_OBSERVER) && OWLY_ABI6_C3_SCAN_OBSERVER
+bool AirPort_RTW89::awdlRxScanSignature(void *ctx, const uint8_t src[6],
+                                         const uint8_t *raw, size_t len)
+{
+    if (!ctx || !src || !raw || len < 31u) return false;
+    /* Borrow only; awdlHandoff makes a deep copy and drains on teardown. */
+    return static_cast<AirPort_RTW89 *>(ctx)->awdlHandoff(
+        OWLY_ABI6_PACKET_C3_SCAN_SIGNATURE, raw, len, src, raw+4);
+}
+#endif
+bool AirPort_RTW89::awdlRxIPv6(void *ctx, const uint8_t dst[6],
+                               const uint8_t src[6], const uint8_t *ip6, size_t len)
+{
+    return static_cast<AirPort_RTW89 *>(ctx)->awdlHandoff(
+        OWLY_ABI6_PACKET_IPV6, ip6, len, src, dst);
+}
+#endif
+
 void AirPort_RTW89::disconnectFront()
 {
     const OSSymbol *name;
 
-    if (!_front)
-        return;
-    if (_ns->front.set_apple_rsn)
-        _ns->front.set_apple_rsn(_ns->front.ctx, false);
-    rtw89_awdl_timing_stop();
-    rtw89_glue_awdl_deliver(false);
-    if (_ns->vifUp && _ns->front.destroy_vif) {
-        _ns->front.destroy_vif(_ns->front.ctx);
-        _ns->vifUp = false;
+#if defined(OWLY_ABI6_FRONT_BRIDGE) && OWLY_ABI6_FRONT_BRIDGE
+    /* Close admission under same lock as enter(), BEFORE _ns can be freed.
+     * Do NOT hold gate during wait: active callback must be able to leave. */
+    if (_owlyRxGateLock) {
+        IOLockLock(_owlyRxGateLock);
+        owly_abi6_gate_close(&_owlyRxGate);
+        _nativeClosing = true;
+        IOLockUnlock(_owlyRxGateLock);
+        unsigned int ms = 0;
+        for (;;) {
+            IOLockLock(_owlyRxGateLock);
+            const bool drained = owly_abi6_gate_drained(&_owlyRxGate);
+            IOLockUnlock(_owlyRxGateLock);
+            if (drained) break;
+            IOSleep(1);
+            if (++ms % 5000 == 0)
+                LOG("ABI6 RX gate draining callbacks (%u ms)", ms);
+        }
+    } else {
+        _nativeClosing = true;
     }
+#else
     _nativeClosing = true;
+#endif
+    if (!_front) return;
+    if (_ns && _ns->front.set_apple_rsn)
+        _ns->front.set_apple_rsn(_ns->front.ctx, false);
     if (_nativeCall) {
         /* nothing new is queued now; let one that is running finish */
         thread_call_cancel(_nativeCall);
@@ -820,12 +797,7 @@ void AirPort_RTW89::nativeLink(const struct rtw89_glue_link &link)
                         link.mode == 1 ? (link.width >= 40 ? 300 : 144) : 54;
 
         _ns->linkUp = true;
-        /* The schedule waits for this, once: see awdlClockUpdate(). */
-        _ns->awdlJoinedOnce = true;
         _ns->front.set_link(_ns->front.ctx, true, mbit * 1000000ULL, 0);
-        /* the radio has a channel and a vif now: the schedule follows it, and
-         * frames stop being refused with ENETDOWN as they were before this */
-        awdlClockUpdateAndHold();
         /* the join macOS asked for is complete: associated and keys in place */
         nativePost(APPLE80211_M_ASSOC_DONE, nullptr, 0);
         LOG("native link up");
@@ -837,8 +809,6 @@ void AirPort_RTW89::nativeLink(const struct rtw89_glue_link &link)
         if (_ns->deauthReason)
             nativePost(APPLE80211_M_DEAUTH_RECEIVED, nullptr, 0);
         nativePost(APPLE80211_M_LINK_CHANGED, nullptr, 0);
-        /* back to the social channel the schedule describes when unassociated */
-        awdlClockUpdateAndHold();
         LOG("native link down");
     } else if (!up && !joining && _ns->wasJoining) {
         /* a join that did not get there: macOS is waiting to hear */
@@ -895,6 +865,71 @@ int AirPort_RTW89::backEnable(void *ctx, bool on)
     return ret;
 }
 
+/* OWLY_NATIVE_IDENTITY_BRIDGE_BEGIN
+ * Fail-closed lifecycle handshake. Callback returns true only if backend
+ * accepted the transition. No Skywalk queue or data path is connected.
+ * The opaque VIF cookie must never be dereferenced here.
+ */
+bool AirPort_RTW89::backVifEvent(void *ctx, void *vif, uint32_t role, uint32_t event,
+                                  const uint8_t request_mac[6])
+{
+    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
+    if (!me || !me->_ns || !vif || role != RTW89_FRONT_ROLE_AIRLINK_OBSERVED ||
+        me->_nativeClosing || me->_halting || me->_asleep)
+        return false;
+    NativeState *ns = me->_ns;
+#if defined(OWLY_AWDL_SERVICE_LIFECYCLE) && OWLY_AWDL_SERVICE_LIFECYCLE
+    if (event == RTW89_FRONT_VIF_SERVICE_READY) {
+        const bool ready = !request_mac && ns->airlink.cookie == vif &&
+            ns->airlink.role == role && rtw89_glue_awdl_service_ready();
+        me->setProperty("OwlyServiceBackendReadyLast", ready);
+        return ready; /* No identity, enabled bit, template or radio mutation. */
+    }
+#endif
+    /* Check the identity transition BEFORE touching the radio. */
+    struct rtw89_front_native_vif_state next = ns->airlink;
+    if (!rtw89_front_native_vif_update(&next, vif, role, event)) {
+        LOG("OWLY backend VIF: identity transition rejected event=%u", (unsigned)event);
+        return false;
+    }
+
+    int rc = 0;
+    if (event == RTW89_FRONT_VIF_CREATED) {
+        /* This is now a hardware transaction, not a cookie-only ACK. */
+        if (!request_mac) return false;
+        rc = rtw89_glue_awdl_vif_create(request_mac);
+    } else if (event == RTW89_FRONT_VIF_ENABLED) {
+        /* An Apple re-enable can prepare a new native sync transaction. */
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        if (!ns->airlink.enabled) rc = rtw89_glue_awdl_vif_enable();
+        else
+#endif
+        if (!rtw89_glue_awdl_vif_present()) rc = -1;
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    } else if (event == RTW89_FRONT_VIF_DISABLED) {
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        rc = rtw89_glue_awdl_vif_disable();
+#else
+        rc = rtw89_glue_awdl_sync_enable(false);
+#endif
+#endif
+    } else if (event == RTW89_FRONT_VIF_DESTROYED) {
+        rc = rtw89_glue_awdl_vif_destroy();
+    }
+    if (rc != 0) {
+        LOG("OWLY backend VIF: hardware transition rejected event=%u rc=%d",
+            (unsigned)event, rc);
+        return false;
+    }
+    ns->airlink = next;
+    if (event == RTW89_FRONT_VIF_CREATED)
+        LOG("OWLY backend VIF: second P2P-client added; no AWDL RF TX or Skywalk");
+    else if (event == RTW89_FRONT_VIF_DESTROYED)
+        LOG("OWLY backend VIF: second P2P-client removed");
+    return true;
+}
+/* OWLY_NATIVE_IDENTITY_BRIDGE_END */
+
 void AirPort_RTW89::backPower(void *ctx, bool on)
 {
     /* sleep and wake: not handled yet */
@@ -947,19 +982,6 @@ void AirPort_RTW89::backLog(void *ctx, const char *line)
  * availability windows, so a packet that cannot go now is dropped rather than
  * offered again later, when its window has passed anyway.
  */
-uint32_t AirPort_RTW89::backAwdlOutput(void *ctx, mbuf_t m)
-{
-    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
-    size_t len = mbuf_pkthdr_len(m);
-    uint8_t eth[1536];
-
-    OSIncrementAtomic(&me->_txBusy);
-    if (len >= 14 && len <= sizeof(eth) && mbuf_copydata(m, 0, len, eth) == 0)
-        rtw89_glue_awdl_data_tx(eth, len);
-    mbuf_freem(m);
-    OSDecrementAtomic(&me->_txBusy);
-    return kIOReturnOutputSuccess;
-}
 
 int AirPort_RTW89::backRequest(void *ctx, unsigned int type, int number, void *interface, void *data)
 {
@@ -969,6 +991,12 @@ int AirPort_RTW89::backRequest(void *ctx, unsigned int type, int number, void *i
         return kIOReturnBadArgument;
     if (!data && number != APPLE80211_IOC_DISASSOCIATE)
         return kIOReturnBadArgument;
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    if (me->_ns && interface && interface==me->_ns->airlink.cookie &&
+        me->_ns->airlink.role==RTW89_FRONT_ROLE_AIRLINK_OBSERVED &&
+        !me->_nativeClosing && !me->_halting && !me->_asleep)
+        return me->nativeAwdlSyncRequest(type==SIOCSA80211,number,data);
+#endif
     return me->nativeRequest(type == SIOCSA80211, number, data);
 }
 
@@ -983,334 +1011,17 @@ int AirPort_RTW89::backRequest(void *ctx, unsigned int type, int number, void *i
  * here rather than beside the other platform callbacks because NativeState is
  * only declared in AirPortRTW89.cpp, not defined.
  */
-void AirPort_RTW89::awdlFrame(void *ctx, const uint8_t *frame, size_t len,
-                              const uint8_t peer[6], uint32_t channel, int8_t rssi)
-{
-    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
-
-    if (me->_ns && me->_ns->front.awdl_rx)
-        me->_ns->front.awdl_rx(me->_ns->front.ctx, frame, len, peer, channel, rssi);
-}
 
 /* And a received AWDL data frame, which goes to awdl0 itself rather than to
  * the engine. Here for the same reason as the one above. */
-void AirPort_RTW89::awdlData(void *ctx, const uint8_t *eth, size_t len)
-{
-    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
-
-    if (me->_ns && me->_ns->front.awdl_data_rx)
-        me->_ns->front.awdl_data_rx(me->_ns->front.ctx, eth, len);
-}
 
 /* An availability window has begun, for the family's own timeline. */
-void AirPort_RTW89::awdlWindow(void *ctx, uint32_t aw_seq, const uint8_t master[6])
-{
-    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
-
-    if (me->_ns && me->_ns->front.awdl_window)
-        me->_ns->front.awdl_window(me->_ns->front.ctx, aw_seq, master);
-}
-
-int AirPort_RTW89::backVirtualRequest(void *ctx, unsigned int type, int number,
-                                      void *virtual_interface, void *data)
-{
-    AirPort_RTW89 *me = static_cast<AirPort_RTW89 *>(ctx);
-    int ret;
-
-    if (!me->_ns)
-        return EOPNOTSUPP;
-    /*
-     * Every request, not the first sighting of each number: the AWDL state
-     * machine drives the same handful of requests over and over, and what
-     * matters while working it out is the order they come in and how often.
-     * The log is a ring, and this only runs behind -rtw89awdl.
-     */
-    if (!data) {
-        LOG("awdl: %s request %d (%s) [no data]", type == SIOCSA80211 ? "set" : "get",
-            number, awdlRequestName(number));
-        return EOPNOTSUPP;
-    }
-    ret = me->nativeVirtualRequest(type == SIOCSA80211, number, data);
-    /* with the answer: a refusal here is the family being told the AWDL
-     * interface cannot do something, which is what stalls it */
-    LOG("awdl: %s request %d (%s) -> %d%s", type == SIOCSA80211 ? "set" : "get", number,
-        awdlRequestName(number), ret, ret == EOPNOTSUPP ? " (unsupported)" : "");
-    return ret;
-}
 
 /*
  * What we answer on awdl0. Everything still unanswered returns EOPNOTSUPP, which
  * sends the front to the family; each number is logged once above, and that log
  * is how the next thing to implement is chosen.
  */
-int AirPort_RTW89::nativeVirtualRequest(bool isSet, int number, void *data)
-{
-    switch (number) {
-    /* The family asks the virtual interface what the card can do while it is
-     * building it, and took EOPNOTSUPP badly. The card is the same one either
-     * way, so answer as the real interface does. */
-    case APPLE80211_IOC_CARD_CAPABILITIES:
-        return isSet ? EOPNOTSUPP : errnoOf(nativeRequest(false, number, data));
-
-    /*
-     * The radio behind the AWDL interface is the same radio, so these are the
-     * real interface's answers.  SUPPORTED_CHANNELS matters: the family asks
-     * the AWDL interface for it over and over while deciding whether it can
-     * run, and it has nothing to choose a social channel from while the answer
-     * is "unsupported", so it never gets as far as setting anything.
-     */
-    /*
-     * CHANNELS_INFO is the richer channel list, and it was refused eight times
-     * in one boot before wifip2pd gave up on building its AWDL interface --
-     * the same shape of failure SUPPORTED_CHANNELS above caused, for the same
-     * reason. HT and VHT capability are the card's too.
-     */
-    case APPLE80211_IOC_SUPPORTED_CHANNELS:
-    case APPLE80211_IOC_CHANNELS_INFO:
-    case APPLE80211_IOC_HT_CAPABILITY:
-    case APPLE80211_IOC_VHT_CAPABILITY:
-    case APPLE80211_IOC_POWER:
-        /*
-         * As an errno, which is what the caller of this is owed.
-         *
-         * HT and VHT capability came back from the real interface as
-         * kIOReturnUnsupported and were handed on raw: the log showed
-         * "get request 154 -> -536870201", which is 0xe00002c7 arriving where
-         * a small positive errno belongs. Everything else forwarded here
-         * happened to succeed, so the mistake only showed once these two were
-         * added.
-         */
-        return isSet ? EOPNOTSUPP : errnoOf(nativeRequest(false, number, data));
-
-    /*
-     * Whether AWDL synchronisation is on. The family asks for this and goes no
-     * further while the answer is "unsupported", so taking the request is what
-     * makes it ask for the rest (sync params, election, channel sequence) --
-     * which is what we are here to find out. Nothing in the chip is touched
-     * yet: we remember the flag and hand it back.
-     *
-     * AirPort_BrcmNIC::getAWDL_SYNC_ENABLED checks the version first and
-     * answers EINVAL when it does not match, then reports what its firmware
-     * says. We have no firmware AWDL block, so our own state is the answer.
-     */
-    /*
-     * What IO80211AWDLPeerManager::configure() sets on its way through.
-     *
-     * configure() is what finally sets the flags that decide whether a
-     * received AWDL frame is looked at at all, and it gives up on the first
-     * of these it cannot set -- "Unable to set BSSID", and then nothing is
-     * ever enabled. That is where this stopped for a whole afternoon: every
-     * other piece worked, frames went out on schedule and came back in and
-     * were handed over, and the engine behind them had never been switched
-     * on because of one refusal here.
-     *
-     * There is no AWDL block in this chip's firmware to program with any of
-     * it. The BSSID is already what rtw89_awdl.c addresses frames to, the
-     * channel sequence and timing are worked out here rather than offloaded,
-     * and the election is the family's business. So these are accepted and
-     * logged rather than acted on: taking them is what lets the engine run.
-     * Gets are still refused, because answering a question about state we do
-     * not keep would be worse than saying we cannot.
-     */
-    case APPLE80211_IOC_AWDL_BSSID:
-    case APPLE80211_IOC_AWDL_ELECTION_ID:
-    case APPLE80211_IOC_AWDL_MASTER_CHANNEL:
-    case APPLE80211_IOC_AWDL_ELECTION_RSSI_THRESHOLDS:
-    case APPLE80211_IOC_AWDL_SOCIAL_TIME_SLOTS:
-    case APPLE80211_IOC_AWDL_MIN_RATE:
-    /*
-     * The tail of the same sequence, refused on the first run through: the
-     * channel sequence, the presence mode, the extension state machine
-     * parameters and the sync state. The first of these is the one worth a
-     * second look later -- the channel sequence is the schedule, and we claim
-     * every slot on our own channel rather than following what the family
-     * hands down here -- but taking it is what lets configure() finish, and
-     * the frames we transmit are built from the template and our own clock
-     * either way.
-     */
-    case APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE:
-    case APPLE80211_IOC_AWDL_PRESENCE_MODE:
-    case APPLE80211_IOC_AWDL_EXTENSION_STATE_MACHINE_PARAMETERS:
-    /* Asked for four times and refused in the boot where wifip2pd failed;
-     * there is no out-of-band request path here to drive, so it is taken and
-     * logged like the rest of the sequence above. */
-    case APPLE80211_IOC_AWDL_OOB_AUTO_REQUEST:
-    case APPLE80211_IOC_AWDL_SYNC_STATE:
-        if (!isSet)
-            return EOPNOTSUPP;
-        /* The first six bytes of an AWDL_BSSID payload are the address, and
-         * it is worth seeing whether it is the one we already transmit to. */
-        if (number == APPLE80211_IOC_AWDL_BSSID) {
-            const uint8_t *b = static_cast<const uint8_t *>(data);
-
-            LOG("awdl: the family set the BSSID, payload starts "
-                "%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5]);
-        }
-        return kIOReturnSuccess;
-
-    /*
-     * How awdl0 authenticates, asked for immediately after its name. It does
-     * not: an AWDL link is open and unencrypted at this layer, so that is
-     * what is reported rather than a refusal.
-     */
-    case APPLE80211_IOC_AUTH_TYPE: {
-        struct apple80211_authtype_data *d =
-            static_cast<struct apple80211_authtype_data *>(data);
-
-        if (isSet)
-            return EOPNOTSUPP;
-        bzero(d, sizeof(*d));
-        d->version = APPLE80211_VERSION;
-        d->authtype_lower = APPLE80211_AUTHTYPE_OPEN;
-        d->authtype_upper = APPLE80211_AUTHTYPE_NONE;
-        return kIOReturnSuccess;
-    }
-
-    /*
-     * awdl0's own name, asked for three times and refused in the boot where
-     * wifip2pd gave up. An AWDL interface has no SSID -- it is not joining
-     * anything -- so the honest answer is an empty one, which is still an
-     * answer. Refusing left the question unanswered, and the state machine
-     * takes that badly everywhere else it has been tried.
-     */
-    case APPLE80211_IOC_SSID: {
-        struct apple80211_ssid_data *d = static_cast<struct apple80211_ssid_data *>(data);
-
-        if (isSet)
-            return EOPNOTSUPP;
-        bzero(d, sizeof(*d));
-        d->version = APPLE80211_VERSION;
-        d->ssid_len = 0;
-        return kIOReturnSuccess;
-    }
-
-    /*
-     * How many peers the cache may hold. The family keeps its own number for
-     * this (setAwdlMaxPeers), but the question reached us, so answer it: the
-     * driver imposes no limit of its own beyond what the family allocates.
-     */
-    case APPLE80211_IOC_PEER_CACHE_MAXIMUM_SIZE: {
-        struct apple80211_peer_cache_maximum_size *d =
-            static_cast<struct apple80211_peer_cache_maximum_size *>(data);
-
-        if (isSet) {
-            LOG("awdl: the peer cache is capped at %u", (unsigned int)d->max_peers);
-            return kIOReturnSuccess;
-        }
-        bzero(d, sizeof(*d));
-        d->version = APPLE80211_VERSION;
-        d->max_peers = 32;
-        return kIOReturnSuccess;
-    }
-
-    case APPLE80211_IOC_AWDL_SYNC_ENABLED: {
-        struct apple80211_awdl_sync_enabled *d =
-            static_cast<struct apple80211_awdl_sync_enabled *>(data);
-
-        /*
-         * Not refused on the version any more. Answering EINVAL here is what
-         * the Broadcom driver does, and it cost a boot to learn what that
-         * means for us: the family asked this question, got 22 back, and
-         * never asked for sync to be turned on -- so the clock, which waited
-         * for that, never ran. The engine had already given us the template,
-         * the election metric and the peer traffic registration by then, so
-         * it was configuring a driver it had just been told was broken.
-         *
-         * The version is logged instead, because what the family actually
-         * sends here is worth knowing and this is the only place it shows.
-         */
-        if (d->version != APPLE80211_VERSION)
-            LOG("awdl: sync-enabled %s carries version %u, not %d; answering anyway",
-                isSet ? "set" : "get", (unsigned int)d->version, APPLE80211_VERSION);
-        if (isSet) {
-            _ns->awdlSyncEnabled = d->enabled != 0;
-            _ns->awdlSyncOff = !_ns->awdlSyncEnabled;
-            LOG("awdl: macOS asks for sync %s", _ns->awdlSyncEnabled ? "on" : "off");
-            awdlClockUpdateAndHold();
-            return kIOReturnSuccess;
-        }
-        bzero(d, sizeof(*d));
-        d->version = APPLE80211_VERSION;
-        /*
-         * Whether we are actually keeping the timeline, which is now a real
-         * question rather than a flag macOS set: the clock runs or it does
-         * not. Reporting what macOS last asked for was fine while nothing
-         * transmitted; it is a lie once something does.
-         */
-        d->enabled = _ns->awdlClockOn;
-        return kIOReturnSuccess;
-    }
-    /*
-     * The frame the family wants on air. This is the whole point of the
-     * exercise: IO80211AWDLPeerManager builds a complete AWDL sync frame --
-     * header, timestamps and TLVs -- and hands it over ready to transmit, so
-     * the driver owes the schedule and the radio, not the protocol.
-     *
-     * The payload pointer is a kernel one by the time it reaches here:
-     * AirPort_BrcmNIC::setAWDL_SYNC_FRAME_TEMPLATE memmove()s straight from it
-     * with no copyin, into a buffer of 0x724 bytes.
-     */
-    case APPLE80211_IOC_AWDL_SYNC_FRAME_TEMPLATE: {
-        struct apple80211_awdl_sync_frame_template *d =
-            static_cast<struct apple80211_awdl_sync_frame_template *>(data);
-        size_t n;
-
-        if (!isSet)
-            return EOPNOTSUPP;
-        if (!d->payload || !d->payload_len) {
-            _ns->awdlTemplateLen = 0;
-            rtw89_glue_awdl_template(nullptr, 0, nullptr);
-            LOG("awdl: the sync frame template was cleared");
-            awdlClockUpdateAndHold();
-            return kIOReturnSuccess;
-        }
-        n = d->payload_len;
-        if (n > sizeof(_ns->awdlTemplate)) {
-            LOG("awdl: sync frame template of %u bytes is longer than the %u we keep",
-                (unsigned int)n, (unsigned int)sizeof(_ns->awdlTemplate));
-            n = sizeof(_ns->awdlTemplate);
-        }
-        memcpy(_ns->awdlTemplate, d->payload, n);
-        _ns->awdlTemplateLen = n;
-        logHex("sync frame template", _ns->awdlTemplate, n, sizeof(_ns->awdlTemplate));
-        /* over to the side that builds frames: these are the static TLVs the
-         * transmit loop appends to the schedule it works out itself */
-        rtw89_glue_awdl_template(_ns->awdlTemplate, n, _ns->vifMac);
-        /* the last of the three things the clock waits for, usually */
-        awdlClockUpdateAndHold();
-        return kIOReturnSuccess;
-    }
-
-    /* How good a master this device claims to be, for the election. */
-    case APPLE80211_IOC_AWDL_ELECTION_METRIC: {
-        struct apple80211_awdl_election_metric *d =
-            static_cast<struct apple80211_awdl_election_metric *>(data);
-
-        if (isSet) {
-            _ns->awdlElectionMetric = d->metric;
-            LOG("awdl: election metric %u", (unsigned int)d->metric);
-            return kIOReturnSuccess;
-        }
-        d->version = APPLE80211_VERSION;
-        d->metric = _ns->awdlElectionMetric;
-        return kIOReturnSuccess;
-    }
-
-    /*
-     * Taken so the state machine gets its acknowledgement and goes on. The
-     * layout is not in the SDK header, so nothing is read out of it beyond
-     * saying it arrived.
-     */
-    case APPLE80211_IOC_AWDL_PEER_TRAFFIC_REGISTRATION:
-        if (!isSet)
-            return EOPNOTSUPP;
-        LOG("awdl: peer traffic registration");
-        return kIOReturnSuccess;
-
-    default:
-        return EOPNOTSUPP;      /* the family answers what it can */
-    }
-}
 
 /*
  * The BSD ioctl in front of apple80211Request(). The old family unpacks most
@@ -1349,6 +1060,11 @@ int AirPort_RTW89::backIoctl(void *ctx, void *interface, void *vif, void *ifnet,
         return 0;
     }
     *handled = true;
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    int awdlResult=0;
+    if (me->nativeAwdlGetEnvelope(interface,vif,cmd,data,&awdlResult))
+        return awdlResult;
+#endif
     if (version_major < 23 || !req || (!isGet && !isSet) || vif || interface != front->interface)
         return front->super_ioctl(front->ctx, interface, vif, ifnet, cmd, data);
 
@@ -1706,10 +1422,6 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
     struct rtw89_glue_link link;
 
     rtw89_glue_link(&link);
-    /* The radio is only AWDL's while nothing else wants it, and that is a
-     * state the machine settles into quietly rather than announces. Looked at
-     * here, where macOS gives us many chances a second. */
-    awdlChannelHold(link);
 
     switch (number) {
     case APPLE80211_IOC_SSID: {
@@ -1916,9 +1628,16 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
             }
         }
 
-        if (link.state != RTW89_GLUE_LINK_DOWN && !wantSsidLen && !nWantFreqs) {
+        /* RTLAirLink: while an AWDL peer is configured, scans are thinned
+         * like connected ones, so the radio keeps to the peer's windows. A
+         * scan that names a network or channels is still always made. */
+        bool awdlBusy=false;
+        const bool awdlProtected=rtw89_glue_awdl_scan_protect(&awdlBusy);
+        setProperty("OwlyNativeScanProtected",awdlProtected);
+        setProperty("OwlyNativeScanBusy",awdlBusy);
+        if ((link.state != RTW89_GLUE_LINK_DOWN || awdlProtected) && !wantSsidLen && !nWantFreqs) {
             /*
-             * Connected, and nothing in particular asked for: a real scan at
+             * Connected (or with a real AWDL peer), and nothing in particular asked for: a real scan at
              * most every kConnectedScanGap, the firmware going back to the
              * access point's channel in between (rtw89's hw_scan with the
              * operating channel, as on Linux). Requests in between, and any
@@ -1930,61 +1649,20 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
              * it is asked for because something is expected to have just
              * appeared, which is exactly what the cache cannot know about.
              */
-            const uint64_t kConnectedScanGap = 30ULL * 1000 * 1000 * 1000;
             uint64_t now;
 
             absolutetime_to_nanoseconds(mach_absolute_time(), &now);
-            if (!isConnected(link) ||
-                (_ns->lastConnectedScan && now - _ns->lastConnectedScan < kConnectedScanGap)) {
+            if ((link.state!=RTW89_GLUE_LINK_DOWN && !isConnected(link)) ||
+                owly_native_scan_cached(true,awdlProtected && awdlBusy,now,_ns->lastConnectedScan)) {
                 UInt32 result = 0;
-
+                if(awdlProtected) {
+                    setProperty("OwlyNativeScansDeferred",++_ns->awdlScansDeferred,64);
+                    _ns->scanBootstrapTried=true;
+                }
                 nativePost(APPLE80211_M_SCAN_DONE, &result, sizeof(result));
                 return kIOReturnSuccess;
             }
             _ns->lastConnectedScan = now;
-        }
-        /*
-         * Thinned out while the AWDL clock is running, not stopped.
-         *
-         * One radio cannot scan and hold an availability window at once, and
-         * unassociated macOS scans almost continuously: with the clock on a
-         * social channel, 430 windows were missed in 29 s where an idle run
-         * missed none, and only 10 of 5632 frames offered to the AWDL path
-         * were on the AWDL BSSID. The radio was somewhere else nearly all
-         * the time.
-         *
-         * Refusing them outright was worse than the problem -- with no scan
-         * there is no network list, so there is no way to join anything, and
-         * Wi-Fi looked broken. A request that names a network or a channel
-         * is how joining works and always runs; a wildcard sweep runs at
-         * most every kAwdlScanGap, and in between is answered from what has
-         * already been heard.
-         */
-        /*
-         * Any sweep that does not name a network, channel list or not.
-         *
-         * Only the wildcard ones were thinned, and while nothing is joined
-         * macOS sweeps eight and fourteen channels over and over looking for
-         * something to auto-join: four scans in twenty seconds, each taking
-         * the radio off the AWDL channel. A join always names the network it
-         * wants, so those still run at once.
-         */
-        if (_ns->awdlClockOn && !wantSsidLen) {
-            const uint64_t kAwdlScanGap = 10ULL * 1000 * 1000 * 1000;
-            uint64_t now;
-
-            absolutetime_to_nanoseconds(mach_absolute_time(), &now);
-            if (_ns->lastAwdlScan && now - _ns->lastAwdlScan < kAwdlScanGap) {
-                UInt32 result = 0;
-
-                if (!_ns->awdlScanHeld++)
-                    LOG("awdl: the clock is running on channel %u, so a full "
-                        "scan runs at most every 10 s; the rest are answered "
-                        "from the cache", (unsigned int)_ns->awdlClockChannel);
-                nativePost(APPLE80211_M_SCAN_DONE, &result, sizeof(result));
-                return kIOReturnSuccess;
-            }
-            _ns->lastAwdlScan = now;
         }
         _ns->scanInProgress = true;
         IOLockLock(_commandLock);
@@ -2060,6 +1738,17 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
             int ret;
 
             _ns->scanBootstrapTried = true;
+            bool awdlBusy=false;
+            const bool awdlProtected=rtw89_glue_awdl_scan_protect(&awdlBusy);
+            uint64_t now;
+            absolutetime_to_nanoseconds(mach_absolute_time(), &now);
+            if(owly_native_scan_cached(awdlProtected,awdlBusy,now,_ns->lastConnectedScan)) {
+                setProperty("OwlyNativeScanProtected",awdlProtected);
+                setProperty("OwlyNativeScanBusy",awdlBusy);
+                setProperty("OwlyNativeScansDeferred",++_ns->awdlScansDeferred,64);
+                return 5; /* no new results; do not restart RF scan from GET */
+            }
+            if(awdlProtected)_ns->lastConnectedScan=now;
             _ns->scanInProgress = true;
             IOLockLock(_commandLock);
             ret = rtw89_glue_scan();
@@ -2302,6 +1991,17 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         d->op_mode = APPLE80211_M_STA;
         return kIOReturnSuccess;
     }
+    case APPLE80211_IOC_HT_CAPABILITY: {
+        /* Legacy configure needs the complete IE to build its own TLV7.
+         * GET154 used to fall through to Unsupported, leaving HT length 0.
+         */
+        if (isSet) return kIOReturnUnsupported;
+        static_assert(sizeof(apple80211_ht_capability)==32,"Legacy GET154 ABI");
+        const int rc=rtw89_glue_awdl_ht_capability(data,sizeof(apple80211_ht_capability));
+        setProperty("OwlyAWDLHTCapabilityResult",static_cast<unsigned long long>(static_cast<uint32_t>(-rc)),32);
+        if (!rc) setProperty("OwlyAWDLHTCapabilityIE",static_cast<uint8_t *>(data)+4,28);
+        return rc ? -rc : kIOReturnSuccess;
+    }
     case APPLE80211_IOC_PHY_MODE: {
         struct apple80211_phymode_data *d = static_cast<struct apple80211_phymode_data *>(data);
 
@@ -2489,7 +2189,7 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         bzero(d, sizeof(*d));
         d->version = APPLE80211_VERSION;
         if (number == APPLE80211_IOC_DRIVER_VERSION)
-            snprintf(d->string, sizeof(d->string), "%s (AirPort_RTW89 0.4.0)",
+            snprintf(d->string, sizeof(d->string), "%s (AirPort_RTW89 " RTW89_VERSION_STRING ")",
                      rtw89_chip_name(_deviceID));
         else
             strlcpy(d->string, rtw89_chip_name(_deviceID), sizeof(d->string));
@@ -2626,16 +2326,6 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
         return kIOReturnSuccess;
     }
 
-    case APPLE80211_IOC_VIRTUAL_IF_CREATE:
-        if (!isSet || !data)
-            return kIOReturnUnsupported;
-        return nativeVirtualIfCreate(data);
-
-    case APPLE80211_IOC_VIRTUAL_IF_DELETE:
-        if (!isSet || !data)
-            return kIOReturnUnsupported;
-        return nativeVirtualIfDelete(data);
-
     case APPLE80211_IOC_ROAM:
     case APPLE80211_IOC_WOW_PARAMETERS:
     case APPLE80211_IOC_IE:
@@ -2648,330 +2338,189 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
     }
 }
 
-/*
- * The clock runs when all three are true: awdl0 exists, macOS has asked for
- * sync, and the family has handed us a template. Any one of them going away
- * stops it. Called from each of those three places rather than deciding in
- * them, so the condition lives in one spot.
- *
- * The channel is the one the card already sits on, because we do not hop: a
- * single radio cannot hold an association and an AWDL timeline on different
- * channels at once, and dropping the association to chase channel 6 is not a
- * trade the user asked for. Unassociated, we take social channel 6, which is
- * where 2.4 GHz AWDL peers listen.
- */
-void AirPort_RTW89::awdlClockUpdateAndHold()
+
+/* Only invoked for this controller's acknowledged role-6 cookie. The family
+ * owns the kernel buffers. No userspace pointer is dereferenced on this path. */
+int AirPort_RTW89::nativeAwdlSyncRequest(bool isSet,int number,void *data)
 {
-    struct rtw89_glue_link link;
-
-    awdlClockUpdate();
-    rtw89_glue_link(&link);
-    awdlChannelHold(link);
-}
-
-void AirPort_RTW89::awdlClockUpdate()
-{
-    struct rtw89_glue_link link;
-    uint8_t channel;
-    bool want;
-
-    if (!_ns)
-        return;
-    /*
-     * The template is the signal, not the sync flag. macOS never set the flag
-     * on this card: it asked for sync state, was refused on a version check,
-     * and went on to configure us anyway -- template, election metric, peer
-     * traffic registration. Those sets are the engine coming up, and the
-     * template is the last of them, so that is what the clock waits for.
-     * An explicit "sync off" still stops it.
-     */
-    want = _ns->vifUp && _ns->awdlTemplateLen > 0 && !_ns->awdlSyncOff;
-    /*
-     * And not before a network has been joined once.
-     *
-     * Everything above is true a second or two into every boot, because macOS
-     * creates awdl0 and configures it without being asked to, and the clock
-     * then parked the radio on a social channel through the whole window in
-     * which the first association is being made. A boot-arg that names a
-     * channel is an explicit request for AWDL to outrank the association, so
-     * it does not wait; see awdlAlways().
-     */
-    if (want && !_ns->awdlJoinedOnce && !awdlAlways() && !awdlChannelAsked()) {
-        if (!_ns->awdlClockOn && !_ns->awdlWaitedForJoin) {
-            _ns->awdlWaitedForJoin = true;
-            LOG("awdl: the schedule waits for a network to be joined once; "
-                "-rtw89awdlalways starts it without one");
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    if (!data) return kIOReturnBadArgument;
+    /* GET buffers are output: unlike SET, their prior bytes/version are not
+     * an input contract. The 0.1.6 frontend initialized GET117 itself. */
+    if (isSet) {
+        if (current_task()!=kernel_task) {
+            OwlyEntitlement::Result auth;
+            if (!OwlyEntitlement::authorize(current_task(),auth)) return kIOReturnNotPrivileged;
         }
-        want = false;
+        uint32_t version=0;
+        memcpy(&version,data,sizeof(version));
+        if (version>APPLE80211_VERSION) return kIOReturnBadArgument;
     }
-    rtw89_glue_link(&link);
-    /*
-     * The association's channel, unless a channel was asked for at boot.
-     *
-     * Following the association looked right -- one radio cannot hold both --
-     * but in practice macOS joins and drops a 5 GHz network every few seconds
-     * while AirDrop is open, and every change tears the schedule down and
-     * starts it again: 738 windows, then 1765, then 503, never long enough
-     * for a peer to see a stable timeline from us. With rtw89awdlchan set the
-     * channel is held through all of that, which costs the association on
-     * another band and is exactly what the boot-arg is for.
-     */
-    if (awdlChannelAsked())
-        channel = awdlSocialChannel();
-    else if (isConnected(link))
-        channel = (uint8_t)channelOfFreq(link.freq);
-    else
-        channel = rtw89_glue_awdl_follow_channel(_ns->awdlClockOn ? _ns->awdlClockChannel : 0,
-                                                 awdlSocialChannel());
-    /*
-     * With a network joined, the master's own channel is logged, not followed.
-     * With none, the radio is ours to move and the line above follows it.
-     *
-     * It was followed for a while, and that was worse than ignoring it. The
-     * radio sits where the association put it; nothing here can move it, and
-     * there is no off-channel path on this driver yet. Taking the master's
-     * channel only changed what our sync frames *claimed*: the card
-     * transmitted on 36 while every frame said "master channel 6, next window
-     * on 6", which is a channel the frame never reached and which no peer
-     * could act on. Advertising the channel we are really on is at least
-     * true, and it lines up the moment the association is on a social
-     * channel.
-     */
-    {
-        uint8_t mchan = rtw89_glue_awdl_master_channel();
-
-        if (mchan && mchan != channel && _ns->awdlMasterChannel != mchan)
-            LOG("awdl: the master keeps its windows on channel %u while this "
-                "card sits on %u; one radio cannot hold both, so join a "
-                "network on a social channel (6, 44 or 149) for a transfer",
-                (unsigned int)mchan, (unsigned int)channel);
-        if (mchan)
-            _ns->awdlMasterChannel = mchan;
-    }
-    /*
-     * A frame goes out on whatever channel the radio is on, and its own sync
-     * parameters tell peers which channel the next window is on. Those have
-     * to be the same channel. The first run started unassociated on 6 and the
-     * card then associated on 149: every frame after that went out on 149
-     * saying "next window on channel 6", which a peer that believed it would
-     * have acted on. So a channel change restarts the schedule rather than
-     * leaving it describing where we used to be.
-     */
-    if (want && _ns->awdlClockOn && channel != _ns->awdlClockChannel) {
-        LOG("awdl: the card moved from channel %u to %u; restarting the schedule",
-            (unsigned int)_ns->awdlClockChannel, (unsigned int)channel);
-        rtw89_awdl_clock_stop();
-        _ns->awdlClockOn = false;
-    }
-    if (want == _ns->awdlClockOn)
-        return;
-    _ns->awdlClockOn = want;
-    if (!want) {
-        rtw89_awdl_clock_stop();
-        awdlDeliverUpdate();
-        return;
-    }
-    _ns->awdlClockChannel = channel;
-    /*
-     * AWDL peers listen on the social channels and nowhere else. Sitting on
-     * any other one, we can still hear them -- the receive spike heard
-     * channel 6 while this card was associated on 5 GHz -- but a frame we
-     * send goes out on our channel, where there is no one. Said plainly in
-     * the log, because the counters will otherwise show frames going out and
-     * nothing ever answering, which looks like a different bug.
-     */
-    if (channel != 6 && channel != 44 && channel != 149)
-        LOG("awdl: channel %u is not a social channel (6, 44, 149): peers will "
-            "not hear us until the card sits on one", (unsigned int)channel);
-    rtw89_awdl_clock_start(channel);
-    awdlDeliverUpdate();
-}
-
-/*
- * Turn promiscuous receive on only while it is of use.
- *
- * Receiving AWDL means receiving frames addressed to someone else, so the
- * receive filter has to let through other BSSs, broadcast and multicast --
- * see rtw89_glue_awdl_deliver(), which is also what hands those frames to
- * IO80211. That is every frame on the channel from every network in range,
- * delivered to the host, and it used to go on when awdl0 was created and stay
- * on until it went away, which on this machine is from a second into the boot
- * until shutdown.
- *
- * It is worth that only when a frame of ours could also be heard, which means
- * the schedule is running and the card sits on a social channel: peers listen
- * on 6, 44 and 149 and nowhere else. Associated on channel 36 there is no one
- * to hear and no one to hear us, and awdlClockUpdate() already says so in the
- * log; the filter now follows that rather than paying for it anyway.
- */
-void AirPort_RTW89::awdlDeliverUpdate()
-{
-    uint8_t channel;
-    bool want;
-
-    if (!_ns)
-        return;
-    channel = _ns->awdlClockChannel;
-    want = _ns->vifUp &&
-           (awdlAlways() ||
-            (_ns->awdlClockOn && (channel == 6 || channel == 44 || channel == 149)));
-    if (want == _ns->awdlDeliverOn)
-        return;
-    _ns->awdlDeliverOn = want;
-    if (want)
-        LOG("awdl: the schedule is running on channel %u, so AWDL frames are "
-            "received and handed on", (unsigned int)channel);
-    else
-        LOG("awdl: AWDL frames are not received: %s",
-            !_ns->vifUp            ? "awdl0 is gone" :
-            !_ns->awdlClockOn      ? "no schedule is running" :
-                                     "the card is not on a social channel");
-    rtw89_glue_awdl_deliver(want);
-}
-
-/*
- * Park the radio where the schedule says, when nothing else wants it.
- *
- * The association's channel is the radio's, and on an access point that
- * cannot be moved off channel 1 that is the end of AWDL: every sync frame
- * goes out where no peer listens. But macOS keeps Wi-Fi on and awdl0 up with
- * no network joined -- that is the state AirDrop runs in on a machine that
- * gets its internet elsewhere -- and in that state nothing else wants the
- * radio. So it is asked for, on the social channel the schedule describes.
- *
- * Asked for, not taken: the request is carried out on a work thread and a
- * join always wins, so this never stands between the user and a network.
- */
-void AirPort_RTW89::awdlChannelHold(const struct rtw89_glue_link &link)
-{
-    uint16_t freq = 0;
-    uint8_t why;
-
-    if (!_ns)
-        return;
-    /* The master moves without telling us, and this runs often enough to see it. */
-    if (_ns->awdlClockOn && !awdlChannelAsked() && !isConnected(link) && !isJoining(link))
-        awdlClockUpdate();
-    /*
-     * Why, not just whether. The first version of this only ran on a link
-     * event and said nothing when it declined, and it never engaged once:
-     * at link-down the glue state still reads "joining" while the mlme is
-     * mid-teardown, so the one call that mattered was refused, and nothing
-     * looked again after the machine had really settled into being idle.
-     * It is asked on every request from macOS now -- which is many a second
-     * -- and the reason is logged whenever it changes.
-     */
-    if (!_ns->awdlClockOn)
-        why = 1;
-    else if (isConnected(link))
-        why = 2;
-    else if (isJoining(link))
-        why = 3;
-    else {
-        why = 0;
-        freq = (uint16_t)freqOfChannel(_ns->awdlClockChannel, 0);
-    }
-
-    if (freq != _ns->awdlHeldFreq || why != _ns->awdlHoldWhy) {
-        if (freq)
-            LOG("awdl: nothing is joined, so the radio is asked to sit on "
-                "channel %u for the availability windows",
-                (unsigned int)_ns->awdlClockChannel);
-        else
-            LOG("awdl: the radio is not held for AWDL: %s",
-                why == 1 ? "no schedule is running" :
-                why == 2 ? "a network is joined, and its channel is the one "
-                           "AWDL runs on" : "a network is being joined");
-        _ns->awdlHeldFreq = freq;
-        _ns->awdlHoldWhy = why;
-    }
-    rtw89_glue_awdl_hold_channel(freq);
-}
-
-/*
- * macOS asks for awdl0 with APPLE80211_IOC_VIRTUAL_IF_CREATE, role
- * APPLE80211_VIF_AWDL (6 on Ventura and later). The front hands the request to
- * the family, which builds the interface and names it; we only report the name
- * back in the request, as the Broadcom driver does.
- */
-int AirPort_RTW89::nativeVirtualIfCreate(void *data)
-{
-    struct apple80211_virt_if_create_data *d =
-        static_cast<struct apple80211_virt_if_create_data *>(data);
-    char name[IFNAMSIZ] = {};
-    int err;
-
-    LOG("virtual interface asked for: role %u, address %02x:%02x:%02x:%02x:%02x:%02x",
-        (unsigned int)d->role, d->mac[0], d->mac[1], d->mac[2], d->mac[3], d->mac[4], d->mac[5]);
-    if (!awdlEnabled()) {
-        LOG("refused: boot-arg -rtw89awdl is not set");
-        return kIOReturnUnsupported;
-    }
-    if (d->role != APPLE80211_VIF_AWDL) {
-        LOG("refused: only the AWDL role (%d) is built here", (int)APPLE80211_VIF_AWDL);
-        return kIOReturnUnsupported;
-    }
-    if (!_ns->front.create_vif) {
-        LOG("refused: the front that is loaded has no create_vif (API too old)");
-        return kIOReturnUnsupported;
-    }
-    if (_ns->vifUp) {
-        /*
-         * A relaunched wifip2pd. It does not delete awdl0 when it exits and,
-         * finding it again, still asks for one before it will use it. Refusing
-         * left it with "No AWDL interface found" until the next restart.
-         */
-        if (!_ns->vifName[0]) {
-            LOG("refused: the virtual interface is up with no BSD name");
-            return EBUSY;
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    if (isSet && (number==APPLE80211_IOC_AWDL_OOB_AUTO_REQUEST ||
+                  number==APPLE80211_IOC_AWDL_OOB_REQUEST)) {
+        // Legacy4C dispatches this buffer only from the internal peer
+        // manager. Both request numbers have empty BSD SET/GET entries.
+        struct MasterIndicationRequest {
+            uint32_t version;
+            uint8_t destination[6], reserved[10];
+            uint16_t subtype;
+            uint8_t options[18];
+            uint16_t length;
+            uint8_t padding[6];
+            const uint8_t *payload;
+        };
+        static_assert(sizeof(MasterIndicationRequest)==56 &&
+                      offsetof(MasterIndicationRequest,subtype)==20 &&
+                      offsetof(MasterIndicationRequest,length)==40 &&
+                      offsetof(MasterIndicationRequest,payload)==48,
+                      "Legacy AWDL MI callback layout");
+        MasterIndicationRequest request;
+        memcpy(&request,data,sizeof(request));
+        const bool automatic=number==APPLE80211_IOC_AWDL_OOB_AUTO_REQUEST;
+        if (request.subtype!=6 || request.length>OWLY_MI_TEMPLATE_MAX)
+            return kIOReturnBadArgument;
+        int rc;
+        if (automatic && !request.length && !request.payload) {
+            rc=-rtw89_glue_awdl_mi(true,request.destination,nullptr,0);
+        } else {
+            if (!request.length ||
+                reinterpret_cast<uintptr_t>(request.payload)<0xffffff8000000000ULL)
+                return kIOReturnBadArgument;
+            Scratch snapshot(request.length);
+            if (!snapshot.p) return kIOReturnNoMemory;
+            memcpy(snapshot.p,request.payload,request.length);
+            rc=-rtw89_glue_awdl_mi(automatic,request.destination,
+                                  snapshot.bytes(),request.length);
         }
-        LOG("%s is already up, handing it over again", _ns->vifName);
-        bzero(d->bsd_name, sizeof(d->bsd_name));
-        memcpy(d->bsd_name, _ns->vifName, strnlen(_ns->vifName, sizeof(d->bsd_name)));
+        setProperty(automatic ? "OwlyNativeMI225Result" : "OwlyNativeMI149Result",
+                    static_cast<unsigned long long>(rc),32);
+        if (!rc && automatic) setProperty("OwlyNativeMI225Bytes",request.length,32);
+        return rc;
+    }
+#endif
+    if (owly_cfg_known(static_cast<unsigned>(number)) &&
+        (number!=APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE || isSet)) {
+        const int rc=-rtw89_glue_awdl_config(isSet,static_cast<unsigned>(number),data);
+        setProperty("OwlyNativeConfigLastRequest",static_cast<unsigned long long>(number),32);
+        setProperty("OwlyNativeConfigLastType",isSet ? 1ULL : 0ULL,32);
+        setProperty("OwlyNativeConfigLastResult",static_cast<unsigned long long>(static_cast<uint32_t>(rc)),32);
+        if (isSet) {
+            const char *key=number==116 ? "OwlyNativeConfigSET116Result" :
+                number==122 ? "OwlyNativeConfigSET122Result" :
+                number==125 ? "OwlyNativeConfigSET125Result" :
+                number==129 ? "OwlyNativeConfigSET129Result" :
+                number==132 ? "OwlyNativeConfigSET132Result" :
+                number==134 ? "OwlyNativeConfigSET134Result" :
+                number==135 ? "OwlyNativeConfigSET135Result" : "OwlyNativeConfigSET213Result";
+            setProperty(key,static_cast<unsigned long long>(static_cast<uint32_t>(rc)),32);
+            if (number==132) {
+                const auto *channel=static_cast<const owly_cfg_u32 *>(data);
+                setProperty("OwlyNativeConfigRequestedMasterChannel",channel->value,32);
+            }
+        }
+        return rc;
+    }
+    if (number==APPLE80211_IOC_AWDL_SYNC_ENABLED) {
+        static_assert(sizeof(apple80211_awdl_sync_enabled)==12,"GET117 ABI");
+        auto *d=static_cast<apple80211_awdl_sync_enabled *>(data);
+        if (isSet) {
+            if (d->enabled>1) return kIOReturnBadArgument;
+            return (-rtw89_glue_awdl_sync_enable(d->enabled!=0));
+        }
+        struct rtw89_glue_awdl_sync_status st={};
+        int rc=rtw89_glue_awdl_sync_status(&st);
+        if (rc) return -rc;
+        bzero(d,sizeof(*d)); d->version=APPLE80211_VERSION;
+        /* Keep the configured session enabled across a connected scan. */
+        d->enabled=st.enabled ? 1u : 0u;
+        setProperty("OwlySoftwareAWDLEnabled",st.enabled);
+        setProperty("OwlySoftwareAWDLScanPaused",st.scan_paused);
+        setProperty("OwlySoftwareAWDLActive",st.active);
+        setProperty("OwlySoftwareAWDLTemplate",st.has_template);
+        setProperty("OwlySoftwareAWDLRequested",st.requested);
+        setProperty("OwlySoftwareAWDLHandoffs",st.handed_off,64);
+        setProperty("OwlySoftwareAWDLFailures",st.failed,64);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+        setProperty("OwlyNativeMIHandoffs",st.native_mi_handed_off,64);
+#endif
+        setProperty("OwlyNativeConfigMask",st.config_mask,32);
+        setProperty("OwlyNativeConfigMasterChannel",st.master_channel,32);
+        setProperty("OwlyNativeConfigSyncRole",st.sync_role,32);
+        setProperty("OwlyNativeConfigPSFPeriodMS",st.psf_period_ms,32);
+        setProperty("OwlyNativeConfigRSSIDrops",st.rejected_rssi,64);
         return kIOReturnSuccess;
     }
-
-    err = _ns->front.create_vif(_ns->front.ctx, d->mac, d->role, name);
-    if (err) {
-        LOG("the front could not build the virtual interface: %d", err);
-        return err;
+    if (number==APPLE80211_IOC_AWDL_SYNC_FRAME_TEMPLATE) {
+        static_assert(sizeof(apple80211_awdl_sync_frame_template)==16,"SET151 ABI");
+        if (!isSet) return kIOReturnUnsupported;
+        auto *d=static_cast<apple80211_awdl_sync_frame_template *>(data);
+        if (!d->payload_len && !d->payload)
+            return (-rtw89_glue_awdl_sync_template(nullptr,0));
+        if (!d->payload || !d->payload_len || d->payload_len>1826)
+            return kIOReturnBadArgument;
+        /* Same trusted in-kernel pointer contract as the Apple family/upstream
+         * template callback. A range check is only an added rejection rule,
+         * never a claim that an arbitrary pointer becomes safe by alignment. */
+        if (reinterpret_cast<uintptr_t>(d->payload)<0xffffff8000000000ULL)
+            return kIOReturnBadArgument;
+        Scratch snapshot(d->payload_len);
+        if (!snapshot.p) return kIOReturnNoMemory;
+        memcpy(snapshot.p,d->payload,d->payload_len);
+        return -rtw89_glue_awdl_sync_template(snapshot.bytes(),d->payload_len);
     }
-    if (!name[0]) {
-        LOG("the family built the interface but gave it no BSD name, so nothing reaches BSD");
-        _ns->vifUp = true;
+    if (number==APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE) {
+        static_assert(sizeof(owly_cfg_sequence)==400,"GET129 Legacy ABI");
+        struct rtw89_glue_awdl_sync_status st={};
+        int rc=rtw89_glue_awdl_sync_status(&st);
+        if (rc) return -rc;
+        auto *d=static_cast<owly_cfg_sequence *>(data);
+        bzero(d,sizeof(*d)); d->version=APPLE80211_VERSION;
+        /* GET129 reads configuration during startup, before SET117/151.
+         * Match the reference driver's absent-sequence response: versioned,
+         * zeroed output, with no invented slots or implication of RF activity.
+         * GET117 continues to report the actual engine state independently. */
+        if (!st.enabled) return kIOReturnSuccess;
+        owly_config_sequence(d,st.channel);
         return kIOReturnSuccess;
     }
-    _ns->vifUp = true;
-    memcpy(_ns->vifMac, d->mac, sizeof(_ns->vifMac));
-    strlcpy(_ns->vifName, name, sizeof(_ns->vifName));
-    /* The address a peer will address its frames to, which the chip has to
-     * answer to for any of them to get through; see
-     * rtw89_compat_set_self_addr(). */
-    rtw89_glue_awdl_set_mac(_ns->vifMac);
-    /* There is somewhere to put received AWDL frames now -- but the filter
-     * goes on only once the schedule is running where peers can hear us; see
-     * awdlDeliverUpdate(). */
-    awdlClockUpdateAndHold();
-    awdlDeliverUpdate();
-    LOG("virtual interface %s is up", _ns->vifName);
-    bzero(d->bsd_name, sizeof(d->bsd_name));
-    memcpy(d->bsd_name, name, strnlen(name, sizeof(d->bsd_name)));
-    return kIOReturnSuccess;
+#else
+    (void)isSet; (void)number; (void)data;
+#endif
+    return kIOReturnUnsupported;
 }
 
-int AirPort_RTW89::nativeVirtualIfDelete(void *data)
+/* Bounded BSD output bridge for the two fixed-size GETs. No user input or
+ * embedded pointer is trusted as a kernel pointer. SET/151/service commands
+ * stay with the family's existing control path. No radio state changes. */
+bool AirPort_RTW89::nativeAwdlGetEnvelope(void *interface,void *vif,
+                                        unsigned long cmd,void *data,int *result)
 {
-    struct apple80211_virt_if_delete_data *d =
-        static_cast<struct apple80211_virt_if_delete_data *>(data);
-
-    LOG("virtual interface %.*s asked to go", (int)sizeof(d->bsd_name), (const char *)d->bsd_name);
-    if (!_ns->vifUp || !_ns->front.destroy_vif)
-        return kIOReturnUnsupported;
-    _ns->vifUp = false;
-    awdlClockUpdateAndHold();
-    awdlDeliverUpdate();
-    rtw89_glue_awdl_set_mac(nullptr);
-    _ns->front.destroy_vif(_ns->front.ctx);
-    bzero(_ns->vifName, sizeof(_ns->vifName));
-    return kIOReturnSuccess;
+#if defined(OWLY_AWDL_SOFTWARE_SYNC) && OWLY_AWDL_SOFTWARE_SYNC
+    if (!result || version_major<23 || cmd!=SIOCGA80211 || !data || !_ns ||
+        !_ns->airlink.cookie || _ns->airlink.role!=RTW89_FRONT_ROLE_AIRLINK_OBSERVED)
+        return false;
+    const bool ours=vif ? vif==_ns->airlink.cookie : interface==_ns->airlink.cookie;
+    if (!ours) return false;
+    auto *req=static_cast<apple80211req *>(data);
+    const uint32_t number=static_cast<uint32_t>(req->req_type);
+    const size_t size=number==APPLE80211_IOC_AWDL_SYNC_ENABLED ? 12u :
+        (number==APPLE80211_IOC_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE ? 400u : 0u);
+    if (!size) return false;
+    setProperty("OwlySoftwareAWDLBSDGet",number,32);
+    if (_nativeClosing || _halting || _asleep) { *result=ENXIO; return true; }
+    if (req->req_len!=size) { *result=EINVAL; return true; }
+    const user_addr_t destination=reinterpret_cast<user_addr_t>(req->req_data);
+    if (!destination) { *result=EFAULT; return true; }
+    Scratch output(size);
+    if (!output.p) { *result=ENOMEM; return true; }
+    int rc=errnoOf(nativeAwdlSyncRequest(false,static_cast<int>(number),output.p));
+    if (!rc) rc=copyout(output.p,destination,size);
+    *result=rc;
+    setProperty("OwlySoftwareAWDLBSDResult",static_cast<unsigned long long>(static_cast<uint32_t>(rc)),32);
+    return true;
+#else
+    (void)interface; (void)vif; (void)cmd; (void)data; (void)result;
+    return false;
+#endif
 }
