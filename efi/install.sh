@@ -71,6 +71,12 @@ done
 rm -rf "$oc/Kexts/AirPort_RTW89.kext"
 cp -R -X "$ours" "$oc/Kexts/"
 echo "  copied AirPort_RTW89.kext ($(shasum "$oc/Kexts/AirPort_RTW89.kext/Contents/MacOS/AirPort_RTW89" | cut -c1-12), commit $(cat "$ours/Contents/Resources/COMMIT" 2>/dev/null || echo '?'))"
+# RTLAirLink's bridge loads on its own, before the Wi-Fi family (configure.py)
+rm -rf "$oc/Kexts/OwlyAirLinkBridge.kext"
+if [ -d "$ours/Contents/PlugIns/OwlyAirLinkBridge.kext" ]; then
+    cp -R -X "$ours/Contents/PlugIns/OwlyAirLinkBridge.kext" "$oc/Kexts/"
+    echo "  copied OwlyAirLinkBridge.kext (out of AirPort_RTW89.kext)"
+fi
 # the front as a kext of its own, from early builds: its entry is off now
 if [ -d "$oc/Kexts/AirPortRTW89Front.kext" ]; then
     rm -rf "$oc/Kexts/AirPortRTW89Front.kext"

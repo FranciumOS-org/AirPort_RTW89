@@ -361,6 +361,11 @@ def main():
 
     copy_kext(ours, os.path.join(kexts, 'AirPort_RTW89.kext'))
     say('  copied AirPort_RTW89.kext')
+    # RTLAirLink's bridge loads on its own, before the Wi-Fi family
+    bridge = os.path.join(ours, 'Contents', 'PlugIns', 'OwlyAirLinkBridge.kext')
+    if os.path.isdir(bridge):
+        copy_kext(bridge, os.path.join(kexts, 'OwlyAirLinkBridge.kext'))
+        say('  copied OwlyAirLinkBridge.kext')
     for name, src in stack.items():
         if src:
             copy_kext(src, os.path.join(kexts, name + '.kext'),

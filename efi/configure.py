@@ -8,8 +8,10 @@ install: Kernel -> Add gets, in load order and after Lilu,
     AirPort_RTW89.kext      (the driver)
     AirPort_RTW89.kext/Contents/PlugIns/AirPortRTW89Front.kext
                             (the IO80211 controller, links against the family)
-    AirPort_RTW89.kext/Contents/PlugIns/OwlyAirLinkBridge.kext
-                            (RTLAirLink's Lilu plugin for AirDrop's event client)
+and, right after Lilu and before the Wi-Fi family,
+    OwlyAirLinkBridge.kext  (RTLAirLink's Lilu plugin for AirDrop's event client,
+                            copied out of AirPort_RTW89.kext's PlugIns: Lilu only
+                            calls it for the family if it is there first)
 and boot-args gets -owlyeb1 owlyebstage=4, which switch the bridge on, and
 -broadtekp2poff, which keeps BroadTek's AWDL hook off the same function,
 and Kernel -> Block gets an entry that keeps Apple's own IOSkywalkFamily out,
@@ -38,9 +40,13 @@ FRONT = 'AirPort_RTW89.kext/Contents/PlugIns/AirPortRTW89Front.kext'
 OURS = [
     ('AirPort_RTW89.kext', 'AirPort_RTW89', 'Wi-Fi: rtw89 driver (AirPort_RTW89)'),
     (FRONT, 'AirPortRTW89Front', 'Wi-Fi: rtw89 front (AirPort_RTW89)'),
-    ('AirPort_RTW89.kext/Contents/PlugIns/OwlyAirLinkBridge.kext', 'OwlyAirLinkBridge',
-     'Wi-Fi: AirDrop event bridge (RTLAirLink, needs Lilu)'),
 ]
+# A Lilu plugin that hooks the family: it has to load before it, or Lilu never
+# calls it for the family (seen on the first boot with it after the front).
+BRIDGE = [('OwlyAirLinkBridge.kext', 'OwlyAirLinkBridge',
+           'Wi-Fi: AirDrop event bridge (RTLAirLink, Lilu plugin)')]
+# the bridge as a plugin inside the driver, as d4218c8 installed it: off now
+NESTED_BRIDGE = 'AirPort_RTW89.kext/Contents/PlugIns/OwlyAirLinkBridge.kext'
 # The bridge does nothing without the first two (RTLAirLink's opt-in). The
 # third keeps BroadTek's own hook on IO80211InterfacePostMessage out of the
 # way: Lilu panics when two plugins route one function, and the bridge routes
@@ -67,7 +73,7 @@ def install(config, changes):
     if 'Lilu.kext' not in paths:
         sys.exit('Lilu.kext is not in Kernel -> Add; AMFIPass needs it')
     ours = []
-    for bundle, exe, comment in STACK + OURS:
+    for bundle, exe, comment in BRIDGE + STACK + OURS:
         if bundle in paths:
             e = add[paths.index(bundle)]
             if not e.get('Enabled'):
@@ -91,9 +97,12 @@ def install(config, changes):
     new_order = [e.get('BundlePath') for e in add if e.get('BundlePath') in old_order]
     if new_order != old_order:
         changes.append('Kernel -> Add order: Lilu, ' +
-                       ', '.join(b.split('/')[-1] for b, _, _ in STACK + OURS))
+                       ', '.join(b.split('/')[-1] for b, _, _ in BRIDGE + STACK + OURS))
 
     for e in add:
+        if e.get('BundlePath') == NESTED_BRIDGE and e.get('Enabled'):
+            e['Enabled'] = False
+            changes.append('switched off ' + NESTED_BRIDGE + ' (it loads on its own now)')
         if e.get('BundlePath') == OLD_FRONT and e.get('Enabled'):
             e['Enabled'] = False
             changes.append('switched off ' + OLD_FRONT + ' (the front is inside the driver now)')
@@ -145,7 +154,7 @@ def secure_boot_model(config):
 
 def uninstall(config, changes):
     kernel = config['Kernel']
-    names = {b for b, _, _ in STACK + OURS} | {OLD_FRONT}
+    names = {b for b, _, _ in BRIDGE + STACK + OURS} | {OLD_FRONT, NESTED_BRIDGE}
     for e in kernel['Add']:
         if e.get('BundlePath') in names and e.get('Enabled'):
             e['Enabled'] = False
