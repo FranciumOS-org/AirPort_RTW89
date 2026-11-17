@@ -367,6 +367,36 @@ uint16_t owly_link_shared_slots(struct owly_native_link *s, uint64_t now)
     return slots;
 }
 
+/* Multichannel schedule clock. Unlike owly_link_window it ignores the TX
+ * pause: while the radio is with the access point the link is paused, yet
+ * the schedule must still say when to come back. Uses the same root as the
+ * advertised sync parameters, else the local clock (now / AW). */
+bool owly_link_clock(struct owly_native_link *s,uint64_t now,uint16_t *seq,
+                     uint32_t *phase_us,uint16_t *social_slots,unsigned *peers)
+{
+    uint16_t sequence,phase,slots=0;
+    unsigned count=0;
+    if(!s || !seq || !phase_us)return false;
+    expire(s,now);
+    for(unsigned i=0;i<OWLY_LINK_PEERS;i++)if(s->peers[i].used)++count;
+    struct owly_link_peer *root=s->active && s->sync_enabled ? master_peer(s,now) : NULL;
+    if(root && peer_window(root,now,&sequence,&phase)) {
+        for(unsigned i=0;i<OWLY_LINK_PEERS;i++) {
+            const struct owly_link_peer *p=&s->peers[i];
+            if(!in_clock_domain(p,root,now))continue;
+            for(unsigned j=0;j<16u;j++)
+                if(p->channels[j]==s->channel)slots|=(uint16_t)(1u<<j);
+        }
+        *seq=sequence;*phase_us=phase;
+    } else {
+        *seq=(uint16_t)(now/OWLY_LINK_AW_US);
+        *phase_us=(uint32_t)(now%OWLY_LINK_AW_US);
+    }
+    if(social_slots)*social_slots=slots;
+    if(peers)*peers=count;
+    return root!=NULL;
+}
+
 bool owly_link_window(struct owly_native_link *s,uint64_t now,struct owly_link_window *out) {
     struct owly_link_peer *p;
     unsigned i;

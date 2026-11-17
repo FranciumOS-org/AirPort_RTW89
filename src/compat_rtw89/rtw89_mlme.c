@@ -205,6 +205,16 @@ struct ieee80211_chanctx_conf *rtw89_mlme_awdl_shared_chanctx(void)
 #endif
 /* OWLY_CORE04D_SHARED_CHANCTX_MLME_END */
 
+/* Multichannel AWDL visits the social channel through the driver's
+ * remain-on-channel state. Anything that tears the link down must first
+ * bring the radio back to the AP's channel; Linux mac80211 cancels a ROC
+ * before a disconnect in the same way. */
+static void (*mlme_offchan_end)(void);
+void rtw89_mlme_set_offchan_hook(void (*end)(void))
+{
+    mlme_offchan_end = end;
+}
+
 static void mlme_set_state(enum rtw89_mlme_state state)
 {
     mlme.state = state;
@@ -879,6 +889,8 @@ static void mlme_teardown(u16 deauth_reason)
     bool was_assoc = mlme.vif->cfg.assoc;
     u64 changed = BSS_CHANGED_BSSID;
 
+    if (mlme_offchan_end)
+        mlme_offchan_end();
     if (rtw89_cfg80211_link_beacon_reset(mlme.hw->wiphy))
         mlme_info("OWLY world beacon: connected-AP NO_IR lease revoked");
     if (mlme.state == RTW89_MLME_IDLE)

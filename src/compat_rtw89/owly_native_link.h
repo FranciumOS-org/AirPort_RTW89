@@ -101,6 +101,11 @@ bool owly_link_root_election(struct owly_native_link *s,uint64_t now,
                               uint8_t root[24]);
 /* Shared slots in the followed clock's timing domain, on the associated channel. */
 uint16_t owly_link_shared_slots(struct owly_native_link *s, uint64_t now);
+/* Multichannel: the advertised clock (followed root, else local) and the
+ * slots in which that root's domain is on our channel, ignoring the TX pause.
+ * Returns true when following a root. */
+bool owly_link_clock(struct owly_native_link *s,uint64_t now,uint16_t *seq,
+                     uint32_t *phase_us,uint16_t *social_slots,unsigned *peers);
 /* Accept IPv6 Ethernet and Apple's wrapped 802.3 frames. Preserve the
  * IPv6 payload and write the supplied on-air sequence and AWDL head. */
 int owly_link_build_tx(const uint8_t *eth,size_t len,const uint8_t local[6],

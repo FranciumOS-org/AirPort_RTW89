@@ -45,6 +45,8 @@ struct owly_sync {
     bool broadcast_mif_submitted, last_broadcast_mif;
     /* The advertised slots and root prefix stay in the backend. */
     uint16_t shared_slots;
+    /* Multichannel: slots we are on the social channel; 0 = all. */
+    uint16_t presence_slots;
     bool have_master_election;
     uint8_t master_election[24];
 #endif

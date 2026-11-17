@@ -693,6 +693,59 @@ out_hw:
 
 int rtw89_selftest(void);
 
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+#include "owly_awdl_mc.h"
+#include "owly_native_link.h"
+/* ---- multichannel AWDL slot policy (owly_awdl_mc.h) ---- */
+static void test_owly_mc(void)
+{
+    uint32_t until;
+    /* No peers: only the two discovery slots. */
+    CHECK(owly_mc_pick_slots(0, 0, false) == 0x0101);
+    /* Peers, every slot on ch 6: six, interleaved (0 8 4 12 2 10). */
+    CHECK(owly_mc_pick_slots(0xffff, 2, false) == 0x1515);
+    /* Data in flight: twelve slots, the AP keeps four. */
+    CHECK(__builtin_popcount(owly_mc_pick_slots(0xffff, 1, true)) == 12);
+    /* Only what the peers use, in our order. */
+    CHECK(owly_mc_pick_slots(0x00f0, 1, false) == 0x00f0);
+    /* Peers heard, schedule unknown: treated as all slots. */
+    CHECK(owly_mc_pick_slots(0x0000, 1, false) == 0x1515);
+    /* Slot arithmetic: AW 5 is slot 1, three AWs (minus phase) to slot 2. */
+    CHECK(owly_mc_slot(5, 1000, &until) == 1);
+    CHECK(until == 2 * OWLY_MC_AW_US + (OWLY_MC_AW_US - 1000));
+    CHECK(owly_mc_slot(63, 0, &until) == 15 && until == OWLY_MC_AW_US);
+    CHECK(owly_mc_slot(64, 0, NULL) == 0);
+    /* In a chosen slot; in the lead before one; not otherwise. */
+    CHECK(owly_mc_want_social(0x0001, 0, 50000));
+    CHECK(!owly_mc_want_social(0x0001, 1, 50000));
+    CHECK(owly_mc_want_social(0x0004, 1, OWLY_MC_LEAD_US));
+    CHECK(owly_mc_want_social(0x0001, 15, 100));
+    CHECK(!owly_mc_want_social(0x0002, 15, 100));
+    /* Wake for the lead, or just after the edge once inside it. */
+    CHECK(owly_mc_next_check_us(20000) == 20000 - OWLY_MC_LEAD_US);
+    CHECK(owly_mc_next_check_us(OWLY_MC_LEAD_US) == OWLY_MC_LEAD_US + 200);
+
+    /* The schedule clock: local time when no root is known, and it keeps
+     * answering while TX is paused (the radio is with the AP). */
+    static struct owly_native_link link;
+    static const uint8_t local[6] = {0x02, 1, 2, 3, 4, 5};
+    uint16_t seq, slots = 7;
+    uint32_t phase;
+    unsigned peers = 9;
+    owly_link_reset(&link);
+    owly_link_reconcile(&link, true, local, 6, 1000000);
+    owly_link_set_tx_paused(&link, true, 1000000);
+    CHECK(!owly_link_clock(&link, 1000000 + 5 * OWLY_LINK_AW_US + 77, &seq, &phase,
+                           &slots, &peers));
+    CHECK(seq == (uint16_t)((1000000 + 5 * OWLY_LINK_AW_US + 77) / OWLY_LINK_AW_US));
+    CHECK(phase == (uint32_t)((1000000 + 5 * OWLY_LINK_AW_US + 77) % OWLY_LINK_AW_US));
+    CHECK(slots == 0 && peers == 0);
+}
+#else
+static void test_owly_mc(void) {}
+#endif
+
+
 int rtw89_selftest(void)
 {
     int ret;
@@ -706,6 +759,7 @@ int rtw89_selftest(void)
     test_crypto();
     test_cfg80211_helpers();
     test_stack();
+    test_owly_mc();
 
     rtw88_compat_exit();
     return failures;

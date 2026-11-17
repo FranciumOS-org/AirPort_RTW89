@@ -186,6 +186,11 @@ struct rtw89_glue_awdl_sync_status {
     uint32_t config_mask, master_channel, sync_role, psf_period_ms, election_id;
     int32_t peer_rssi;
     uint64_t rejected_rssi;
+    /* Multichannel AWDL: associated off the social channels, AWDL on ch 6
+     * in the slots below; visits counts trips there. */
+    bool mc_enabled, mc_present;
+    uint16_t mc_slots;
+    uint64_t mc_visits, mc_null_failures, mc_max_switch_us;
 };
 int rtw89_glue_awdl_config(bool set, unsigned number, void *data);
 int rtw89_glue_awdl_ht_capability(void *output, size_t capacity);

@@ -1122,6 +1122,7 @@ static int ap_answer_rejoin(const uint8_t *gtk, int gtk_id)
 }
 
 /* Staying connected: beacons, a silent AP, an AP that sends us off or moves. */
+static const uint8_t sync_test_template[29];
 static int test_keep(void)
 {
     static const uint8_t gtk1[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
@@ -1296,6 +1297,61 @@ static int test_keep(void)
     rtw89_glue_link(&link);
     EXPECT(link.rejoins == rejoins + 3 && link.freq == 2462);
     EXPECT(sta_tx_test() == 0);
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+    /* Multichannel AWDL: associated on ch 11, AWDL visits ch 6 for its
+     * slots and comes back; the station keeps working in between. */
+    {
+        static const uint8_t mc_mac[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x66};
+        struct rtw89_glue_awdl_radio_status radio;
+        struct rtw89_glue_awdl_sync_status st;
+        memset(&radio, 0, sizeof(radio));
+        if (rtw89_glue_awdl_radio_status(&radio) == 0 && radio.enabled) {
+            const bool made = !radio.vif_registered;
+            uint64_t base;
+            if (made)
+                EXPECT(rtw89_glue_awdl_vif_create(mc_mac) == 0);
+            for (i = 0; i < 100; i++) {
+                rtw89_glue_awdl_sync_status(&st);
+                if (st.mc_enabled)
+                    break;
+                usleep(20 * 1000);
+            }
+            EXPECT(st.mc_enabled && !st.mc_present);
+            base = st.mc_visits;
+            EXPECT(rtw89_glue_awdl_service_ready());
+            EXPECT(rtw89_glue_awdl_sync_enable(true) == 0);
+            EXPECT(rtw89_glue_awdl_sync_template(sync_test_template,
+                                                 sizeof(sync_test_template)) == 0);
+            /* No peers: slots 0 and 8, one 64 TU visit every ~524 ms. */
+            for (i = 0; i < 300; i++) {
+                rtw89_glue_awdl_sync_status(&st);
+                if (st.mc_visits >= base + 2 && st.handed_off && !st.mc_present)
+                    break;
+                usleep(10 * 1000);
+            }
+            printf("== multichannel: visits=%llu handed_off=%llu slots=0x%04x "
+                   "null_fail=%llu max_switch=%lluus\n",
+                   (unsigned long long)st.mc_visits, (unsigned long long)st.handed_off,
+                   (unsigned)st.mc_slots, (unsigned long long)st.mc_null_failures,
+                   (unsigned long long)st.mc_max_switch_us);
+            EXPECT(st.mc_visits >= base + 2 && st.handed_off > 0 && st.channel == 6);
+            EXPECT(st.mc_slots == 0x0101 && !st.failed);
+            EXPECT(sta_tx_test() == 0);
+            EXPECT(link_state() == RTW89_GLUE_LINK_CONNECTED);
+            EXPECT(rtw89_glue_awdl_sync_enable(false) == 0);
+            rtw89_glue_awdl_sync_status(&st);
+            EXPECT(!st.mc_present);
+            EXPECT(rtw89_glue_awdl_sync_template(NULL, 0) == 0);
+            if (made) {
+                EXPECT(rtw89_glue_awdl_vif_destroy() == 0);
+                usleep(300 * 1000);
+                rtw89_glue_awdl_sync_status(&st);
+                EXPECT(!st.mc_enabled && !st.mc_present);
+            }
+            EXPECT(sta_tx_test() == 0);
+        }
+    }
+#endif
 
     /* an attempt that is refused is followed by another */
     ap_send_deauth(7);

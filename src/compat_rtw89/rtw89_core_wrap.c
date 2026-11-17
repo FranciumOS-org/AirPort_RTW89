@@ -72,3 +72,54 @@ unsigned int rtw89_compat_flush_ppdu_rx(struct rtw89_dev *rtwdev)
  * nothing, which is what makes a join putting the station's address back
  * behind the glue's back harmless.
  */
+
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+/*
+ * Multichannel AWDL: visit the social channel while associated elsewhere.
+ * The same steps as rtw89_roc_start()/rtw89_roc_end(), minus the mac80211
+ * ROC callbacks and timer: tell the AP we sleep (it buffers our downlink),
+ * hold the station's queues, retune, and undo all of it on the way back.
+ * @social NULL returns to the AP. Wiphy lock held. Returns 0, or the null
+ * frame's error (the visit still happens; the AP may then send while away).
+ */
+int rtw89_compat_owly_visit(struct rtw89_dev *rtwdev, struct rtw89_vif_link *sta_link,
+                            const struct cfg80211_chan_def *social);
+int rtw89_compat_owly_visit(struct rtw89_dev *rtwdev, struct rtw89_vif_link *sta_link,
+                            const struct cfg80211_chan_def *social)
+{
+    struct rtw89_vif *rtwvif = sta_link->rtwvif;
+    int ret;
+
+    lockdep_assert_wiphy(rtwdev->hw->wiphy);
+    rtw89_leave_ips_by_hwflags(rtwdev);
+    rtw89_leave_lps(rtwdev);
+
+    if (social) {
+        struct rtw89_chanctx_pause_parm pause_parm = {
+            .rsn = RTW89_CHANCTX_PAUSE_REASON_ROC,
+            .trigger = sta_link,
+        };
+
+        rtw89_chanctx_pause(rtwdev, &pause_parm);
+        ret = rtw89_core_send_nullfunc(rtwdev, sta_link, true, true,
+                                       RTW89_ROC_TX_TIMEOUT);
+        /* Only the station holds its queues: AWDL frames are written
+         * straight to the ring and must go out on the social channel. */
+        rtwvif->offchan = true;
+        rtw89_config_roc_chandef(rtwdev, sta_link, social);
+        rtw89_set_channel(rtwdev);
+        rtw89_phy_dig_suspend(rtwdev);
+        return ret;
+    }
+
+    rtw89_config_roc_chandef(rtwdev, sta_link, NULL);
+    rtw89_chanctx_proceed(rtwdev, NULL);
+    ret = rtw89_core_send_nullfunc(rtwdev, sta_link, true, false,
+                                   RTW89_ROC_TX_TIMEOUT);
+    rtwvif->offchan = false;
+    rtw89_core_handle_sta_pending_tx(rtwdev, sta_link);
+    queue_work(rtwdev->txq_wq, &rtwdev->txq_work);
+    rtw89_phy_dig_resume(rtwdev, true);
+    return ret;
+}
+#endif

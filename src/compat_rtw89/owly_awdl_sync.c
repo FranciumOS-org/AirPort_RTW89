@@ -420,6 +420,12 @@ int owly_sync_frame(struct owly_sync *s,uint64_t now,uint8_t *f,size_t cap,size_
         if (s->shared_slots)
             advertised_slots = s->shared_slots;
     }
+    /* Multichannel: advertise only the slots we really spend here. */
+    if (s->presence_slots) {
+        advertised_slots &= s->presence_slots;
+        if (!advertised_slots)
+            advertised_slots = s->presence_slots;
+    }
 #endif
     /* Peers use the slot countdown even when every slot uses one channel.
      * The short remaining field describes the first AW in that slot. */

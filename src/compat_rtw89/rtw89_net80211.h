@@ -251,6 +251,8 @@ struct rtw89_mlme_status {
 };
 
 /* All of these are called with the wiphy mutex held, except rtw89_mlme_rx(). */
+/* Called (wiphy lock held) before the link is torn down. */
+void rtw89_mlme_set_offchan_hook(void (*end)(void));
 /* @notify is called (under the wiphy mutex) whenever the state changes. */
 /* OWLY_CORE04D_SHARED_CHANCTX: internal MLME shim, stage only. */
 #if defined(RTW89_AWDL_VIF_STAGE) && RTW89_AWDL_VIF_STAGE
