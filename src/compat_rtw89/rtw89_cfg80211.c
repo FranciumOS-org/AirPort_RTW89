@@ -293,6 +293,20 @@ bool rtw89_cfg80211_link_beacon_reset(struct wiphy *wiphy)
 }
 /* OWLY_WORLD_BEACON_END */
 
+bool rtw89_cfg80211_awdl_5g_ok(struct wiphy *wiphy, u32 freq)
+{
+    const char *c;
+    if (!wiphy || (freq != 5220 && freq != 5745))
+        return false;
+    c = wiphy_to_rdev(wiphy)->reg_request.alpha2;
+    if (c[0] < 'A' || c[0] > 'Z' || c[1] < 'A' || c[1] > 'Z')
+        return false; /* "00": the world domain */
+    /* 5745 (UNII-3) is not open in these. */
+    if (freq == 5745 && ((c[0] == 'J' && c[1] == 'P') || (c[0] == 'I' && c[1] == 'L')))
+        return false;
+    return true;
+}
+
 /*
  * There is no regulatory database here. A driver hint is echoed back through
  * wiphy->reg_notifier, as the Linux core does once it has accepted the hint;

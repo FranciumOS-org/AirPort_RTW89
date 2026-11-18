@@ -58,6 +58,9 @@ bool rtw89_cfg80211_link_beacon(struct wiphy *wiphy,
                               struct ieee80211_channel *channel,
                               const u8 bssid[6], const u8 source[6], u16 capability);
 bool rtw89_cfg80211_link_beacon_reset(struct wiphy *wiphy);
+/* AWDL on a world-NO_IR social channel (5220/5745): allowed once a real
+ * country is in force (the AP's or macOS's) whose rules permit it. */
+bool rtw89_cfg80211_awdl_5g_ok(struct wiphy *wiphy, u32 freq);
 
 /* ------------------------------------------------------------------ */
 /*  mac80211 side: what Linux keeps in ieee80211_local / sdata / sta    */

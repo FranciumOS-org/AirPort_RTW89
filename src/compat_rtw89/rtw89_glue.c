@@ -2642,7 +2642,9 @@ static void owly_radio_maybe_attach(void)
         const unsigned freq=desired==149 ? 5745 : desired==44 ? 5220 : 2437;
         struct ieee80211_channel *candidate=ieee80211_get_channel(hw->wiphy,freq);
         if (freq!=idle.freq && candidate &&
-            !(candidate->flags&(IEEE80211_CHAN_DISABLED|IEEE80211_CHAN_NO_IR|IEEE80211_CHAN_RADAR))) {
+            !(candidate->flags&(IEEE80211_CHAN_DISABLED|IEEE80211_CHAN_RADAR)) &&
+            (!(candidate->flags&IEEE80211_CHAN_NO_IR) ||
+             rtw89_cfg80211_awdl_5g_ok(hw->wiphy,freq))) {
             owly_idle_move_us=now;
             const int rc=rtw89_mlme_awdl_hold_channel((u16)freq);
             if (rc) {
@@ -2870,8 +2872,12 @@ static bool owly_mc_channel_ok(uint8_t ch)
     if (ch != 6 && ch != 44 && ch != 149)
         return false;
     c = ieee80211_get_channel(glue_hw()->wiphy, owly_mc_freq(ch));
-    return c && !(c->flags & (IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_NO_IR |
-                              IEEE80211_CHAN_RADAR));
+    if (!c || (c->flags & (IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_RADAR)))
+        return false;
+    /* No country database here: 5 GHz stays world NO_IR unless the AP is
+     * on it. A known country that allows the channel lifts that for AWDL. */
+    return !(c->flags & IEEE80211_CHAN_NO_IR) ||
+           rtw89_cfg80211_awdl_5g_ok(glue_hw()->wiphy, c->center_freq);
 }
 
 static void owly_mc_note_switch(bool going, uint64_t took_us, int rc)
