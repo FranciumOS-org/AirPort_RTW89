@@ -452,7 +452,8 @@ static void owly_link_update_locked(struct ieee80211_channel *channel, uint64_t 
 #include "owly_awdl_mc.h"
 static struct {
     bool enabled;   /* associated off the social channels: AWDL bound to ch 6 */
-    bool present;   /* the radio is on ch 6 right now */
+    bool present;   /* visiting: the radio is on the AWDL channel right now */
+    bool home;      /* the AWDL channel is the AP's own: no visits needed */
     bool off;       /* boot-arg -owlynomc */
     uint8_t channel; /* social channel visited: 6, 44 or 149 (0 = not chosen) */
     uint16_t slots, root_slots;
@@ -2756,7 +2757,7 @@ int rtw89_glue_awdl_radio_status(struct rtw89_glue_awdl_radio_status *out)
 static bool owly_awdl_away(void)
 {
 #ifdef OWLY_MC_BUILT
-    if (owly_mc.enabled && !owly_mc.present)
+    if (owly_mc.enabled && !owly_mc.present && !owly_mc.home)
         return true;
 #endif
     return glue.scanning;
@@ -2849,8 +2850,8 @@ static bool owly_mc_should_run(void)
     rtw89_mlme_get_status(&st);
     if (st.state != RTW89_MLME_CONNECTED || st.awdl_channel_owned)
         return false;
-    if (st.freq == 2437 || st.freq == 5220 || st.freq == 5745)
-        return false; /* single channel already covers it */
+    /* Also on a social AP channel: the AWDL devices around may be elsewhere
+     * (an iPhone on Personal Hotspot sits on 6/149, not the home AP's 44). */
     social = ieee80211_get_channel(glue_hw()->wiphy, 2437);
     return social && !(social->flags & (IEEE80211_CHAN_DISABLED |
                                         IEEE80211_CHAN_NO_IR |
@@ -2943,7 +2944,8 @@ static void owly_mc_stop(void)
     owly_mc.enabled = false;
     owly_mc.slots = 0;
     owly_mc.root_slots = 0;
-    owly_mc.channel = 6;
+    owly_mc.channel = 0;
+    owly_mc.home = false;
     owly_sync_state.presence_slots = 0;
     if (was)
         IOLog("OWLY multichannel: off\n");
@@ -2973,7 +2975,9 @@ static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
         rtw89_mlme_get_status(&st);
         owly_mc.enabled = true;
         if (!owly_mc.channel)
-            owly_mc.channel = 6;
+            owly_mc.channel = st.freq == 5745 ? 149 : st.freq == 5220 ? 44 : 6;
+        owly_mc.home = owly_mc_freq(owly_mc.channel) == st.freq;
+        owly_mc.root_us = glue_now_us(); /* 10 s to hear a root here first */
         IOLog("OWLY multichannel: on, AP on %u MHz, AWDL visits ch %u\n",
               (unsigned)st.freq, (unsigned)owly_mc.channel);
         owly_sync_recheck(); /* the bound channel is now ch 6 */
@@ -3018,6 +3022,24 @@ static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
         owly_mc.root_slots = 0;
         owly_sync_recheck(); /* rebinds AWDL to the new channel */
         wiphy_delayed_work_queue(wiphy, &owly_mc_work, usecs_to_jiffies(1000));
+        return;
+    }
+    {
+        struct rtw89_mlme_status st;
+        rtw89_mlme_get_status(&st);
+        const bool home = owly_mc_freq(owly_mc.channel) == st.freq;
+        if (home != owly_mc.home) {
+            if (home)
+                owly_mc_leave(); /* the AP's channel is the AWDL channel */
+            owly_mc.home = home;
+            owly_sync_recheck();
+        }
+    }
+    if (owly_mc.home) {
+        /* Single channel, as before multichannel: AWDL all the time. */
+        owly_mc.slots = 0;
+        owly_sync_state.presence_slots = 0;
+        wiphy_delayed_work_queue(wiphy, &owly_mc_work, msecs_to_jiffies(250));
         return;
     }
     /* The root is heard only during our visits: keep its slots through a
