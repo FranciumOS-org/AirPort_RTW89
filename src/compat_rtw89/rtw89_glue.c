@@ -1354,6 +1354,41 @@ static void glue_bss_describe(struct rtw89_glue_bss_entry *e)
         e->pub.security |= RTW89_GLUE_SEC_PMF_REQUIRED;
 }
 
+
+#if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
+/* Diagnostics: the TLV layout of an AWDL announcement (types and sizes),
+ * with the start of each service record (TLV 2). Starts at the first TLV. */
+static void owly_mi_describe(const char *tag, const uint8_t mac[6],
+                             const uint8_t *p, size_t n)
+{
+    char line[200];
+    size_t at = 0, w = 0;
+    unsigned services = 0;
+    line[0] = 0;
+    while (n - at >= 3 && w + 12 < sizeof(line)) {
+        const size_t size = (size_t)p[at + 1] | (size_t)p[at + 2] << 8;
+        if (size > n - at - 3)
+            break;
+        w += (size_t)snprintf(line + w, sizeof(line) - w, " %u:%u", p[at], (unsigned)size);
+        at += 3 + size;
+    }
+    IOLog("OWLY MI %s %02x:%02x bytes=%u tlvs:%s\n", tag, mac[4], mac[5], (unsigned)n, line);
+    for (at = 0; n - at >= 3 && services < 12;) {
+        const size_t size = (size_t)p[at + 1] | (size_t)p[at + 2] << 8;
+        if (size > n - at - 3)
+            break;
+        if (p[at] == 2) {
+            char hex[100];
+            size_t h = 0;
+            for (size_t i = 0; i < size && i < 40 && h + 3 < sizeof(hex); i++)
+                h += (size_t)snprintf(hex + h, sizeof(hex) - h, "%02x", p[at + 3 + i]);
+            IOLog("OWLY MI %s svc[%u] len=%u %s\n", tag, services, (unsigned)size, hex);
+            services++;
+        }
+        at += 3 + size;
+    }
+}
+#endif
 /* ABI6 bridge into platform callbacks. Never assume that passing a frame
  * here makes the peer authenticated or makes awdl0 receive the packet. */
 #if defined(OWLY_ABI6_RX_DEMUX) && OWLY_ABI6_RX_DEMUX
@@ -1367,6 +1402,16 @@ static bool owly_abi6_action_to_platform(void *opaque, const uint8_t source[6],
     spin_lock(&owly_link_lock);
     admitted=owly_link_observe(&owly_link_state,raw,raw_len,meta->channel,meta->rssi,meta->received_us);
     spin_unlock(&owly_link_lock);
+    {
+        /* One peer MI per distinct size every 20 s: compare with ours. */
+        static uint64_t peer_mi_us; static size_t peer_mi_len;
+        const uint64_t t = meta->received_us;
+        if (decoded && decoded->subtype == 3 && raw_len > 40 && raw_len != peer_mi_len &&
+            (!peer_mi_us || t - peer_mi_us > 20000000u)) {
+            peer_mi_us = t; peer_mi_len = raw_len;
+            owly_mi_describe("rx", raw + 10, raw + 40, raw_len - 40);
+        }
+    }
     if(!admitted) {
         static volatile unsigned long rejected_samples;
         const unsigned long count=__sync_add_and_fetch(&rejected_samples,1ul);
@@ -3544,6 +3589,11 @@ int rtw89_glue_awdl_mi(bool automatic,const uint8_t destination[6],
     const struct ieee80211_channel *ch=owly_sync_bound_channel();
     int rc=-ENETDOWN;
     if (ch || (automatic && glue.up && owly_core04c_vif)) {
+        static size_t described_len;
+        if (bytes && length != described_len) {
+            described_len = length;
+            owly_mi_describe(automatic ? "ours" : "ours-1x", owly_core04c_vif->addr, bytes, length);
+        }
         rc=owly_sync_mi(&owly_sync_state,automatic,destination,bytes,length,
                         owly_core04c_vif->addr,ch ? (uint8_t)ch->hw_value : 0,glue_now_us());
         if (rc==OWLY_MI_BUSY) rc=-ENOBUFS;
