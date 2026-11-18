@@ -716,14 +716,23 @@ static void test_owly_mc(void)
     CHECK(owly_mc_slot(63, 0, &until) == 15 && until == OWLY_MC_AW_US);
     CHECK(owly_mc_slot(64, 0, NULL) == 0);
     /* In a chosen slot; in the lead before one; not otherwise. */
-    CHECK(owly_mc_want_social(0x0001, 0, 50000));
-    CHECK(!owly_mc_want_social(0x0001, 1, 50000));
-    CHECK(owly_mc_want_social(0x0004, 1, OWLY_MC_LEAD_US));
-    CHECK(owly_mc_want_social(0x0001, 15, 100));
-    CHECK(!owly_mc_want_social(0x0002, 15, 100));
+    CHECK(owly_mc_want_social(0x0001, 0, 50000, OWLY_MC_LEAD_US));
+    CHECK(!owly_mc_want_social(0x0001, 1, 50000, OWLY_MC_LEAD_US));
+    CHECK(owly_mc_want_social(0x0004, 1, OWLY_MC_LEAD_US, OWLY_MC_LEAD_US));
+    CHECK(owly_mc_want_social(0x0001, 15, 100, OWLY_MC_LEAD_US));
+    CHECK(!owly_mc_want_social(0x0002, 15, 100, OWLY_MC_LEAD_US));
     /* Wake for the lead, or just after the edge once inside it. */
-    CHECK(owly_mc_next_check_us(20000) == 20000 - OWLY_MC_LEAD_US);
-    CHECK(owly_mc_next_check_us(OWLY_MC_LEAD_US) == OWLY_MC_LEAD_US + 200);
+    CHECK(owly_mc_next_check_us(20000, OWLY_MC_LEAD_US) == 20000 - OWLY_MC_LEAD_US);
+    CHECK(owly_mc_next_check_us(OWLY_MC_LEAD_US, OWLY_MC_LEAD_US) == OWLY_MC_LEAD_US + 200);
+    /* A 15 ms band change: the lead settles near 17 ms, capped at 25. */
+    {
+        uint32_t avg = 0, lead = 0;
+        for (int i = 0; i < 40; i++)
+            lead = owly_mc_lead(&avg, 15000);
+        CHECK(lead >= 16000 && lead <= 17100);
+        CHECK(owly_mc_lead(&avg, 900000) <= OWLY_MC_LEAD_MAX_US);
+        CHECK(owly_mc_want_social(0x0004, 1, 16000, lead));
+    }
 
     /* The schedule clock: local time when no root is known, and it keeps
      * answering while TX is paused (the radio is with the AP). */

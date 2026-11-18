@@ -126,4 +126,6 @@ void owly_link_prefer(struct owly_native_link *s,const uint8_t master[6]);
 /* Idle radio policy: follow the most common channel of a real fresh root;
  * otherwise return the discovery channel. The caller validates RF limits. */
 uint8_t owly_link_follow_channel(struct owly_native_link *s,uint64_t now);
+/* The social channel fresh peers' own sequences use most; 0 if unknown. */
+uint8_t owly_link_peer_channel(struct owly_native_link *s,uint64_t now);
 #endif

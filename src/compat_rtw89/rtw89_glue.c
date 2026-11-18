@@ -459,6 +459,8 @@ static struct {
     uint16_t slots, root_slots;
     uint64_t visits, null_failures, slow_switches, max_switch_us;
     uint64_t moved_us, root_us, slot_log_us;
+    uint32_t switch_avg_us, lead_us;
+    uint64_t data_rx_seen, data_rx_us;  /* AWDL data from peers: busy too */
 } owly_mc;
 static unsigned owly_mc_freq(uint8_t ch)
 {
@@ -2875,6 +2877,9 @@ static void owly_mc_note_switch(bool going, uint64_t took_us, int rc)
         owly_mc.null_failures++;
     if (took_us > owly_mc.max_switch_us)
         owly_mc.max_switch_us = took_us;
+    if (going)
+        owly_mc.lead_us = owly_mc_lead(&owly_mc.switch_avg_us,
+                                       took_us > 0xffffffffu ? 0xffffffffu : (uint32_t)took_us);
     if (took_us > 8000u)
         owly_mc.slow_switches++;
     const uint64_t n = owly_mc.visits;
@@ -2997,24 +3002,37 @@ static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
     spin_lock(&owly_link_lock);
     const bool rooted = owly_link_clock(&owly_link_state, now, &seq, &phase,
                                         &social_slots, &peers);
-    const uint8_t follow = rooted ? owly_link_follow_channel(&owly_link_state, now) : 0;
+    /* Where to be: the root's main channel, else the peers' own. */
+    const uint8_t follow = rooted ? owly_link_follow_channel(&owly_link_state, now) :
+                                    owly_link_peer_channel(&owly_link_state, now);
     busy = owly_link_data_busy(&owly_link_state, now);
+    const uint64_t data_rx = owly_link_state.data_rx_admitted;
     spin_unlock(&owly_link_lock);
+    /* A peer sending us data (a TLS handshake, a transfer) needs the
+     * slots as much as our own queue does. */
+    if (data_rx != owly_mc.data_rx_seen) {
+        owly_mc.data_rx_seen = data_rx;
+        owly_mc.data_rx_us = now;
+    }
+    if (owly_mc.data_rx_us && now - owly_mc.data_rx_us < 2000000u)
+        busy = true;
+    const bool heard = rooted || peers;
     /* Go where the followed root's domain spends most of its slots (Apple
      * devices on another network mostly sit on 149). Moving drops the link
      * state, so move at most every 5 s, and fall back to discovery on ch 6
      * only after 10 s without hearing a root on the chosen channel. */
-    if (rooted)
+    if (heard)
         owly_mc.root_us = now;
     uint8_t want_ch = owly_mc.channel;
-    if (rooted && follow && follow != owly_mc.channel)
+    if (follow && follow != owly_mc.channel)
         want_ch = follow;
-    else if (!rooted && owly_mc.channel != 6 && now - owly_mc.root_us > 10000000u)
+    else if (!heard && owly_mc.channel != 6 && now - owly_mc.root_us > 10000000u)
         want_ch = 6;
     if (want_ch != owly_mc.channel && owly_mc_channel_ok(want_ch) &&
         (!owly_mc.moved_us || now - owly_mc.moved_us >= 5000000u)) {
         IOLog("OWLY multichannel: ch %u -> ch %u (%s)\n", (unsigned)owly_mc.channel,
-              (unsigned)want_ch, rooted ? "root's main channel" : "no root: discovery");
+              (unsigned)want_ch, rooted ? "root's main channel" :
+              heard ? "peers' main channel" : "nobody heard: discovery");
         owly_mc_leave();
         owly_mc.channel = want_ch;
         owly_mc.moved_us = now;
@@ -3059,7 +3077,8 @@ static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
     owly_mc.slots = slots;
     owly_sync_state.presence_slots = slots;
     const unsigned slot = owly_mc_slot(seq, phase, &until);
-    const bool want = wanted && owly_mc_want_social(slots, slot, until);
+    const uint32_t lead = owly_mc.lead_us ? owly_mc.lead_us : OWLY_MC_LEAD_US;
+    const bool want = wanted && owly_mc_want_social(slots, slot, until, lead);
     if (want != owly_mc.present) {
         if (want)
             owly_mc_enter();
@@ -3067,7 +3086,7 @@ static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
             owly_mc_leave();
         owly_sync_recheck();
     }
-    uint64_t delay = wanted ? owly_mc_next_check_us(until) : 250000u;
+    uint64_t delay = wanted ? owly_mc_next_check_us(until, lead) : 250000u;
     const uint64_t spent = glue_now_us() - now;
     delay = delay > spent + 1000u ? delay - spent : 1000u;
     wiphy_delayed_work_queue(wiphy, &owly_mc_work, usecs_to_jiffies((unsigned)delay));

@@ -262,6 +262,28 @@ uint8_t owly_link_follow_channel(struct owly_native_link *s,uint64_t now)
     return want;
 }
 
+/* Multichannel: the social channel fresh peers use most in their own
+ * sequences, 0 when none has told us. Ties keep the current channel. */
+uint8_t owly_link_peer_channel(struct owly_native_link *s,uint64_t now)
+{
+    static const uint8_t channels[3]={6,44,149};
+    unsigned count[3]={0,0,0},most=0;
+    uint8_t want=0;
+    if(!s)return 0;
+    expire(s,now);
+    for(unsigned i=0;i<OWLY_LINK_PEERS;i++) {
+        const struct owly_link_peer *p=&s->peers[i];
+        if(!fresh(p,now))continue;
+        for(unsigned j=0;j<16u;j++)
+            for(unsigned k=0;k<3u;k++)count[k]+=p->channels[j]==channels[k];
+    }
+    for(unsigned k=0;k<3u;k++)
+        if(count[k]>most || (count[k] && count[k]==most && channels[k]==s->channel)) {
+            most=count[k];want=channels[k];
+        }
+    return want;
+}
+
 static bool peer_window(const struct owly_link_peer *p,uint64_t now,uint16_t *seq,uint16_t *phase) {
     if(!p || !clock_fresh(p,now) || !fresh(p,now))return false;
     if(now<p->anchor_us) {
@@ -389,6 +411,15 @@ bool owly_link_clock(struct owly_native_link *s,uint64_t now,uint16_t *seq,
         }
         *seq=sequence;*phase_us=phase;
     } else {
+        /* No root to follow: the peers follow our clock (we are master)
+         * or have not told us theirs yet. Use every fresh peer's own
+         * sequence for where it will be on our channel. */
+        for(unsigned i=0;i<OWLY_LINK_PEERS;i++) {
+            const struct owly_link_peer *p=&s->peers[i];
+            if(!fresh(p,now) || !p->local_slots)continue;
+            for(unsigned j=0;j<16u;j++)
+                if(p->channels[j]==s->channel)slots|=(uint16_t)(1u<<j);
+        }
         *seq=(uint16_t)(now/OWLY_LINK_AW_US);
         *phase_us=(uint32_t)(now%OWLY_LINK_AW_US);
     }

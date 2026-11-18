@@ -16,8 +16,11 @@
  */
 #define OWLY_MC_AW_US 16384u
 #define OWLY_MC_SLOT_US (4u * OWLY_MC_AW_US)
-/* Arrive this early on the social channel: the switch takes a few ms. */
+/* Arrive this early on the social channel. The caller passes the measured
+ * switch time plus a margin (a band change takes 12-21 ms on the
+ * RTL8852BE); this is the floor. */
 #define OWLY_MC_LEAD_US 3000u
+#define OWLY_MC_LEAD_MAX_US 25000u
 
 /* Interleaved order: alternate visits so the access point never waits
  * more than one slot (64 TU) for us while we stay at or under 8 slots. */
@@ -64,20 +67,32 @@ static inline unsigned owly_mc_slot(uint16_t sequence, uint32_t phase_us,
 /* Should the radio be on the social channel now? True inside a chosen slot
  * and during the lead time before one. */
 static inline bool owly_mc_want_social(uint16_t slots, unsigned slot,
-                                       uint32_t until_next_us)
+                                       uint32_t until_next_us, uint32_t lead_us)
 {
     if (slots & (1u << slot))
         return true;
-    return until_next_us <= OWLY_MC_LEAD_US &&
+    return until_next_us <= lead_us &&
            (slots & (1u << ((slot + 1u) & 15u)));
 }
 
 /* Delay until the next decision point: the lead before the next edge, or
  * just past the edge when the lead has already started. */
-static inline uint32_t owly_mc_next_check_us(uint32_t until_next_us)
+static inline uint32_t owly_mc_next_check_us(uint32_t until_next_us, uint32_t lead_us)
 {
-    if (until_next_us > OWLY_MC_LEAD_US + 500u)
-        return until_next_us - OWLY_MC_LEAD_US;
+    if (until_next_us > lead_us + 500u)
+        return until_next_us - lead_us;
     return until_next_us + 200u;
+}
+
+/* Lead from a smoothed switch time: 1/8 weight per sample, plus 2 ms. */
+static inline uint32_t owly_mc_lead(uint32_t *avg_us, uint32_t sample_us)
+{
+    if (sample_us > OWLY_MC_LEAD_MAX_US)
+        sample_us = OWLY_MC_LEAD_MAX_US;
+    *avg_us = *avg_us ? *avg_us - *avg_us / 8u + sample_us / 8u : sample_us;
+    uint32_t lead = *avg_us + 2000u;
+    if (lead < OWLY_MC_LEAD_US)
+        lead = OWLY_MC_LEAD_US;
+    return lead > OWLY_MC_LEAD_MAX_US ? OWLY_MC_LEAD_MAX_US : lead;
 }
 #endif
