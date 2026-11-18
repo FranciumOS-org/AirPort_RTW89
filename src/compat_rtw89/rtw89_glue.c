@@ -454,9 +454,15 @@ static struct {
     bool enabled;   /* associated off the social channels: AWDL bound to ch 6 */
     bool present;   /* the radio is on ch 6 right now */
     bool off;       /* boot-arg -owlynomc */
-    uint16_t slots;
+    uint8_t channel; /* social channel visited: 6, 44 or 149 (0 = not chosen) */
+    uint16_t slots, root_slots;
     uint64_t visits, null_failures, slow_switches, max_switch_us;
+    uint64_t moved_us, root_us, slot_log_us;
 } owly_mc;
+static unsigned owly_mc_freq(uint8_t ch)
+{
+    return ch == 149 ? 5745u : ch == 44 ? 5220u : 2437u;
+}
 static struct wiphy_delayed_work owly_mc_work;
 static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work);
 static void owly_mc_leave(void);
@@ -1453,9 +1459,9 @@ static void owly_awdl_deliver_rx(struct sk_buff *skb)
 #ifdef OWLY_MC_BUILT
         /* Visiting ch 6 for multichannel AWDL: judge the frame against the
          * social channel we are on, not the AP's. */
-        if (owly_mc.enabled && status->freq == 2437) {
-            st.freq = 2437;
-            st.center_freq = 2437;
+        if (owly_mc.enabled && status->freq == owly_mc_freq(owly_mc.channel)) {
+            st.freq = status->freq;
+            st.center_freq = status->freq;
             st.width = 20;
         }
 #endif
@@ -1645,9 +1651,9 @@ static void glue_rx(void *ctx, struct ieee80211_sta *sta, struct sk_buff *skb)
 #ifdef OWLY_MC_BUILT
         /* Visiting ch 6 for multichannel AWDL: judge the frame against the
          * social channel we are on, not the AP's. */
-        if (owly_mc.enabled && status->freq == 2437) {
-            st.freq = 2437;
-            st.center_freq = 2437;
+        if (owly_mc.enabled && status->freq == owly_mc_freq(owly_mc.channel)) {
+            st.freq = status->freq;
+            st.center_freq = status->freq;
             st.width = 20;
         }
 #endif
@@ -2025,8 +2031,8 @@ static void owly_scc_filter_set(bool should_enable, unsigned int freq)
 {
 #ifdef OWLY_MC_BUILT
     if (owly_mc.present) {
-        should_enable = true; /* visiting ch 6: keep the AWDL filter */
-        freq = 2437;
+        should_enable = true; /* visiting AWDL: keep the AWDL filter */
+        freq = owly_mc_freq(owly_mc.channel);
     }
 #endif
     struct ieee80211_hw *hw = glue_hw();
@@ -2771,7 +2777,7 @@ static struct ieee80211_channel *owly_sync_bound_channel(void)
     /* Multichannel: AWDL lives on ch 6 even though the context is the AP's.
      * owly_awdl_away() says when the radio is actually there. */
     if (owly_mc.enabled)
-        return ieee80211_get_channel(glue_hw()->wiphy,2437);
+        return ieee80211_get_channel(glue_hw()->wiphy,owly_mc_freq(owly_mc.channel));
 #endif
     ch=primary->def.chan;
     if (!ch || (ch->flags & (IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_NO_IR |
@@ -2851,6 +2857,17 @@ static bool owly_mc_should_run(void)
                                         IEEE80211_CHAN_RADAR));
 }
 
+/* A social channel we may transmit on (regulatory: not off, no radar). */
+static bool owly_mc_channel_ok(uint8_t ch)
+{
+    struct ieee80211_channel *c;
+    if (ch != 6 && ch != 44 && ch != 149)
+        return false;
+    c = ieee80211_get_channel(glue_hw()->wiphy, owly_mc_freq(ch));
+    return c && !(c->flags & (IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_NO_IR |
+                              IEEE80211_CHAN_RADAR));
+}
+
 static void owly_mc_note_switch(bool going, uint64_t took_us, int rc)
 {
     if (rc)
@@ -2861,9 +2878,10 @@ static void owly_mc_note_switch(bool going, uint64_t took_us, int rc)
         owly_mc.slow_switches++;
     const uint64_t n = owly_mc.visits;
     if (n <= 4 || !(n % 512) || rc || took_us > 20000u)
-        IOLog("OWLY multichannel: %s ch 6 took=%lluus rc=%d visits=%llu "
+        IOLog("OWLY multichannel: %s ch %u took=%lluus rc=%d visits=%llu "
               "null_fail=%llu slow=%llu max=%lluus slots=0x%04x\n",
-              going ? "to" : "from", (unsigned long long)took_us, rc,
+              going ? "to" : "from", (unsigned)owly_mc.channel,
+              (unsigned long long)took_us, rc,
               (unsigned long long)n, (unsigned long long)owly_mc.null_failures,
               (unsigned long long)owly_mc.slow_switches,
               (unsigned long long)owly_mc.max_switch_us, (unsigned)owly_mc.slots);
@@ -2878,7 +2896,8 @@ static void owly_mc_enter(void)
 {
     struct ieee80211_hw *hw = glue_hw();
     struct rtw89_vif_link *link = owly_mc_sta_link();
-    struct ieee80211_channel *social = ieee80211_get_channel(hw->wiphy, 2437);
+    struct ieee80211_channel *social =
+        ieee80211_get_channel(hw->wiphy, owly_mc_freq(owly_mc.channel));
     struct cfg80211_chan_def def;
     if (owly_mc.present || !link || !social)
         return;
@@ -2888,7 +2907,7 @@ static void owly_mc_enter(void)
     owly_mc.present = true;
     owly_mc.visits++;
 #if defined(OWLY_SCC_SOCIAL_RX) && OWLY_SCC_SOCIAL_RX
-    owly_scc_filter_set(true, 2437);
+    owly_scc_filter_set(true, owly_mc_freq(owly_mc.channel));
 #endif
     owly_mc_note_switch(true, glue_now_us() - start, rc);
 }
@@ -2923,6 +2942,8 @@ static void owly_mc_stop(void)
     owly_mc_leave();
     owly_mc.enabled = false;
     owly_mc.slots = 0;
+    owly_mc.root_slots = 0;
+    owly_mc.channel = 6;
     owly_sync_state.presence_slots = 0;
     if (was)
         IOLog("OWLY multichannel: off\n");
@@ -2951,7 +2972,10 @@ static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
         struct rtw89_mlme_status st;
         rtw89_mlme_get_status(&st);
         owly_mc.enabled = true;
-        IOLog("OWLY multichannel: on, AP on %u MHz, AWDL visits ch 6\n", (unsigned)st.freq);
+        if (!owly_mc.channel)
+            owly_mc.channel = 6;
+        IOLog("OWLY multichannel: on, AP on %u MHz, AWDL visits ch %u\n",
+              (unsigned)st.freq, (unsigned)owly_mc.channel);
         owly_sync_recheck(); /* the bound channel is now ch 6 */
     }
     if (glue.scanning) {
@@ -2967,13 +2991,49 @@ static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
     bool busy;
     const uint64_t now = glue_now_us();
     spin_lock(&owly_link_lock);
-    (void)owly_link_clock(&owly_link_state, now, &seq, &phase, &social_slots, &peers);
+    const bool rooted = owly_link_clock(&owly_link_state, now, &seq, &phase,
+                                        &social_slots, &peers);
+    const uint8_t follow = rooted ? owly_link_follow_channel(&owly_link_state, now) : 0;
     busy = owly_link_data_busy(&owly_link_state, now);
     spin_unlock(&owly_link_lock);
+    /* Go where the followed root's domain spends most of its slots (Apple
+     * devices on another network mostly sit on 149). Moving drops the link
+     * state, so move at most every 5 s, and fall back to discovery on ch 6
+     * only after 10 s without hearing a root on the chosen channel. */
+    if (rooted)
+        owly_mc.root_us = now;
+    uint8_t want_ch = owly_mc.channel;
+    if (rooted && follow && follow != owly_mc.channel)
+        want_ch = follow;
+    else if (!rooted && owly_mc.channel != 6 && now - owly_mc.root_us > 10000000u)
+        want_ch = 6;
+    if (want_ch != owly_mc.channel && owly_mc_channel_ok(want_ch) &&
+        (!owly_mc.moved_us || now - owly_mc.moved_us >= 5000000u)) {
+        IOLog("OWLY multichannel: ch %u -> ch %u (%s)\n", (unsigned)owly_mc.channel,
+              (unsigned)want_ch, rooted ? "root's main channel" : "no root: discovery");
+        owly_mc_leave();
+        owly_mc.channel = want_ch;
+        owly_mc.moved_us = now;
+        owly_mc.root_us = now; /* a grace period to hear the root there */
+        owly_mc.root_slots = 0;
+        owly_sync_recheck(); /* rebinds AWDL to the new channel */
+        wiphy_delayed_work_queue(wiphy, &owly_mc_work, usecs_to_jiffies(1000));
+        return;
+    }
+    /* The root is heard only during our visits: keep its slots through a
+     * short gap instead of resetting the plan every time it goes quiet. */
+    if (rooted && social_slots)
+        owly_mc.root_slots = social_slots;
+    else if (!rooted && owly_mc.root_slots && now - owly_mc.root_us <= 3000000u)
+        social_slots = owly_mc.root_slots;
     const uint16_t slots = owly_mc_pick_slots(social_slots, peers, busy);
-    if (slots != owly_mc.slots)
-        IOLog("OWLY multichannel: ch 6 slots 0x%04x (peers on ch 6: 0x%04x, %u peer(s)%s)\n",
-              (unsigned)slots, (unsigned)social_slots, peers, busy ? ", data" : "");
+    if (slots != owly_mc.slots &&
+        (!owly_mc.slot_log_us || now - owly_mc.slot_log_us >= 5000000u)) {
+        owly_mc.slot_log_us = now;
+        IOLog("OWLY multichannel: ch %u slots 0x%04x (root's slots here 0x%04x, %u peer(s)%s)\n",
+              (unsigned)owly_mc.channel, (unsigned)slots, (unsigned)social_slots, peers,
+              busy ? ", data" : "");
+    }
     owly_mc.slots = slots;
     owly_sync_state.presence_slots = slots;
     const unsigned slot = owly_mc_slot(seq, phase, &until);
