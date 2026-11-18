@@ -131,4 +131,5 @@ void owly_link_prefer(struct owly_native_link *s,const uint8_t master[6]);
 uint8_t owly_link_follow_channel(struct owly_native_link *s,uint64_t now);
 /* The social channel fresh peers' own sequences use most; 0 if unknown. */
 uint8_t owly_link_peer_channel(struct owly_native_link *s,uint64_t now);
+uint8_t owly_link_data_channel(struct owly_native_link *s,uint64_t now);
 #endif

@@ -462,6 +462,8 @@ static struct {
     uint32_t switch_avg_us, lead_us;
     uint64_t data_rx_seen, data_rx_us;  /* AWDL data from peers: busy too */
     uint64_t peer_log_us;
+    uint8_t last_follow, last_data_ch;
+    bool last_rooted;
 } owly_mc;
 static unsigned owly_mc_freq(uint8_t ch)
 {
@@ -2972,6 +2974,12 @@ static void owly_mc_log_peers(void)
     owly_mc.peer_log_us = now;
     spin_lock(&owly_link_lock);
     const struct owly_native_link *l = &owly_link_state;
+    IOLog("OWLY mc: ch %u home=%d present=%d follow=%u data_ch=%u rooted=%d "
+          "ok6/44/149=%d%d%d slots=0x%04x visits=%llu\n", (unsigned)owly_mc.channel,
+          owly_mc.home, owly_mc.present, (unsigned)owly_mc.last_follow,
+          (unsigned)owly_mc.last_data_ch, owly_mc.last_rooted, owly_mc_channel_ok(6),
+          owly_mc_channel_ok(44), owly_mc_channel_ok(149), (unsigned)owly_mc.slots,
+          (unsigned long long)owly_mc.visits);
     IOLog("OWLY peers: ch %u clock ok=%llu outlier=%llu reset=%llu not_root=%llu "
           "no_countdown=%llu\n", (unsigned)l->channel,
           (unsigned long long)l->clock_ok, (unsigned long long)l->clock_outlier,
@@ -3039,8 +3047,13 @@ static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
     const bool rooted = owly_link_clock(&owly_link_state, now, &seq, &phase,
                                         &social_slots, &peers);
     /* Where to be: the root's main channel, else the peers' own. */
-    const uint8_t follow = rooted ? owly_link_follow_channel(&owly_link_state, now) :
+    const uint8_t data_ch = owly_link_data_channel(&owly_link_state, now);
+    const uint8_t follow = data_ch ? data_ch :
+                           rooted ? owly_link_follow_channel(&owly_link_state, now) :
                                     owly_link_peer_channel(&owly_link_state, now);
+    owly_mc.last_follow = follow;
+    owly_mc.last_data_ch = data_ch;
+    owly_mc.last_rooted = rooted;
     busy = owly_link_data_busy(&owly_link_state, now);
     const uint64_t data_rx = owly_link_state.data_rx_admitted;
     spin_unlock(&owly_link_lock);

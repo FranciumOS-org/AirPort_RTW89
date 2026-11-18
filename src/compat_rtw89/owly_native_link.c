@@ -296,6 +296,30 @@ uint8_t owly_link_follow_channel(struct owly_native_link *s,uint64_t now)
     return want;
 }
 
+/* Multichannel: the main social channel of the peer that sent us data
+ * most recently (within 5 s), 0 when none. The device we are talking to
+ * matters more than the strongest root. Ties keep the current channel. */
+uint8_t owly_link_data_channel(struct owly_native_link *s,uint64_t now)
+{
+    static const uint8_t channels[3]={6,44,149};
+    const struct owly_link_peer *best=NULL;
+    if(!s)return 0;
+    for(unsigned i=0;i<OWLY_LINK_PEERS;i++) {
+        const struct owly_link_peer *p=&s->peers[i];
+        if(!p->used || !p->last_data_rx_us || now<p->last_data_rx_us ||
+           now-p->last_data_rx_us>5000000u)continue;
+        if(!best || p->last_data_rx_us>best->last_data_rx_us)best=p;
+    }
+    if(!best)return 0;
+    unsigned most=0;uint8_t want=0;
+    for(unsigned k=0;k<3u;k++) {
+        unsigned n=0;
+        for(unsigned j=0;j<16u;j++)n+=best->channels[j]==channels[k];
+        if(n>most || (n && n==most && channels[k]==s->channel)) {most=n;want=channels[k];}
+    }
+    return want;
+}
+
 /* Multichannel: the social channel fresh peers use most in their own
  * sequences, 0 when none has told us. Ties keep the current channel. */
 uint8_t owly_link_peer_channel(struct owly_native_link *s,uint64_t now)
