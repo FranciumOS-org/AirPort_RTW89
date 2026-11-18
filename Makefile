@@ -116,7 +116,7 @@ GEN_DIR       := $(BUILD_DIR)/gen
 FW_BLOBS_C    := $(GEN_DIR)/fw_blobs.c
 FW_BINS       := $(wildcard $(FIRMWARE_DIR)/*.bin)
 FW_OBJS       := $(BUILD_DIR)/fw/rtw88_firmware.o $(BUILD_DIR)/fw/fw_blobs.o \
-                 $(BUILD_DIR)/fw/rtw89_crypto.o
+                 $(BUILD_DIR)/fw/rtw89_crypto.o $(BUILD_DIR)/fw/rtw89_tkip.o
 # Plain kernel C: rtw88_firmware.c is written against IOKit, not the Linux shims.
 FW_CFLAGS     := $(KEXT_FLAGS) $(LOGRING_DEF) -std=gnu11 -DKERNEL -I$(COMPAT_DIR)
 
@@ -181,6 +181,12 @@ $(BUILD_DIR)/fw/rtw89_crypto.o: $(COMPAT89_DIR)/rtw89_crypto.c
 	@mkdir -p $(dir $@) $(BUILD_DIR)/log
 	@echo "  CC   compat_rtw89/rtw89_crypto.c"
 	@$(CC) $(FW_CFLAGS) -Wall -c $< -o $@ 2> $(BUILD_DIR)/log/fw_rtw89_crypto.log || { cat $(BUILD_DIR)/log/fw_rtw89_crypto.log >&2; exit 1; }
+
+# TKIP for the group frames of WPA/WPA2 mixed networks: self-contained C too.
+$(BUILD_DIR)/fw/rtw89_tkip.o: $(COMPAT89_DIR)/rtw89_tkip.c $(COMPAT89_DIR)/rtw89_tkip.h
+	@mkdir -p $(dir $@) $(BUILD_DIR)/log
+	@echo "  CC   compat_rtw89/rtw89_tkip.c"
+	@$(CC) $(FW_CFLAGS) -Wall -c $< -o $@ 2> $(BUILD_DIR)/log/fw_rtw89_tkip.log || { cat $(BUILD_DIR)/log/fw_rtw89_tkip.log >&2; exit 1; }
 
 $(BUILD_DIR)/fw/fw_blobs.o: $(FW_BLOBS_C)
 	@mkdir -p $(dir $@) $(BUILD_DIR)/log
@@ -396,7 +402,8 @@ else
 HOSTTEST_STAMP := $(BUILD_DIR)/out/hosttest.passed
 endif
 $(HOSTTEST_STAMP): $(ALL_OBJS) $(wildcard tools/hosttest/*.c tools/hosttest/*.cpp) $(SAE_SRCS) \
-                   $(COMPAT89_DIR)/rtw89_crypto.c $(KEXT_SRC)/rtw89_scan_ioctl.hpp Makefile
+                   $(COMPAT89_DIR)/rtw89_crypto.c $(COMPAT89_DIR)/rtw89_tkip.c \
+                   $(KEXT_SRC)/rtw89_scan_ioctl.hpp Makefile
 	@rm -f $@
 	@$(MAKE) --no-print-directory hosttest
 	@touch $@

@@ -21,6 +21,7 @@
 #include "rtw89_crypto.h"
 #include "rtw89_glue.h"
 #include "rtw89_sae.h"
+#include "rtw89_tkip.h"
 
 #define MMIO_LEN (1u << 20)
 
@@ -485,9 +486,11 @@ static int ap_check_sta_key(void)
 static uint16_t ap_key_ver = 2;
 static bool ap_igtk;
 static bool ap_rsnxe;           /* the station's message 2 must carry its RSNXE */
+static bool ap_gtk_tkip;        /* a WPA/WPA2 mixed network: the group key is a 32-byte TKIP one */
+#define AP_GTK_LEN  (ap_gtk_tkip ? RTW89_TKIP_KEY_LEN : 16)
 
 /* Message 3: our RSN element and the group key, encrypted with the KEK. */
-static void ap_send_msg3(const uint8_t gtk[16], int gtk_idx)
+static void ap_send_msg3(const uint8_t *gtk, int gtk_idx)
 {
     const uint8_t *rsn = ap_find_ie(0x30);          /* the RSN element of the beacon */
     uint8_t kd[128];
@@ -495,10 +498,11 @@ static void ap_send_msg3(const uint8_t gtk[16], int gtk_idx)
 
     memcpy(kd, rsn, kd_len);
     memcpy(kd + kd_len, "\xdd\x16\x00\x0f\xac\x01", 6);
+    kd[kd_len + 1] = (uint8_t)(6 + AP_GTK_LEN);
     kd[kd_len + 6] = (uint8_t)gtk_idx;
     kd[kd_len + 7] = 0;
-    memcpy(kd + kd_len + 8, gtk, 16);
-    kd_len += 24;
+    memcpy(kd + kd_len + 8, gtk, AP_GTK_LEN);
+    kd_len += 8 + AP_GTK_LEN;
     if (ap_igtk) {
         /* IGTK KDE: key id 4, IPN 0 */
         memcpy(kd + kd_len, "\xdd\x1c\x00\x0f\xac\x09\x04\x00\x00\x00\x00\x00\x00\x00", 14);
@@ -530,7 +534,7 @@ static void ap_send_eap(void)
 /* Run the 4-way handshake as the authenticator with the master key in ap.pmk.
  * Returns 0 if the station did everything right, 1 if its message 2 does not
  * verify (wrong key). */
-static int ap_handshake_pmk(const uint8_t gtk[16], int gtk_idx)
+static int ap_handshake_pmk(const uint8_t *gtk, int gtk_idx)
 {
     uint8_t data[76], ptk[48];
     int base = ap.eapol_count, info;
@@ -583,7 +587,7 @@ static int ap_handshake_pmk(const uint8_t gtk[16], int gtk_idx)
 }
 
 /* The same with the master key that follows from the network's password. */
-static int ap_handshake(const uint8_t gtk[16], int gtk_idx)
+static int ap_handshake(const uint8_t *gtk, int gtk_idx)
 {
     rtw89_pbkdf2_sha1((const uint8_t *)AP_PASSWORD, strlen(AP_PASSWORD),
                       (const uint8_t *)ap_ssid, strlen(ap_ssid), 4096, ap.pmk, 32);
@@ -591,15 +595,16 @@ static int ap_handshake(const uint8_t gtk[16], int gtk_idx)
 }
 
 /* A new group key, sent encrypted under the pairwise key like any data. */
-static int ap_group_rekey(const uint8_t gtk[16], int gtk_idx)
+static int ap_group_rekey(const uint8_t *gtk, int gtk_idx)
 {
-    uint8_t kd[32];
+    uint8_t kd[8 + RTW89_TKIP_KEY_LEN];
     int base = ap.eapol_count, info;
 
-    kd[0] = 0xdd; kd[1] = 22; kd[2] = 0x00; kd[3] = 0x0f; kd[4] = 0xac; kd[5] = 1;
+    kd[0] = 0xdd; kd[1] = (uint8_t)(6 + AP_GTK_LEN);
+    kd[2] = 0x00; kd[3] = 0x0f; kd[4] = 0xac; kd[5] = 1;
     kd[6] = (uint8_t)gtk_idx; kd[7] = 0;
-    memcpy(kd + 8, gtk, 16);
-    ap_send_key(0x1380 | ap_key_ver, kd, 24, true);     /* ack, mic, secure, encrypted */
+    memcpy(kd + 8, gtk, AP_GTK_LEN);
+    ap_send_key(0x1380 | ap_key_ver, kd, 8 + AP_GTK_LEN, true);    /* ack, mic, secure, encrypted */
 
     if (!ap_wait_eapol(base + 1))
         return -1;
@@ -821,6 +826,205 @@ static int test_data(void)
 
 #undef EXPECT
     printf("== data path test: %d failure(s)\n", failures);
+    return failures;
+}
+
+/* ---- a WPA/WPA2 mixed network: CCMP for us, TKIP for the group frames ---- */
+
+enum { TKIP_GOOD, TKIP_BAD_MIC_KEY, TKIP_BAD_BIT, TKIP_CHIP_SAYS_DECRYPTED };
+
+/* A group (or, wrongly, any) data frame from the AP under the TKIP group key
+ * @gtk with id @keyid and sequence counter @tsc, as the chip hands it up:
+ * still encrypted. @tid < 0: not a QoS frame. */
+static void ap_send_tkip(const uint8_t *da, const uint8_t *sa, int tid, uint16_t seq, int keyid,
+                         uint64_t tsc, const uint8_t *gtk, int how,
+                         const uint8_t *body, size_t body_len)
+{
+    uint8_t frame[2400], *p;
+    size_t len = 24;
+
+    memset(frame, 0, 48);
+    frame[0] = tid >= 0 ? 0x88 : 0x08;
+    frame[1] = 0x42;                    /* from the DS, protected */
+    memcpy(frame + 4, da, 6);
+    memcpy(frame + 10, ap_mac, 6);
+    memcpy(frame + 16, sa, 6);
+    frame[22] = (uint8_t)(seq << 4);
+    frame[23] = (uint8_t)(seq >> 4);
+    if (tid >= 0) {
+        frame[24] = (uint8_t)tid;
+        len = 26;
+    }
+    p = frame + len;
+    memcpy(p + RTW89_TKIP_HDR_LEN, body, body_len);
+    /* the AP's Michael key is the third quarter of the group key */
+    rtw89_michael_mic(gtk + (how == TKIP_BAD_MIC_KEY ? 24 : 16), da, sa,
+                      tid >= 0 ? (uint8_t)tid : 0, body, body_len,
+                      p + RTW89_TKIP_HDR_LEN + body_len);
+    rtw89_tkip_encrypt(gtk, ap_mac, tsc, (uint8_t)keyid, p, body_len + RTW89_TKIP_MIC_LEN);
+    len += RTW89_TKIP_HDR_LEN + body_len + RTW89_TKIP_MIC_LEN + RTW89_TKIP_ICV_LEN;
+    if (how == TKIP_BAD_BIT)
+        p[RTW89_TKIP_HDR_LEN + body_len / 2] ^= 0x10;
+    rtw89_glue_test_rx(frame, len, ap_freq, -40, how == TKIP_CHIP_SAYS_DECRYPTED);
+}
+
+static const uint8_t *sta_assoc_ie(uint8_t eid);
+static int join_testnet(const char *password, uint16_t assoc_status);
+static int wait_link(enum rtw89_glue_link_state state);
+static enum rtw89_glue_link_state link_state(void);
+
+/* The network many home routers make by default: WPA and WPA2 at once. Our
+ * own frames are CCMP as ever; what the AP sends to everybody is TKIP, which
+ * the driver decrypts itself. Nothing is joined on entry or on return. */
+static int test_tkip_group(void)
+{
+    static const uint8_t gtk[RTW89_TKIP_KEY_LEN] = {
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+        0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+        0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
+    };
+    static const uint8_t gtk2[RTW89_TKIP_KEY_LEN] = {
+        0x51, 0x4f, 0x02, 0xe7, 0x33, 0x9a, 0xc4, 0x0d,
+        0x68, 0x75, 0xfe, 0x21, 0x8b, 0x3c, 0xd9, 0x46,
+        0x07, 0x92, 0x5e, 0xb1, 0x6a, 0xcf, 0x38, 0xe4,
+        0x19, 0x83, 0xf0, 0x2d, 0x74, 0xab, 0x56, 0xc8,
+    };
+    static const uint8_t mcast_mac[6] = { 0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb };
+    const size_t rsn = AP_RSN_AKM - 19;     /* where the RSN element starts */
+    uint8_t body[8 + sizeof(test_ip)], big[8 + 1400];
+    struct rtw89_glue_link link;
+    uint32_t undecrypted, replay;
+    const uint8_t *ie;
+    int failures = 0, n;
+    uint64_t rsc;
+    size_t i;
+
+#define EXPECT(cond) do { if (!(cond)) { failures++; printf("== FAIL %s\n", #cond); } } while (0)
+    memcpy(body, "\xaa\xaa\x03\x00\x00\x00\x08\x00", 8);
+    memcpy(body + 8, test_ip, sizeof(test_ip));
+    memcpy(big, "\xaa\xaa\x03\x00\x00\x00\x08\x00", 8);
+    for (i = 8; i < sizeof(big); i++)
+        big[i] = (uint8_t)(i * 7 + 3);
+
+    ap_select(false);
+    ap_ies[rsn + 7] = 2;                    /* group cipher: TKIP; pairwise stays CCMP */
+    ap_gtk_tkip = true;
+    ap.gtk_pn = 0x0105;                     /* the AP has used the key that far */
+    rsc = ap.gtk_pn;
+    ap_send_beacon();
+    EXPECT(join_testnet(AP_PASSWORD, 0));
+    EXPECT(wait_link(RTW89_GLUE_LINK_ASSOCIATED));
+    /* the association request repeats the AP's group cipher, asks for CCMP and PSK */
+    ie = sta_assoc_ie(48);
+    EXPECT(ie && ie[1] == 20 && ie[7] == 2 && ie[13] == 4 && ie[19] == 2 && !ie[20]);
+    EXPECT(ap_handshake(gtk, 1) == 0);
+    EXPECT(wait_link(RTW89_GLUE_LINK_CONNECTED));
+    EXPECT(sta_tx_test() == 0);
+
+    rtw89_glue_link(&link);
+    undecrypted = link.rx_undecrypted;
+    replay = link.rx_replay;
+    n = sta_rx.count;
+
+    /* the counter the AP said it had reached: used already */
+    ap_send_tkip(bcast_mac, peer_mac, -1, 1, 1, rsc, gtk, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n);
+    /* the next one arrives, as the Ethernet frame it was */
+    ap_send_tkip(bcast_mac, peer_mac, -1, 2, 1, rsc + 1, gtk, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n + 1 && sta_rx.len == 14 + sizeof(test_ip));
+    EXPECT(!memcmp(sta_rx.frame, bcast_mac, 6) && !memcmp(sta_rx.frame + 6, peer_mac, 6));
+    EXPECT(sta_rx.frame[12] == 0x08 && sta_rx.frame[13] == 0x00 &&
+           !memcmp(sta_rx.frame + 14, test_ip, sizeof(test_ip)));
+    /* and not a second time */
+    ap_send_tkip(bcast_mac, peer_mac, -1, 3, 1, rsc + 1, gtk, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n + 1);
+    rtw89_glue_link(&link);
+    EXPECT(link.rx_replay == replay + 2 && link.rx_undecrypted == undecrypted);
+
+    /* a QoS group frame: its TID is in the MIC, and has a counter of its own */
+    ap_send_tkip(mcast_mac, peer_mac, 5, 4, 1, rsc + 1, gtk, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n + 2 && !memcmp(sta_rx.frame, mcast_mac, 6));
+    /* a long one, across the point where the upper 32 bits of the counter change */
+    ap_send_tkip(bcast_mac, peer_mac, -1, 5, 1, 0x1ffff, gtk, TKIP_GOOD, big, sizeof(big));
+    EXPECT(sta_rx.count == n + 3 && sta_rx.len == 14 + sizeof(big) - 8);
+    EXPECT(!memcmp(sta_rx.frame + 14, big + 8, sizeof(big) - 8));
+    ap_send_tkip(bcast_mac, peer_mac, -1, 6, 1, 0x20000, gtk, TKIP_GOOD, big, sizeof(big));
+    EXPECT(sta_rx.count == n + 4 && !memcmp(sta_rx.frame + 14, big + 8, sizeof(big) - 8));
+    /* the shortest: one byte, which is no Ethernet payload but must not hurt */
+    ap_send_tkip(bcast_mac, peer_mac, -1, 7, 1, 0x20001, gtk, TKIP_GOOD, body, 1);
+
+    rtw89_glue_link(&link);
+    undecrypted = link.rx_undecrypted;
+    n = sta_rx.count;
+    /* forged or damaged: the Michael MIC under another key, a flipped bit */
+    ap_send_tkip(bcast_mac, peer_mac, -1, 8, 1, 0x20010, gtk, TKIP_BAD_MIC_KEY, body, sizeof(body));
+    ap_send_tkip(bcast_mac, peer_mac, -1, 9, 1, 0x20011, gtk, TKIP_BAD_BIT, body, sizeof(body));
+    /* under the other key altogether, and under a key id that was never given */
+    ap_send_tkip(bcast_mac, peer_mac, -1, 10, 1, 0x20012, gtk2, TKIP_GOOD, body, sizeof(body));
+    ap_send_tkip(bcast_mac, peer_mac, -1, 11, 2, 0x20013, gtk, TKIP_GOOD, body, sizeof(body));
+    /* TKIP is for the group only: not a frame to us alone */
+    ap_send_tkip(sta_mac, peer_mac, 0, 12, 0, 0x20014, gtk, TKIP_GOOD, body, sizeof(body));
+    ap_send_tkip(sta_mac, peer_mac, 0, 13, 1, 0x20015, gtk, TKIP_GOOD, body, sizeof(body));
+    /* what the chip claims to have decrypted cannot have been under this key */
+    ap_send_tkip(bcast_mac, peer_mac, -1, 14, 1, 0x20016, gtk, TKIP_CHIP_SAYS_DECRYPTED,
+                 body, sizeof(body));
+    /* our own broadcast, echoed by the AP */
+    ap_send_tkip(bcast_mac, sta_mac, -1, 15, 1, 0x20017, gtk, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n);
+    rtw89_glue_link(&link);
+    EXPECT(link.rx_undecrypted == undecrypted + 6);
+    /* none of the failures moved the counter on: the frame after them arrives */
+    ap_send_tkip(bcast_mac, peer_mac, -1, 16, 1, 0x20018, gtk, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n + 1);
+    /* our own frames are still CCMP, done by the chip */
+    ap_send_data(sta_mac, peer_mac, 0, false, false, 17, 0, ap.tx_pn + 20, true,
+                 body, sizeof(body));
+    EXPECT(sta_rx.count == n + 2 && !memcmp(sta_rx.frame, sta_mac, 6));
+
+    /* ---- a new group key with the other id, from a counter of its own ---- */
+    ap.gtk_pn = 0x0040;
+    EXPECT(ap_group_rekey(gtk2, 2) == 0);
+    n = sta_rx.count;
+    ap_send_tkip(bcast_mac, peer_mac, -1, 20, 2, 0x40, gtk2, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n);
+    ap_send_tkip(bcast_mac, peer_mac, -1, 21, 2, 0x41, gtk2, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n + 1);
+    /* the old key is still there for what was on its way */
+    ap_send_tkip(bcast_mac, peer_mac, -1, 22, 1, 0x20019, gtk, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n + 2);
+    /* the same key delivered again does not start its counter again */
+    ap.gtk_pn = 0;
+    EXPECT(ap_group_rekey(gtk2, 2) == 0);
+    ap_send_tkip(bcast_mac, peer_mac, -1, 23, 2, 0x41, gtk2, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n + 2);
+    ap_send_tkip(bcast_mac, peer_mac, -1, 24, 2, 0x42, gtk2, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n + 3);
+    EXPECT(link_state() == RTW89_GLUE_LINK_CONNECTED);
+
+    /* gone with the connection: nothing is decrypted once we have left */
+    rtw89_glue_leave();
+    n = sta_rx.count;
+    ap_send_tkip(bcast_mac, peer_mac, -1, 25, 2, 0x50, gtk2, TKIP_GOOD, body, sizeof(body));
+    EXPECT(sta_rx.count == n);
+
+    /* ---- with 802.1X the keys are the system's: TKIP is not taken there ---- */
+    ap_ies[AP_RSN_AKM] = 1;
+    ap_send_beacon();
+    EXPECT(rtw89_glue_join_ext((const uint8_t *)"testnet", 7, NULL, NULL, 0) == -95);
+    ap_ies[AP_RSN_AKM] = 2;
+
+    /* ---- a group cipher that is neither is still turned down ---- */
+    ap_ies[rsn + 7] = 1;                    /* WEP-40 */
+    ap_send_beacon();
+    EXPECT(rtw89_glue_join((const uint8_t *)"testnet", 7, AP_PASSWORD, strlen(AP_PASSWORD)) == -95);
+
+    ap_ies[rsn + 7] = 4;
+    ap_gtk_tkip = false;
+    ap.gtk_pn = 0;
+    ap_send_beacon();
+#undef EXPECT
+    printf("== WPA/WPA2 mixed (TKIP group key) test: %d failure(s)\n", failures);
     return failures;
 }
 
@@ -2102,6 +2306,7 @@ static int test_join(void)
     ap_send_beacon();
 
     ap_select(false);
+    failures += test_tkip_group();
     failures += test_wpa3(gtk1);
     failures += test_keep();
 #undef EXPECT

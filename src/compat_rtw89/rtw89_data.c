@@ -20,7 +20,9 @@
  * TCP can be slowed down properly, instead of losing frames here.
  *
  * Not here yet: fragments (dropped) and software decryption (a protected
- * frame the hardware did not decrypt is dropped and counted).
+ * frame the hardware did not decrypt is dropped and counted), with one
+ * exception: the group frames of a WPA/WPA2 mixed network, which are TKIP and
+ * decrypted here (data_rx_tkip), as most of these chips cannot.
  *
  * Locking: tx_lock orders sequence numbers, packet numbers and the queueing of
  * a frame. rx_lock serialises the whole receive path, delivery to the network
@@ -31,6 +33,8 @@
  * tx_lock.
  */
 #include "rtw89_net80211.h"
+#include "rtw89_crypto.h"
+#include "rtw89_tkip.h"
 
 #define DATA_MAX_FRAME      (ETH_HLEN + IEEE80211_MAX_DATA_LEN)
 /* 802.11 QoS header, CCMP header and LLC/SNAP in front of the payload */
@@ -53,7 +57,11 @@
 /* Receive state of one key: the last packet number seen per TID. */
 struct data_rx_key {
     bool valid;
+    bool tkip;                  /* a TKIP group key: decrypted here, not by the chip */
+    bool tkip_seen;             /* a frame under it has been decrypted and logged */
     u64 pn[DATA_NUM_TIDS];
+    u8 tkip_tk[16];
+    u8 tkip_mic[RTW89_TKIP_MIC_LEN];    /* Michael key of the AP's frames */
 };
 
 /* The receive side of a BlockAck session: frames waiting for the ones before
@@ -100,8 +108,19 @@ static struct {
     bool rx_sc_valid[DATA_NUM_TIDS];
     struct data_rx_ba rx_ba[IEEE80211_NUM_TIDS];
 
+    /* what data_rx_tkip() has to say, logged once rx_lock is dropped */
+    u8 tkip_note;
+    u8 tkip_fail_logs;
+
     struct rtw89_data_stats stats;
 } data;
+
+enum {
+    DATA_TKIP_NOTE_OK = 1,
+    DATA_TKIP_NOTE_ICV,
+    DATA_TKIP_NOTE_MIC,
+};
+#define DATA_TKIP_FAIL_LOGS 5
 
 static const u8 data_pae_group_addr[ETH_ALEN] = { 0x01, 0x80, 0xc2, 0x00, 0x00, 0x03 };
 
@@ -298,8 +317,36 @@ void rtw89_data_set_rx_key(int keyidx, bool valid, u64 rsc)
 
     spin_lock(&data.rx_lock);
     key->valid = valid;
+    key->tkip = false;
+    key->tkip_seen = false;
+    memset(key->tkip_tk, 0, sizeof(key->tkip_tk));
+    memset(key->tkip_mic, 0, sizeof(key->tkip_mic));
     for (i = 0; i < DATA_NUM_TIDS; i++)
         key->pn[i] = rsc;
+    spin_unlock(&data.rx_lock);
+}
+
+/* The group key with id @keyidx is a TKIP one (a WPA/WPA2 mixed network):
+ * @key is its RTW89_TKIP_KEY_LEN bytes as the handshake delivers them, @rsc
+ * the highest sequence counter the AP has already used with it. */
+void rtw89_data_set_rx_tkip_key(int keyidx, const u8 *key, u64 rsc)
+{
+    struct data_rx_key *k;
+    int i;
+
+    if (keyidx < 0 || keyidx > 3)
+        return;
+    k = &data.rx_gtk[keyidx];
+
+    spin_lock(&data.rx_lock);
+    memcpy(k->tkip_tk, key, sizeof(k->tkip_tk));
+    memcpy(k->tkip_mic, key + 16, sizeof(k->tkip_mic));
+    for (i = 0; i < DATA_NUM_TIDS; i++)
+        k->pn[i] = rsc;
+    k->tkip = true;
+    k->tkip_seen = false;
+    k->valid = true;
+    data.tkip_fail_logs = 0;
     spin_unlock(&data.rx_lock);
 }
 
@@ -659,6 +706,63 @@ static void data_rx_amsdu(u8 *p, size_t len, bool decrypted)
     }
 }
 
+/*
+ * A group frame the chip did not decrypt: TKIP, if the network is a WPA/WPA2
+ * mixed one (what ieee80211_crypto_tkip_decrypt() and
+ * ieee80211_rx_h_michael_mic_verify() do in mac80211). @body is what follows
+ * the 802.11 header and is decrypted in place. True if the frame is genuine:
+ * its counter is new, and its ICV and its Michael MIC match. Fragments and
+ * A-MSDUs do not get here, so the MIC covers this one frame. A frame that
+ * fails is dropped and counted; the countermeasures of 802.11 12.5.2.4 (tell
+ * the AP, leave after two failures a minute) are not taken.
+ */
+static bool data_rx_tkip(const struct ieee80211_hdr *hdr, u8 *body, size_t len, unsigned int tid)
+{
+    const size_t overhead = RTW89_TKIP_HDR_LEN + RTW89_TKIP_MIC_LEN + RTW89_TKIP_ICV_LEN;
+    struct data_rx_key *key;
+    u8 mic[RTW89_TKIP_MIC_LEN];
+    size_t msdu_len;
+    u64 tsc, got;
+
+    if (len < overhead || !(body[3] & 0x20))
+        goto bad;
+    key = &data.rx_gtk[body[3] >> 6];
+    if (!key->valid || !key->tkip)
+        goto bad;
+
+    /* The sequence counter must go up within each TID. Looked at before the
+     * work of decrypting, taken over only once the frame has proved genuine. */
+    tsc = body[2] | (u64)body[0] << 8 | (u64)body[4] << 16 | (u64)body[5] << 24 |
+          (u64)body[6] << 32 | (u64)body[7] << 40;
+    if (tsc <= key->pn[tid]) {
+        data.stats.rx_replay++;
+        return false;
+    }
+
+    if (rtw89_tkip_decrypt(key->tkip_tk, hdr->addr2, body, len, &got) || got != tsc) {
+        data.tkip_note = DATA_TKIP_NOTE_ICV;
+        goto bad;
+    }
+    msdu_len = len - overhead;
+    rtw89_michael_mic(key->tkip_mic, hdr->addr1, hdr->addr3, tid == DATA_NOQOS ? 0 : (u8)tid,
+                      body + RTW89_TKIP_HDR_LEN, msdu_len, mic);
+    if (!rtw89_crypto_equal(mic, body + RTW89_TKIP_HDR_LEN + msdu_len, sizeof(mic))) {
+        data.tkip_note = DATA_TKIP_NOTE_MIC;
+        goto bad;
+    }
+
+    key->pn[tid] = tsc;
+    if (!key->tkip_seen) {
+        key->tkip_seen = true;
+        data.tkip_note = DATA_TKIP_NOTE_OK;
+    }
+    return true;
+
+bad:
+    data.stats.rx_undecrypted++;
+    return false;
+}
+
 /* What mac80211's rx handlers do after reordering: decryption checks, then
  * the payload. rx_lock is held; the caller frees the skb. */
 static void data_rx_one(struct sk_buff *skb)
@@ -690,10 +794,19 @@ static void data_rx_one(struct sk_buff *skb)
         unsigned int keyid;
         u64 pn;
 
-        /* Decrypted by the hardware, which leaves the CCMP header and MIC. */
+        /* Decrypted by the hardware, which leaves the CCMP header and MIC.
+         * Not so the group frames of a WPA/WPA2 mixed network: TKIP, done here. */
         if (!(status->flag & RX_FLAG_DECRYPTED)) {
-            data.stats.rx_undecrypted++;
-            goto drop;
+            if (!mcast || amsdu) {
+                data.stats.rx_undecrypted++;
+                goto drop;
+            }
+            if (!data_rx_tkip(hdr, payload, len, tid))
+                goto drop;
+            payload += RTW89_TKIP_HDR_LEN;
+            len -= RTW89_TKIP_HDR_LEN + RTW89_TKIP_MIC_LEN + RTW89_TKIP_ICV_LEN;
+            decrypted = true;
+            goto plain;
         }
         if (len < IEEE80211_CCMP_HDR_LEN + IEEE80211_CCMP_MIC_LEN || !(payload[3] & 0x20))
             goto drop;
@@ -704,7 +817,8 @@ static void data_rx_one(struct sk_buff *skb)
             key = &data.rx_ptk;
         else
             goto drop;
-        if (!key->valid)
+        /* a TKIP key is never the chip's: what it says it decrypted was not ours */
+        if (!key->valid || key->tkip)
             goto drop;
 
         /* the packet number must go up within each TID */
@@ -723,6 +837,7 @@ static void data_rx_one(struct sk_buff *skb)
         decrypted = true;
     }
 
+plain:
     /* the Ethernet header is written over the end of the 802.11 one */
     memcpy(da, hdr->addr1, ETH_ALEN);
     memcpy(sa, hdr->addr3, ETH_ALEN);
@@ -983,6 +1098,7 @@ void rtw89_data_rx(struct sk_buff *skb)
     struct sk_buff_head frames;
     unsigned int hdrlen, tid;
     u16 sc;
+    u8 note;
 
     if (!data.inited || skb->len < sizeof(struct ieee80211_hdr_3addr) + FCS_LEN)
         goto free;
@@ -1018,7 +1134,21 @@ void rtw89_data_rx(struct sk_buff *skb)
 
     data_rx_reorder(skb, &frames);
     data_rx_frames(&frames);
+    note = data.tkip_note;
+    data.tkip_note = 0;
+    if (note > DATA_TKIP_NOTE_OK) {
+        if (data.tkip_fail_logs >= DATA_TKIP_FAIL_LOGS)
+            note = 0;
+        else
+            data.tkip_fail_logs++;
+    }
     spin_unlock(&data.rx_lock);
+    if (note == DATA_TKIP_NOTE_OK)
+        IOLog("[rtw89] first TKIP group frame decrypted: ICV and Michael MIC match\n");
+    else if (note == DATA_TKIP_NOTE_ICV)
+        IOLog("[rtw89] a TKIP group frame did not decrypt (ICV mismatch): dropped\n");
+    else if (note == DATA_TKIP_NOTE_MIC)
+        IOLog("[rtw89] a TKIP group frame failed its Michael MIC: dropped\n");
     return;
 
 drop:
