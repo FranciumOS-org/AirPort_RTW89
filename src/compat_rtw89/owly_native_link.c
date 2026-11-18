@@ -122,7 +122,12 @@ static uint16_t aw_countdown(const struct owly_action_info *d,uint16_t remaining
     return remaining; /* Older single-channel peers may only fill offset 15. */
 }
 
-static void sample_peer_clock(struct owly_link_peer *p,const struct owly_action_info *d,
+/* One late sample (host or ring delay) must not throw away a clock that
+ * several windows agreed on; three in a row mean the clock really moved. */
+#define OWLY_LINK_CLOCK_ERROR_US 4000u
+#define OWLY_LINK_CLOCK_OUTLIERS 3u
+static void sample_peer_clock(struct owly_native_link *s,struct owly_link_peer *p,
+                              const struct owly_action_info *d,
                               const uint8_t master[6],uint16_t countdown,uint64_t now)
 {
     const bool is_root=!memcmp(p->mac,master,6);
@@ -130,9 +135,11 @@ static void sample_peer_clock(struct owly_link_peer *p,const struct owly_action_
        (p->clock_rx_us && now-p->clock_rx_us>OWLY_LINK_PEER_TTL_US)) {
         p->clock_rx_us=0;
         p->consistent=0;
+        p->outliers=0;
         p->clock_valid=false;
     }
-    if(!is_root || !countdown)return;
+    if(!is_root) {++s->clock_not_root;return;}
+    if(!countdown) {++s->clock_no_countdown;return;}
 
     uint64_t anchor=now+(uint64_t)countdown*1024u;
     /* The sequence names the current AW. The boundary ahead starts AW+1. */
@@ -141,15 +148,24 @@ static void sample_peer_clock(struct owly_link_peer *p,const struct owly_action_
         const uint16_t delta=(uint16_t)(next-p->next_seq);
         const uint64_t predicted=p->anchor_us+(uint64_t)delta*OWLY_LINK_AW_US;
         const uint64_t error=predicted>anchor ? predicted-anchor : anchor-predicted;
-        if(delta && delta<32768u && error<=4000u) {
+        if(delta && delta<32768u && error<=OWLY_LINK_CLOCK_ERROR_US) {
             if(p->consistent<65535u)++p->consistent;
             p->clock_valid=p->consistent>=2u;
+            p->outliers=0;
+            ++s->clock_ok;
             /* Smooth bounded host-RX jitter across consecutive windows. */
             anchor=predicted>anchor ? predicted-(predicted-anchor)/4u : predicted+(anchor-predicted)/4u;
         } else if(!delta && now-p->clock_rx_us<OWLY_LINK_AW_US) {
             anchor=p->anchor_us;
+        } else if(p->clock_valid && delta && delta<32768u &&
+                  ++p->outliers<OWLY_LINK_CLOCK_OUTLIERS) {
+            /* Keep the agreed clock; this sample alone disagrees. */
+            ++s->clock_outlier;
+            return;
         } else {
+            ++s->clock_reset;
             p->consistent=0;
+            p->outliers=0;
             p->clock_valid=false;
         }
     }
@@ -185,7 +201,7 @@ bool owly_link_observe(struct owly_native_link *s,const uint8_t *raw,size_t n,ui
         p->last_mif_rx_us=0;
         p->master_channel=0;
     }
-    sample_peer_clock(p,&d,master,aw_countdown(&d,remaining,presence),now);
+    sample_peer_clock(s,p,&d,master,aw_countdown(&d,remaining,presence),now);
     p->last_rx_us=now;
     p->rssi=rssi;p->channel=ch;
     /* iOS sends MIFs with this field zero while keeping the same master.

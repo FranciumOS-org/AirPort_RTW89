@@ -461,6 +461,7 @@ static struct {
     uint64_t moved_us, root_us, slot_log_us;
     uint32_t switch_avg_us, lead_us;
     uint64_t data_rx_seen, data_rx_us;  /* AWDL data from peers: busy too */
+    uint64_t peer_log_us;
 } owly_mc;
 static unsigned owly_mc_freq(uint8_t ch)
 {
@@ -2961,6 +2962,40 @@ static void owly_mc_end_hook(void)
     owly_mc_stop();
 }
 
+/* Every 5 s: who we hear and whether their clock was taken. Sequence key:
+ * 6 = ch 6, 4 = ch 44, 9 = ch 149, . = elsewhere. Diagnostics only. */
+static void owly_mc_log_peers(void)
+{
+    const uint64_t now = glue_now_us();
+    if (owly_mc.peer_log_us && now - owly_mc.peer_log_us < 5000000u)
+        return;
+    owly_mc.peer_log_us = now;
+    spin_lock(&owly_link_lock);
+    const struct owly_native_link *l = &owly_link_state;
+    IOLog("OWLY peers: ch %u clock ok=%llu outlier=%llu reset=%llu not_root=%llu "
+          "no_countdown=%llu\n", (unsigned)l->channel,
+          (unsigned long long)l->clock_ok, (unsigned long long)l->clock_outlier,
+          (unsigned long long)l->clock_reset, (unsigned long long)l->clock_not_root,
+          (unsigned long long)l->clock_no_countdown);
+    for (unsigned i = 0; i < OWLY_LINK_PEERS; i++) {
+        const struct owly_link_peer *p = &l->peers[i];
+        char seq[17];
+        if (!p->used || now < p->last_rx_us || now - p->last_rx_us > 2000000u)
+            continue;
+        for (unsigned j = 0; j < 16; j++)
+            seq[j] = p->channels[j] == 6 ? '6' : p->channels[j] == 44 ? '4' :
+                     p->channels[j] == 149 ? '9' : '.';
+        seq[16] = 0;
+        IOLog("OWLY peer ..%02x:%02x master ..%02x:%02x%s clock=%u/%u rssi=%d heard=%llums seq=%s\n",
+              p->mac[4], p->mac[5], p->master[4], p->master[5],
+              !memcmp(p->master, p->mac, 6) ? " (self)" :
+              !memcmp(p->master, l->local, 6) ? " (us)" : "",
+              (unsigned)p->clock_valid, (unsigned)p->consistent, (int)p->rssi,
+              (unsigned long long)((now - p->last_rx_us) / 1000u), seq);
+    }
+    spin_unlock(&owly_link_lock);
+}
+
 static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
 {
     (void)work;
@@ -2987,6 +3022,7 @@ static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
               (unsigned)st.freq, (unsigned)owly_mc.channel);
         owly_sync_recheck(); /* the bound channel is now ch 6 */
     }
+    owly_mc_log_peers();
     if (glue.scanning) {
         /* AWDL stays bound across a scan, as in single-channel mode. */
         owly_mc_leave();

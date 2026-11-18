@@ -22,6 +22,7 @@ struct owly_link_peer {
     uint8_t election[24];
     int8_t rssi;
     uint16_t next_seq, consistent;
+    uint8_t outliers;  /* samples ignored in a row while the clock held */
     uint64_t last_rx_us, clock_rx_us, anchor_us, last_mif_rx_us, last_data_rx_us;
 };
 /* Data keeps the peer alive, never its separately aged action clock. */
@@ -67,6 +68,8 @@ struct owly_native_link {
     uint32_t queue_used;
     uint64_t actions, rejected_actions, data_rx_admitted, data_rx_rejected;
     uint64_t tx_enqueued, tx_handoffs, tx_refused, tx_expired, tx_radio_acked;
+    /* Why a peer's clock was or was not taken: diagnostics only. */
+    uint64_t clock_not_root, clock_no_countdown, clock_outlier, clock_reset, clock_ok;
 };
 void owly_link_reset(struct owly_native_link *s);
 void owly_link_reconcile(struct owly_native_link *s,bool active,
