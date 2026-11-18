@@ -125,20 +125,25 @@ static uint16_t aw_countdown(const struct owly_action_info *d,uint16_t remaining
 /* One late sample (host or ring delay) must not throw away a clock that
  * several windows agreed on; three in a row mean the clock really moved. */
 #define OWLY_LINK_CLOCK_ERROR_US 4000u
+#define OWLY_LINK_MAX_HOPS 8u
 #define OWLY_LINK_CLOCK_OUTLIERS 3u
 static void sample_peer_clock(struct owly_native_link *s,struct owly_link_peer *p,
                               const struct owly_action_info *d,
                               const uint8_t master[6],uint16_t countdown,uint64_t now)
 {
+    /* Every node synced to a root shares its AW schedule, so a relay's
+     * countdown is the root's clock too. Never take back our own clock. */
     const bool is_root=!memcmp(p->mac,master,6);
-    if(!is_root || memcmp(p->master,master,6) ||
+    const bool ours=!memcmp(master,s->local,6);
+    if(ours || memcmp(p->master,master,6) ||
        (p->clock_rx_us && now-p->clock_rx_us>OWLY_LINK_PEER_TTL_US)) {
         p->clock_rx_us=0;
         p->consistent=0;
         p->outliers=0;
         p->clock_valid=false;
     }
-    if(!is_root) {++s->clock_not_root;return;}
+    if(ours) return;
+    if(!is_root) ++s->clock_not_root;
     if(!countdown) {++s->clock_no_countdown;return;}
 
     uint64_t anchor=now+(uint64_t)countdown*1024u;
@@ -226,8 +231,13 @@ bool owly_link_observe(struct owly_native_link *s,const uint8_t *raw,size_t n,ui
             /* This software clock follows only a root heard directly. A
              * relay or contradictory root prefix cannot authorize a root
              * metric. In particular distance 0 belongs to that root only. */
-            p->has_election=!memcmp(v,master,6) && !memcmp(master,p->mac,6) &&
-                !memcmp(v+6,p->mac,6) && !v[16] && !v[17] && !v[18] && !v[19];
+            /* The root, or a relay naming the same root a few hops away.
+             * The root's distance is 0 and it names itself second. */
+            const uint32_t hops=(uint32_t)v[16]|(uint32_t)v[17]<<8|
+                                (uint32_t)v[18]<<16|(uint32_t)v[19]<<24;
+            p->has_election=!memcmp(v,master,6) && memcmp(master,s->local,6) &&
+                (memcmp(master,p->mac,6) ? hops>=1u && hops<OWLY_LINK_MAX_HOPS :
+                 !memcmp(v+6,p->mac,6) && !hops);
             if(p->has_election)memcpy(p->election,v,sizeof(p->election));
             else memset(p->election,0,sizeof(p->election));
         }
@@ -244,12 +254,20 @@ static bool waiting_for_master(const struct owly_native_link *s,uint64_t now)
     return mac_ok(s->preferred) && now>=s->preferred_us &&
         now-s->preferred_us<=OWLY_LINK_PEER_TTL_US;
 }
+static bool better_clock(const struct owly_link_peer *p,const struct owly_link_peer *best)
+{
+    if(!best)return true;
+    /* A root heard directly beats a relay; then the stronger signal. */
+    const bool root=!memcmp(p->mac,p->master,6),best_root=!memcmp(best->mac,best->master,6);
+    if(root!=best_root)return root;
+    return p->rssi>best->rssi || (p->rssi==best->rssi && memcmp(p->mac,best->mac,6)<0);
+}
 static struct owly_link_peer *master_peer(struct owly_native_link *s,uint64_t now) {
     struct owly_link_peer *best=NULL,*preferred=NULL;unsigned i;
     for(i=0;i<OWLY_LINK_PEERS;i++) {
         struct owly_link_peer *p=&s->peers[i];
         if(!fresh(p,now) || !clock_fresh(p,now))continue;
-        if(!best || p->rssi>best->rssi || (p->rssi==best->rssi && memcmp(p->mac,best->mac,6)<0))best=p;
+        if(better_clock(p,best))best=p;
         if(!memcmp(s->preferred,p->mac,6))preferred=p;
     }
     if(preferred) {
@@ -384,7 +402,14 @@ bool owly_link_root_election(struct owly_native_link *s,uint64_t now,uint8_t roo
     if(!s || !s->active || !s->sync_enabled || s->tx_paused)return false;
     struct owly_link_peer *p=master_peer(s,now);
     if(!p || !p->has_election)return false;
-    memcpy(root,p->election,24);return true;
+    memcpy(root,p->election,24);
+    /* We sit one hop below the peer we follow; name the root second. */
+    const uint32_t hops=((uint32_t)root[16]|(uint32_t)root[17]<<8|
+                         (uint32_t)root[18]<<16|(uint32_t)root[19]<<24)+1u;
+    memcpy(root+6,root,6);
+    root[16]=(uint8_t)hops;root[17]=(uint8_t)(hops>>8);
+    root[18]=(uint8_t)(hops>>16);root[19]=(uint8_t)(hops>>24);
+    return true;
 }
 
 uint16_t owly_link_shared_slots(struct owly_native_link *s, uint64_t now)

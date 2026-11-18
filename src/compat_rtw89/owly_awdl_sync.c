@@ -476,7 +476,7 @@ int owly_sync_frame(struct owly_sync *s,uint64_t now,uint8_t *f,size_t cap,size_
             v=f+at+3;
 #if defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
             if(follow) {
-                memcpy(v,s->master_election,24);put32(v+16,1);
+                memcpy(v,s->master_election,24); /* distance already +1 */
             } else
 #endif
             {
