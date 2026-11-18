@@ -2642,15 +2642,13 @@ static void owly_radio_maybe_attach(void)
         const unsigned freq=desired==149 ? 5745 : desired==44 ? 5220 : 2437;
         struct ieee80211_channel *candidate=ieee80211_get_channel(hw->wiphy,freq);
         if (freq!=idle.freq && candidate &&
-            !(candidate->flags&(IEEE80211_CHAN_DISABLED|IEEE80211_CHAN_RADAR)) &&
-            (!(candidate->flags&IEEE80211_CHAN_NO_IR) ||
-             rtw89_cfg80211_awdl_5g_ok(hw->wiphy,freq))) {
+            !(candidate->flags&(IEEE80211_CHAN_DISABLED|IEEE80211_CHAN_NO_IR|IEEE80211_CHAN_RADAR))) {
             owly_idle_move_us=now;
             const int rc=rtw89_mlme_awdl_hold_channel((u16)freq);
-            if (rc) {
-                owly_radio_state.last_error=rc; owly_radio_state.blocked=true;
+            /* A refused move keeps the current channel; it must not latch
+             * AWDL off for the rest of the boot. */
+            if (rc)
                 IOLog("OWLY standalone: channel follow refused rc=%d\n",rc);
-            }
         }
     }
 #endif
