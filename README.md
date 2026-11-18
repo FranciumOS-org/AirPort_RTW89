@@ -26,6 +26,8 @@ USB versions of these cards are not supported.
 ## What works
 
 - **Networks:** WPA3, WPA2 (Personal and Enterprise), open, phone hotspots.
+  WPA/WPA2 mixed networks too, as a WPA2 station (their group frames are TKIP,
+  decrypted by the driver).
 - **Speed:** Wi-Fi 6, up to 80 MHz (about 500 Mb/s measured). The driver
   prefers a network's 5 GHz side when its signal is good.
 - **6 GHz and Wi-Fi 7** on the cards that have them (new, untested on hardware).

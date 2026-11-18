@@ -329,6 +329,8 @@ void rtw89_data_authorize(void);
 void rtw89_data_set_external(bool external);
 void rtw89_data_set_tx_key(struct ieee80211_key_conf *key);
 void rtw89_data_set_rx_key(int keyidx, bool valid, u64 rsc);
+/* The group key @keyidx is TKIP (RTW89_TKIP_KEY_LEN bytes): decrypted in rtw89_data.c. */
+void rtw89_data_set_rx_tkip_key(int keyidx, const u8 *key, u64 rsc);
 /* BlockAck sessions. Receive: reorder what arrives on @tid. Transmit: hold the
  * TID's frames while the session is negotiated, see rtw89_data.c. */
 int rtw89_data_rx_ba_start(u8 tid, u16 ssn, u16 buf_size);

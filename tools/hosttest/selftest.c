@@ -6,6 +6,7 @@
  */
 #include "rtw89_net80211.h"
 #include "rtw89_crypto.h"
+#include "rtw89_tkip.h"
 #include "rtw89_awdl.h"
 
 static int failures;
@@ -146,6 +147,121 @@ static bool hex_is(const u8 *got, const char *hex, size_t len)
             return false;
     }
     return true;
+}
+
+/*
+ * TKIP (rtw89_tkip.c) against group frames from an AP as hostap's wlantest
+ * encrypts them (tkip_encrypt() in wlantest/tkip.c, an implementation of its
+ * own): a one-byte frame to a multicast address, a QoS frame on TID 4, and one
+ * whose counter has just carried into its upper 32 bits. The key is temporal
+ * key, the AP's Michael key, the station's Michael key.
+ */
+static void unhex(const char *hex, u8 *out)
+{
+    for (; hex[0] && hex[1]; hex += 2) {
+        u8 v = 0;
+        int j;
+
+        for (j = 0; j < 2; j++)
+            v = (u8)(v << 4 | (hex[j] <= '9' ? hex[j] - '0' : hex[j] - 'a' + 10));
+        *out++ = v;
+    }
+}
+
+static void test_tkip(void)
+{
+    static const struct {
+        const char *key, *addrs;
+        u8 priority;
+        u64 tsc;
+        u8 keyid;
+        size_t len;
+        const char *body, *payload;
+    } vectors[] = {
+        {
+            /* key */
+            "41a82a01d93b798781f00bec72bbe69bf28f41ad7fee5030367d7a65aa0f3200",
+            /* DA, TA, SA */
+            "01005e660f2d468cec9b2e9a642d8e89e3e0",
+            0, 0xa5641c97dbfbULL, 3, 1,
+            /* TKIP header and ciphertext */
+            "db7bfbe0971c64a500095f4a98df972810010b8a4e",
+            /* the frame's payload */
+            "74",
+        },
+        {
+            /* key */
+            "0a85cf2285c679da423afecc86024ee6d6acfe64441b1c3321a10d52bd938522",
+            /* DA, TA, SA */
+            "fffffffffffff0cba3f768a4605842b5fdee",
+            4, 0x78bab35df586ULL, 3, 8,
+            /* TKIP header and ciphertext */
+            "f57586e05db3ba78e0fa1896fa39d79f4752db9b322096ccb44519be",
+            /* the frame's payload */
+            "aaaa030000000800",
+        },
+        {
+            /* key */
+            "221b6ac253dcaacab5e0d95bb575b5a79b37384d00841f581d6ff03c2812e0c9",
+            /* DA, TA, SA */
+            "ffffffffffff144fddd90e09f22335c3e871",
+            0, 0x10000ffffULL, 1, 65,
+            /* TKIP header and ciphertext */
+            "ff7fff600000010004ef6c37ef42e640114a3c929c6d29e5e88435d8e86673b0d0e52f22ade27e6d"
+            "9aae2a288c386550d4a5eee9b8a21da395acabf53f3245ab105f94f38bd128d9c94d783882cd7c8c"
+            "30750ddbab",
+            /* the frame's payload */
+            "aaaa030000000806ab8a722a4c18e961e99d5be19cd7aea15237c16cdaedb882772a5f2d00e9256a"
+            "6ffe10e942bcb8fcd99833cc365e9f0d68afc66801a851567a",
+        },
+    };
+    size_t i;
+
+    for (i = 0; i < ARRAY_SIZE(vectors); i++) {
+        const size_t body_len = RTW89_TKIP_HDR_LEN + vectors[i].len + RTW89_TKIP_MIC_LEN +
+                                RTW89_TKIP_ICV_LEN;
+        u8 key[RTW89_TKIP_KEY_LEN], addrs[18], body[128], enc[128], mic[RTW89_TKIP_MIC_LEN];
+        u64 tsc = 0;
+
+        unhex(vectors[i].key, key);
+        unhex(vectors[i].addrs, addrs);
+        unhex(vectors[i].body, enc);
+        memcpy(body, enc, body_len);
+
+        CHECK(rtw89_tkip_decrypt(key, addrs + 6, body, body_len, &tsc) == 0);
+        CHECK(tsc == vectors[i].tsc && body[3] >> 6 == vectors[i].keyid);
+        CHECK(hex_is(body + RTW89_TKIP_HDR_LEN, vectors[i].payload, vectors[i].len));
+        rtw89_michael_mic(key + 16, addrs, addrs + 12, vectors[i].priority,
+                          body + RTW89_TKIP_HDR_LEN, vectors[i].len, mic);
+        CHECK(!memcmp(mic, body + RTW89_TKIP_HDR_LEN + vectors[i].len, sizeof(mic)));
+        /* the station's Michael key, or another priority, gives another MIC */
+        rtw89_michael_mic(key + 24, addrs, addrs + 12, vectors[i].priority,
+                          body + RTW89_TKIP_HDR_LEN, vectors[i].len, mic);
+        CHECK(memcmp(mic, body + RTW89_TKIP_HDR_LEN + vectors[i].len, sizeof(mic)));
+        rtw89_michael_mic(key + 16, addrs, addrs + 12, vectors[i].priority ^ 1,
+                          body + RTW89_TKIP_HDR_LEN, vectors[i].len, mic);
+        CHECK(memcmp(mic, body + RTW89_TKIP_HDR_LEN + vectors[i].len, sizeof(mic)));
+
+        /* encrypting what came out gives the frame back, byte for byte */
+        rtw89_tkip_encrypt(key, addrs + 6, vectors[i].tsc, vectors[i].keyid, body,
+                           vectors[i].len + RTW89_TKIP_MIC_LEN);
+        CHECK(!memcmp(body, enc, body_len));
+
+        /* a flipped bit, another transmitter or another key: the ICV says so */
+        memcpy(body, enc, body_len);
+        body[body_len - 1] ^= 0x01;
+        CHECK(rtw89_tkip_decrypt(key, addrs + 6, body, body_len, &tsc) == -2);
+        memcpy(body, enc, body_len);
+        CHECK(rtw89_tkip_decrypt(key, addrs, body, body_len, &tsc) == -2);
+        memcpy(body, enc, body_len);
+        key[0] ^= 0x80;
+        CHECK(rtw89_tkip_decrypt(key, addrs + 6, body, body_len, &tsc) == -2);
+        /* too short for a MIC and an ICV, or without the extended IV */
+        memcpy(body, enc, body_len);
+        CHECK(rtw89_tkip_decrypt(key, addrs + 6, body, 19, &tsc) == -1);
+        body[3] &= (u8)~0x20;
+        CHECK(rtw89_tkip_decrypt(key, addrs + 6, body, body_len, &tsc) == -1);
+    }
 }
 
 static void test_crypto(void)
@@ -309,6 +425,7 @@ static void test_crypto(void)
         rtw89_ccmp_encrypt(tk, hdr, sizeof(hdr), 0xb5039776e70cULL, buf, sizeof(buf), mic);
         CHECK(!rtw89_ccmp_decrypt(tk, hdr, sizeof(hdr), 0xb5039776e70dULL, buf, sizeof(buf), mic));
     }
+    test_tkip();
 }
 
 /* ---- cfg80211 helpers ---- */

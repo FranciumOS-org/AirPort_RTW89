@@ -22,6 +22,7 @@
  */
 #include "rtw89_net80211.h"
 #include "rtw89_crypto.h"
+#include "rtw89_tkip.h"
 #include "rtw89_sae.h"
 
 /* The address the chip answers to; see rtw89_core_wrap.c. */
@@ -137,6 +138,10 @@ static struct {
     bool replay_valid;
     struct ieee80211_key_conf *ptk_conf;
     struct ieee80211_key_conf *gtk_conf[4];     /* by key id; the AP alternates */
+    /* A TKIP group key (a WPA/WPA2 mixed network) is not given to the chip:
+     * rtw89_data.c decrypts those frames itself. By key id. */
+    u8 gtk_tkip[4][RTW89_TKIP_KEY_LEN];
+    bool gtk_tkip_valid[4];
 
     /* BlockAck sessions */
     struct mlme_tx_ba {
@@ -359,12 +364,21 @@ static void mlme_parse_rates(const u8 *ies, size_t len, u32 *rates, u32 *basic)
     }
 }
 
+/* The group cipher of a WPA/WPA2 mixed network is TKIP, for its WPA1 stations;
+ * a WPA2 station's own frames are CCMP there all the same. */
+static bool mlme_group_is_tkip(void)
+{
+    static const u8 suite_tkip[4] = { 0x00, 0x0f, 0xac, 2 };
+
+    return !memcmp(mlme.group_cipher, suite_tkip, 4);
+}
+
 /* What the AP's RSN element allows us to use. Returns 0 if CCMP with WPA2-PSK
  * (or, with @external, 802.1X) works. */
 /*
- * What the AP's RSN element offers: the ciphers (CCMP for both pairwise and
- * group traffic, the only ones taken), the key management suites and the
- * capabilities. Fills mlme.group_cipher, ap_akms and ap_rsn_caps.
+ * What the AP's RSN element offers: the ciphers (CCMP for pairwise traffic,
+ * CCMP or TKIP for group traffic, the only ones taken), the key management
+ * suites and the capabilities. Fills mlme.group_cipher, ap_akms and ap_rsn_caps.
  */
 static int mlme_parse_rsn(const struct element *rsn)
 {
@@ -425,8 +439,8 @@ static int mlme_parse_rsn(const struct element *rsn)
         mlme_info("the network does not offer CCMP as pairwise cipher");
         return -EOPNOTSUPP;
     }
-    if (memcmp(mlme.group_cipher, suite_ccmp, 4)) {
-        mlme_info("the network's group cipher is not CCMP (%02x-%02x-%02x:%u)",
+    if (memcmp(mlme.group_cipher, suite_ccmp, 4) && !mlme_group_is_tkip()) {
+        mlme_info("the network's group cipher is neither CCMP nor TKIP (%02x-%02x-%02x:%u)",
                   mlme.group_cipher[0], mlme.group_cipher[1], mlme.group_cipher[2],
                   mlme.group_cipher[3]);
         return -EOPNOTSUPP;
@@ -446,10 +460,11 @@ static int mlme_choose_akm(bool sae, bool psk)
 {
     const u32 akms = mlme.ap_akms;
     const u16 caps = mlme.ap_rsn_caps;
+    const bool tkip = mlme_group_is_tkip();     /* WPA3 and frame protection need CCMP */
     u8 *ie = mlme.own_rsn_ie;
     u16 own_caps = 0;
 
-    if (sae && (akms & BIT(AKM_SAE)))
+    if (sae && (akms & BIT(AKM_SAE)) && !tkip)
         mlme.akm = AKM_SAE;
     else if (psk && (akms & BIT(AKM_PSK)))
         mlme.akm = AKM_PSK;
@@ -463,7 +478,7 @@ static int mlme_choose_akm(bool sae, bool psk)
         return -EOPNOTSUPP;
     }
 
-    mlme.mfp = (caps & RSN_CAP_MFPC) &&
+    mlme.mfp = !tkip && (caps & RSN_CAP_MFPC) &&
                (mlme.akm != AKM_PSK || (caps & RSN_CAP_MFPR));
     if (!mlme.mfp && (caps & RSN_CAP_MFPR)) {
         mlme_info("the network requires management frame protection it cannot negotiate");
@@ -477,7 +492,7 @@ static int mlme_choose_akm(bool sae, bool psk)
     ie[1] = 20;
     ie[2] = 1;                                          /* version */
     ie[3] = 0;
-    memcpy(ie + 4, "\x00\x0f\xac\x04", 4);              /* group cipher: CCMP */
+    memcpy(ie + 4, mlme.group_cipher, 4);               /* group cipher: the AP's (CCMP or TKIP) */
     memcpy(ie + 8, "\x01\x00\x00\x0f\xac\x04", 6);      /* pairwise: CCMP */
     memcpy(ie + 14, "\x01\x00\x00\x0f\xac", 5);          /* one AKM */
     ie[19] = mlme.akm;
@@ -493,6 +508,10 @@ static int mlme_check_rsn_8021x(const struct element *rsn)
 
     if (ret)
         return ret;
+    if (mlme_group_is_tkip()) {
+        mlme_info("the 802.1X network's group cipher is TKIP, which is taken with a password only");
+        return -EOPNOTSUPP;
+    }
     if (!(mlme.ap_akms & BIT(AKM_8021X))) {
         mlme_info("the network does not offer 802.1X sign-in");
         return -EOPNOTSUPP;
@@ -737,6 +756,18 @@ static int mlme_gtk_install(int idx, const u8 *gtk, u64 rsc)
 {
     int ret;
 
+    if (mlme_group_is_tkip()) {
+        /* not for the chip (most cannot, see hw_tkip_crypto): rtw89_data.c
+         * decrypts the group frames. The same key again keeps its counters. */
+        if (mlme.gtk_tkip_valid[idx] &&
+            rtw89_crypto_equal(mlme.gtk_tkip[idx], gtk, RTW89_TKIP_KEY_LEN))
+            return 0;
+        memcpy(mlme.gtk_tkip[idx], gtk, RTW89_TKIP_KEY_LEN);
+        mlme.gtk_tkip_valid[idx] = true;
+        rtw89_data_set_rx_tkip_key(idx, gtk, rsc);
+        mlme_info("group key %d is TKIP (WPA/WPA2 mixed network): decrypted by the driver", idx);
+        return 0;
+    }
     if (mlme_key_is(mlme.gtk_conf[idx], gtk, (s8)idx))
         return 0;
     if (mlme.gtk_conf[idx]) {
@@ -832,6 +863,8 @@ static void mlme_teardown(u16 deauth_reason)
     mlme_key_remove(&mlme.ptk_conf, mlme.sta);
     for (i = 0; i < ARRAY_SIZE(mlme.gtk_conf); i++)
         mlme_key_remove(&mlme.gtk_conf[i], NULL);
+    memset(mlme.gtk_tkip, 0, sizeof(mlme.gtk_tkip));
+    memset(mlme.gtk_tkip_valid, 0, sizeof(mlme.gtk_tkip_valid));
     memset(&mlme.ptk, 0, sizeof(mlme.ptk));
     memset(&mlme.tptk, 0, sizeof(mlme.tptk));
     mlme.ptk_valid = false;
@@ -2647,9 +2680,12 @@ static bool mlme_verify_mic(const u8 *copy, size_t len, const u8 *their_mic)
 }
 
 /* Find the group key in decrypted key data: a KDE dd <len> 00-0f-ac 01
- * <key id | tx> <reserved> <key>. Returns the key id, or -1. */
+ * <key id | tx> <reserved> <key>, the key as long as the group cipher's.
+ * Returns the key id, or -1. */
 static int mlme_find_gtk(const u8 *kd, size_t len, const u8 **gtk)
 {
+    const size_t key_len = mlme_group_is_tkip() ? RTW89_TKIP_KEY_LEN : WLAN_KEY_LEN_CCMP;
+
     while (len >= 2) {
         u8 id = kd[0], elen = kd[1];
 
@@ -2657,7 +2693,7 @@ static int mlme_find_gtk(const u8 *kd, size_t len, const u8 **gtk)
             break;
         if ((size_t)elen + 2 > len)
             break;
-        if (id == 0xdd && elen == 6 + WLAN_KEY_LEN_CCMP &&
+        if (id == 0xdd && elen == 6 + key_len &&
             kd[2] == 0x00 && kd[3] == 0x0f && kd[4] == 0xac && kd[5] == 1) {
             *gtk = kd + 8;
             return kd[6] & 0x03;
