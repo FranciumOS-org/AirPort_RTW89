@@ -3018,6 +3018,20 @@ static void owly_mc_work_run(struct wiphy *wiphy, struct wiphy_work *work)
         return;
     if (!owly_mc_should_run()) {
         const bool was = owly_mc.enabled;
+        const uint64_t t = glue_now_us();
+        if (!owly_mc.peer_log_us || t - owly_mc.peer_log_us >= 5000000u) {
+            struct rtw89_mlme_status st;
+            rtw89_mlme_get_status(&st);
+            owly_mc.peer_log_us = t;
+            IOLog("OWLY mc off: vif=%d bound=%d blocked=%d err=%d attempts=%u binds=%u "
+                  "state=%d owned=%d freq=%u shared=%d scanning=%d requested=%d disabled=%d\n",
+                  owly_core04c_vif != NULL, owly_radio_is_bound(&owly_radio_state),
+                  owly_radio_state.blocked, owly_radio_state.last_error,
+                  (unsigned)owly_radio_state.attempts, (unsigned)owly_radio_state.binds,
+                  (int)st.state, st.awdl_channel_owned, (unsigned)st.freq,
+                  rtw89_mlme_awdl_shared_chanctx() != NULL, glue.scanning,
+                  owly_sync_state.requested, owly_sync_state.explicitly_disabled);
+        }
         owly_mc_stop();
         if (was)
             owly_sync_recheck();
