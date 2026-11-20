@@ -30,6 +30,7 @@ USB versions of these cards are not supported.
   prefers a network's 5 GHz side when its signal is good.
 - **6 GHz and Wi-Fi 7** on the cards that have them (new, untested on hardware).
 - Wi-Fi menu, saved networks, scanning, restart and shutdown.
+- Wi-Fi 7 160/320 MHz channels.
 
 - **AirDrop, both ways, and Handoff** (new in 0.7.0, on by default), with
   RTLAirLink's AWDL. Working on an RTL8852BE on macOS Tahoe 26.7.3: the iPhone
