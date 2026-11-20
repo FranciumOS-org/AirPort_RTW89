@@ -38,7 +38,8 @@ USB versions of these cards are not supported.
   contexts for it. `-owlyeb1off` turns it off.
 - **BroadTek.kext comes with it and is needed for AirDrop from an iPhone and
   for Handoff.** It is a separate Lilu plugin for the Bluetooth side
-  ([BroadTek](#broadtek)); without it the iPhone never lists the Mac.
+  ([BroadTek](https://github.com/FranciumOS-org/BroadTek), see
+  [below](#broadtek)); without it the iPhone never lists the Mac.
 - **160 and 320 MHz** channels where card and network both have them (untested on hardware).
 
 **Not yet:** Instant Hotspot, Apple Watch unlock, Sidecar over Wi-Fi, iPhone
@@ -105,8 +106,9 @@ To **update**, run the Kext Installer from the new release.
 
 AirDrop from an iPhone and Handoff need the Mac's Bluetooth LE adverts, and
 on a non-Apple Bluetooth controller macOS sends them without the Mac's
-private address, so the iPhone ignores them. `BroadTek.kext` (a Lilu plugin,
-MIT licence, in the release zip next to `AirPort_RTW89.kext`) adds that
+private address, so the iPhone ignores them.
+[BroadTek](https://github.com/FranciumOS-org/BroadTek) (a Lilu plugin, MIT
+licence; `BroadTek.kext` is in the release zip next to `AirPort_RTW89.kext`) adds that
 address to each advert set, and lets bluetoothd start advertising at all. The
 Kext Installer copies it and adds it to `config.plist` with the boot-arg
 `-broadtekp2poff` (which keeps it from hooking the same function as the
