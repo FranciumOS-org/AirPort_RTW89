@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Add AirPort_RTW89 to an OpenCore config.plist, or switch it off again.
 
-Usage: python3 efi/configure.py install|uninstall IN_CONFIG OUT_CONFIG
+Usage: python3 efi/configure.py install|uninstall [--broadtek] IN_CONFIG OUT_CONFIG
 
 install: Kernel -> Add gets, in load order and after Lilu,
     IOSkywalkFamily.kext, IO80211FamilyLegacy.kext, AMFIPass.kext  (the old Wi-Fi stack)
@@ -12,8 +12,11 @@ and, right after Lilu and before the Wi-Fi family,
     OwlyAirLinkBridge.kext  (RTLAirLink's Lilu plugin for AirDrop's event client,
                             copied out of AirPort_RTW89.kext's PlugIns: Lilu only
                             calls it for the family if it is there first)
-and boot-args gets -owlyeb1 owlyebstage=4, which switch the bridge on, and
--broadtekp2poff, which keeps BroadTek's AWDL hook off the same function,
+    BroadTek.kext           (Bluetooth: gives the Mac's BLE adverts their address,
+                            which AirDrop and Handoff need; with --broadtek)
+and boot-args gets -broadtekp2poff, which keeps BroadTek's AWDL hook off the
+function the bridge routes (the bridge is on by default from 0.7.0, so the old
+-owlyeb1 owlyebstage=4 are taken out),
 and Kernel -> Block gets an entry that keeps Apple's own IOSkywalkFamily out,
 all from Darwin 23 (Sonoma) on. Entries already there are switched on and
 otherwise left alone, so running it twice changes nothing. An entry for the
@@ -21,7 +24,7 @@ front as a kext of its own (AirPortRTW89Front.kext, as early builds had it) is
 switched off: it is inside the driver now.
 
 uninstall: the same entries are switched off (not removed), and the two
-boot-args taken out again, so the config is as before as far as OpenCore is
+boot-args (and the old -owlyeb1 owlyebstage) taken out again, so the config is as before as far as OpenCore is
 concerned, and install can switch them on.
 
 Nothing else in the file is touched.
@@ -47,11 +50,14 @@ BRIDGE = [('OwlyAirLinkBridge.kext', 'OwlyAirLinkBridge',
            'Wi-Fi: AirDrop event bridge (RTLAirLink, Lilu plugin)')]
 # the bridge as a plugin inside the driver, as d4218c8 installed it: off now
 NESTED_BRIDGE = 'AirPort_RTW89.kext/Contents/PlugIns/OwlyAirLinkBridge.kext'
-# The bridge does nothing without the first two (RTLAirLink's opt-in). The
-# third keeps BroadTek's own hook on IO80211InterfacePostMessage out of the
-# way: Lilu panics when two plugins route one function, and the bridge routes
-# that one ("previous plugin had short jump type on a multiroute function").
-BOOT_ARGS = ['-owlyeb1', 'owlyebstage=4', '-broadtekp2poff']
+# BroadTek (a Lilu plugin on the Bluetooth USB pipe): after Lilu, like the bridge.
+BROADTEK = [('BroadTek.kext', 'BroadTek', 'Bluetooth: BLE advert address for AirDrop/Handoff (BroadTek)')]
+# -broadtekp2poff keeps BroadTek's own hook on IO80211InterfacePostMessage out
+# of the way: Lilu panics when two plugins route one function, and the bridge
+# routes that one ("previous plugin had short jump type on a multiroute function").
+BOOT_ARGS = ['-broadtekp2poff']
+# the bridge's opt-in before 0.7.0: taken out, it is on by default now
+OLD_ARGS = ['-owlyeb1', 'owlyebstage']
 NVRAM_GUID = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
 OLD_FRONT = 'AirPortRTW89Front.kext'     # the front as a kext of its own
 BRCM = 'IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext'
@@ -66,14 +72,15 @@ def entry(bundle, exe, comment):
     }
 
 
-def install(config, changes):
+def install(config, changes, broadtek=False):
     kernel = config['Kernel']
     add, block = kernel['Add'], kernel['Block']
     paths = [e.get('BundlePath') for e in add]
     if 'Lilu.kext' not in paths:
         sys.exit('Lilu.kext is not in Kernel -> Add; AMFIPass needs it')
     ours = []
-    for bundle, exe, comment in BRIDGE + STACK + OURS:
+    group = (BROADTEK if broadtek else []) + BRIDGE + STACK + OURS
+    for bundle, exe, comment in group:
         if bundle in paths:
             e = add[paths.index(bundle)]
             if not e.get('Enabled'):
@@ -97,7 +104,7 @@ def install(config, changes):
     new_order = [e.get('BundlePath') for e in add if e.get('BundlePath') in old_order]
     if new_order != old_order:
         changes.append('Kernel -> Add order: Lilu, ' +
-                       ', '.join(b.split('/')[-1] for b, _, _ in BRIDGE + STACK + OURS))
+                       ', '.join(b.split('/')[-1] for b, _, _ in group))
 
     for e in add:
         if e.get('BundlePath') == NESTED_BRIDGE and e.get('Enabled'):
@@ -140,7 +147,7 @@ def set_boot_args(config, changes, add_them):
                   % (NVRAM_GUID, ' '.join(BOOT_ARGS)))
         return
     args = str(nvram['boot-args']).split()
-    names = {a.split('=')[0] for a in BOOT_ARGS}
+    names = {a.split('=')[0] for a in BOOT_ARGS + OLD_ARGS}
     kept = [a for a in args if a.split('=')[0] not in names]
     new = kept + BOOT_ARGS if add_them else kept
     if new != args:
@@ -154,7 +161,7 @@ def secure_boot_model(config):
 
 def uninstall(config, changes):
     kernel = config['Kernel']
-    names = {b for b, _, _ in BRIDGE + STACK + OURS} | {OLD_FRONT, NESTED_BRIDGE}
+    names = {b for b, _, _ in BROADTEK + BRIDGE + STACK + OURS} | {OLD_FRONT, NESTED_BRIDGE}
     for e in kernel['Add']:
         if e.get('BundlePath') in names and e.get('Enabled'):
             e['Enabled'] = False
@@ -167,13 +174,18 @@ def uninstall(config, changes):
 
 
 def main():
-    if len(sys.argv) != 4 or sys.argv[1] not in ('install', 'uninstall'):
+    argv = [a for a in sys.argv[1:] if a != '--broadtek']
+    broadtek = '--broadtek' in sys.argv[1:]
+    if len(argv) != 3 or argv[0] not in ('install', 'uninstall'):
         sys.exit(__doc__)
-    mode, src, dst = sys.argv[1:]
+    mode, src, dst = argv
     with open(src, 'rb') as f:
         config = plistlib.load(f)
     changes = []
-    (install if mode == 'install' else uninstall)(config, changes)
+    if mode == 'install':
+        install(config, changes, broadtek)
+    else:
+        uninstall(config, changes)
     with open(dst, 'wb') as f:
         plistlib.dump(config, f, sort_keys=False)
     for c in changes:

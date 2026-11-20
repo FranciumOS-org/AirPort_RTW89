@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* EB1 kernel integration candidate. Native compile/runtime qualification pending.
- * No activation without -owlyeb1, exact family UUID and both entry fingerprints.
+ * Active by default (-owlyeb1off disables); needs the exact family UUID and both entry fingerprints.
  */
 #include <Headers/plugin_start.hpp>
 #include <Headers/kern_api.hpp>
@@ -893,8 +893,8 @@ void loaded(void *, KernelPatcher &patcher, size_t id, mach_vm_address_t address
 void startPlugin()
 {
     OwlyStatus::flag("OwlyEB1PluginStartReached", true);
-    if (!checkKernelArgument("-owlyeb1") || !owlyStartupPlan.registrationAllowed()) {
-        IOLog("OwlyEB1: source candidate is opt-in; -owlyeb1 absent, inactive\n");
+    if (checkKernelArgument("-owlyeb1off") || !owlyStartupPlan.registrationAllowed()) {
+        IOLog("OwlyEB1: -owlyeb1off or no valid stage, inactive\n");
         return;
     }
     /* The loader phase registers callbacks only. The matched IOKit service

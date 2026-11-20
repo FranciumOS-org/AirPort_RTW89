@@ -690,17 +690,24 @@ TOOLS       := $(RELEASE)-tools
 TOOLS_DIR   := $(BUILD_DIR)/release/$(TOOLS)
 KEXT_DIR    := $(BUILD_DIR)/release/$(RELEASE)
 
+# BroadTek (Bluetooth, separate repo, MIT): its release build goes next to the
+# kext, as AirDrop from an iPhone and Handoff need it.
+BROADTEK_KEXT ?= $(PROJ_ROOT)/../BroadTek/build/release-0.2.0/BroadTek.kext
+
 release: bundle
+	@[ -f "$(BROADTEK_KEXT)/Contents/MacOS/BroadTek" ] || { echo "BroadTek.kext not found at $(BROADTEK_KEXT): build it (BroadTek: make DEBUG=0 kext) or set BROADTEK_KEXT=" >&2; exit 1; }
 	@rm -rf $(BUILD_DIR)/release
 	@mkdir -p $(KEXT_DIR) $(TOOLS_DIR)/efi/kit $(TOOLS_DIR)/tools
 	@# the kext and, next to it, the installer for each OS
 	@cp -R $(BUNDLE) $(KEXT_DIR)/
+	@cp -R "$(BROADTEK_KEXT)" $(KEXT_DIR)/ && cp "$(BROADTEK_KEXT)/../../../LICENSE" $(KEXT_DIR)/BroadTek-LICENSE.txt
+	@cp -R "$(BROADTEK_KEXT)" $(TOOLS_DIR)/
 	@python3 tools/embed_installer.py "$(KEXT_DIR)/Kext Installer.py"
 	@cp "installer/Kext Installer.command" "installer/Kext Installer.cmd" "installer/Kext Installer.sh" $(KEXT_DIR)/
 	@chmod +x "$(KEXT_DIR)/Kext Installer.command" "$(KEXT_DIR)/Kext Installer.sh" "$(KEXT_DIR)/Kext Installer.py"
 	@cp efi/install.sh efi/uninstall.sh efi/configure.py efi/find_efi.sh efi/README.md $(TOOLS_DIR)/efi/
 	@printf 'Put IOSkywalkFamily.kext, IO80211FamilyLegacy.kext and AMFIPass.kext here:\nsee ../README.md, "Requirements".\n' > $(TOOLS_DIR)/efi/kit/PUT-KEXTS-HERE.txt
-	@printf 'Put AirPort_RTW89.kext (from %s.zip) in this folder for efi/install.sh.\n' $(RELEASE) > $(TOOLS_DIR)/PUT-AirPort_RTW89.kext-HERE.txt
+	@printf 'Put AirPort_RTW89.kext (from %s.zip) in this folder for efi/install.sh (BroadTek.kext is here already).\n' $(RELEASE) > $(TOOLS_DIR)/PUT-AirPort_RTW89.kext-HERE.txt
 	@cp $(BUILD_DIR)/out/rtw89ctl tools/collect_logs.sh $(TOOLS_DIR)/tools/
 	@cp README.md TESTING.md LICENSE $(TOOLS_DIR)/
 	@find $(BUILD_DIR)/release -name '.DS_Store' -delete

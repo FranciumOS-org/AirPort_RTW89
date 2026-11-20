@@ -20,7 +20,7 @@ bool OwlyAirLinkBridge_startSuccess=false,OwlyAirLinkBridge_debugEnabled=false;
 uint32_t OwlyAirLinkBridge_debugPrintDelay=0;
 LiluAPI lilu;IOService root;IOTimerEventSource *lastTimer=nullptr;
 IOWorkLoop *retainedRuntimeLoop=nullptr;
-bool checkKernelArgument(const char *) { return fakeOptIn; }
+bool checkKernelArgument(const char *a) { return std::strcmp(a,"-owlyeb1off")==0 ? !fakeOptIn : false; }
 void lilu_get_boot_args(const char *key,uint32_t *value,size_t) { if(fakeStagePresent&&std::strcmp(key,"owlyebstage")==0)*value=fakeStage; }
 IOService *IOService::getResourceService() { ioContext();resourceCalls++;return fakeResource?&root:nullptr; }
 static void startPluginModel() { assert(apiHeld && !moduleReturned);started++; }
@@ -64,7 +64,7 @@ int main() {
  reset();fakeOptIn=false;enter();assert(!requested&&!started&&!OwlyAirLinkBridge_startSuccess);
  {OwlyAirLinkBridge s;assert(s.start(&root));assert(!loopsMade&&!runtimeCalls);assert(root.strings["OwlyEB1BootstrapPhase"]=="inactive-no-optin");cleanup(s);}
  assert(OwlyAirLinkBridge_kern_stop(nullptr,nullptr)==KERN_SUCCESS);
- std::cout<<"PASS no opt-in: no API or runtime allocation\n";
+ std::cout<<"PASS -owlyeb1off: no API or runtime allocation\n";
  reset();lilu.nextAccess=LiluAPI::Error::TooLate;enter();assert(requested==1&&!loaded&&!released&&!started);
  {OwlyAirLinkBridge s;assert(s.start(&root));assert(root.numbers["OwlyEB1LiluAccessResult"]==6);assert(!loopsMade);cleanup(s);}
  std::cout<<"PASS access refusal recorded, no retry, no unowned unlock\n";
@@ -142,8 +142,8 @@ int main() {
  reset();fakeStage=1;lilu.nextLoad=LiluAPI::Error::Disabled;enter();assert(!started&&!OwlyAirLinkBridge_startSuccess);
  {OwlyAirLinkBridge s;assert(s.start(&root));assert(!loopsMade&&!runtimeCalls);assert(root.numbers["OwlyEB1ShouldLoadResult"]==5);assert(root.flags["OwlyEB1ApiAccessReleased"]);cleanup(s);}
  std::cout<<"PASS policy off remains observable with stage1 and cannot start plugin\n";
- reset();fakeStagePresent=false;enter();assert(owlyStartupPlan.stage()==1&&started==1);
- {OwlyAirLinkBridge s;assert(s.start(&root));assert(!loopsMade&&!timersMade&&!runtimeCalls);assert(!root.flags["OwlyEB1RuntimeRequested"]);cleanup(s);}
- std::cout<<"PASS missing stage argument defaults to registration only, never full activation\n";
+ reset();fakeStagePresent=false;enter();assert(owlyStartupPlan.stage()==4&&started==1);
+ {OwlyAirLinkBridge s;assert(s.start(&root));assert(loopsMade==1&&runtimeCalls==1);assert(root.flags["OwlyEB1RuntimeRequested"]);cleanup(s);}
+ std::cout<<"PASS missing stage argument defaults to full activation (0.7.0)\n";
  reset();std::cout<<"RESULT 19 lifecycle/readiness groups passed; mocked kernel APIs, no native boot proof\n";
 }

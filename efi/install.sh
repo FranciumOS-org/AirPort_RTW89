@@ -27,6 +27,14 @@ for d in "$root" "$root/build/out/bundle"; do
     fi
 done
 [ -n "$ours" ] || { echo "AirPort_RTW89.kext not found: put it in $root (from the release zip), or build it: make bundle" >&2; exit 1; }
+# BroadTek.kext (Bluetooth, needed for AirDrop and Handoff): from the release
+# zip, next to AirPort_RTW89.kext; without it the Wi-Fi works and AirDrop
+# goes one way only (Mac to iPhone)
+broadtek=
+for d in "$root" "$root/../BroadTek/build/release-0.2.0"; do
+    if [ -f "$d/BroadTek.kext/Contents/MacOS/BroadTek" ]; then broadtek="$d/BroadTek.kext"; break; fi
+done
+[ -n "$broadtek" ] || echo "note: BroadTek.kext not found next to AirPort_RTW89.kext: iPhones will not see this Mac in AirDrop"
 
 . "$here/find_efi.sh"
 find_efi "${1:-}"
@@ -40,7 +48,7 @@ done
 
 tmp="$(mktemp -t config.plist)"
 trap 'rm -f "$tmp"' EXIT
-python3 "$here/configure.py" install "$oc/config.plist" "$tmp"
+python3 "$here/configure.py" install ${broadtek:+--broadtek} "$oc/config.plist" "$tmp"
 plutil -lint "$tmp" >/dev/null || { echo "the new config does not parse; nothing was changed" >&2; exit 1; }
 
 # the old Wi-Fi stack's kexts not there yet (without the Broadcom plugin
@@ -53,7 +61,7 @@ for k in IOSkywalkFamily IO80211FamilyLegacy AMFIPass; do
     [ -d "$kit/$k.kext/Contents/PlugIns" ] && kb=$((kb - $(du -sk "$kit/$k.kext/Contents/PlugIns" | cut -f1)))
     EFI_EXTRA_KB=$((EFI_EXTRA_KB + kb))
 done
-efi_room "$ours"
+efi_room "$ours" ${broadtek:+"$broadtek"}
 
 backup="$oc/config.plist.pre-airport-rtw89"
 [ -e "$backup" ] || { cp "$oc/config.plist" "$backup"; echo "saved the config as it was: $backup"; }
@@ -76,6 +84,11 @@ rm -rf "$oc/Kexts/OwlyAirLinkBridge.kext"
 if [ -d "$ours/Contents/PlugIns/OwlyAirLinkBridge.kext" ]; then
     cp -R -X "$ours/Contents/PlugIns/OwlyAirLinkBridge.kext" "$oc/Kexts/"
     echo "  copied OwlyAirLinkBridge.kext (out of AirPort_RTW89.kext)"
+fi
+if [ -n "$broadtek" ]; then
+    rm -rf "$oc/Kexts/BroadTek.kext"
+    cp -R -X "$broadtek" "$oc/Kexts/"
+    echo "  copied BroadTek.kext ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$broadtek/Contents/Info.plist" 2>/dev/null))"
 fi
 # the front as a kext of its own, from early builds: its entry is off now
 if [ -d "$oc/Kexts/AirPortRTW89Front.kext" ]; then

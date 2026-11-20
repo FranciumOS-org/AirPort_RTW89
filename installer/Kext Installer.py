@@ -293,6 +293,12 @@ def main():
         if not is_kext(ours, 'AirPort_RTW89') or \
                 not is_kext(os.path.join(ours, FRONT_PLUGIN), 'AirPortRTW89Front'):
             stop('%s is not AirPort_RTW89.kext 0.2.0 or later (the front must be inside it)' % ours)
+    # BroadTek.kext (Bluetooth): in the release zip next to AirPort_RTW89.kext.
+    # Without it Wi-Fi works and AirDrop goes Mac -> iPhone only, because the
+    # Mac's Bluetooth adverts carry no address an iPhone can recognise.
+    broadtek = find_kext('BroadTek', extra=[os.path.join(HERE, '..', '..', 'BroadTek', 'build', 'release-0.2.0')])
+    if not broadtek:
+        say('note: BroadTek.kext is not next to this script: iPhones will not see this Mac in AirDrop.')
     stack = {}
     missing = []
     for name, url in STACK:
@@ -340,7 +346,7 @@ def main():
         stop('you said no')
 
     # room on the volume: what comes in, less the copies it replaces
-    need = tree_kb(ours) + 1024
+    need = tree_kb(ours) + 1024 + (tree_kb(broadtek) if broadtek else 0)
     if os.path.isdir(os.path.join(kexts, 'AirPort_RTW89.kext')):
         need -= tree_kb(os.path.join(kexts, 'AirPort_RTW89.kext'))
     for name, src in stack.items():
@@ -366,6 +372,9 @@ def main():
     if os.path.isdir(bridge):
         copy_kext(bridge, os.path.join(kexts, 'OwlyAirLinkBridge.kext'))
         say('  copied OwlyAirLinkBridge.kext')
+    if broadtek:
+        copy_kext(broadtek, os.path.join(kexts, 'BroadTek.kext'))
+        say('  copied BroadTek.kext')
     for name, src in stack.items():
         if src:
             copy_kext(src, os.path.join(kexts, name + '.kext'),
@@ -382,7 +391,7 @@ def main():
     if set_secure:
         config.setdefault('Misc', {}).setdefault('Security', {})['SecureBootModel'] = 'Disabled'
         changes.append('Misc -> Security -> SecureBootModel: Disabled')
-    configure.install(config, changes)
+    configure.install(config, changes, broadtek=bool(broadtek))
     if tahoe:
         nv['boot-args'] = (args + ' -amfipassbeta').strip()
         changes.append('boot-args: added -amfipassbeta')

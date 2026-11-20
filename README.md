@@ -31,15 +31,20 @@ USB versions of these cards are not supported.
 - **6 GHz and Wi-Fi 7** on the cards that have them (new, untested on hardware).
 - Wi-Fi menu, saved networks, scanning, restart and shutdown.
 
-- **AirDrop** (experimental), with RTLAirLink's AWDL: transfers in both
-  directions have worked on an RTL8852BE; finding the other device is still
-  hit and miss. Needs Lilu and the boot-args `-owlyeb1 owlyebstage=4` (the
-  installer adds them). Not on the RTL8851BE or RTL8852AE, which have no
-  channel contexts for it.
+- **AirDrop, both ways, and Handoff** (new in 0.7.0, on by default), with
+  RTLAirLink's AWDL. Working on an RTL8852BE on macOS Tahoe 26.7.3: the iPhone
+  lists the Mac, transfers go both ways, and Handoff works. While joined to a
+  network on another channel, the card visits AirDrop's channel (6, 44 or
+  149) in between. Not on the RTL8851BE or RTL8852AE, which have no channel
+  contexts for it. `-owlyeb1off` turns it off.
+- **BroadTek.kext comes with it and is needed for AirDrop from an iPhone and
+  for Handoff.** It is a separate Lilu plugin for the Bluetooth side
+  ([BroadTek](#broadtek)); without it the iPhone never lists the Mac.
 - **160 and 320 MHz** channels where card and network both have them (untested on hardware).
 
-**Not yet:** Handoff and the rest of Continuity, Wi-Fi 7 multi-link. Sleep
-and wake are untested.
+**Not yet:** Instant Hotspot, Apple Watch unlock, Sidecar over Wi-Fi, iPhone
+Mirroring (needs Apple's Secure Enclave, which a Hackintosh does not have),
+Wi-Fi 7 multi-link. Sleep and wake are untested.
 
 Tested on macOS Sequoia 15 and Tahoe 26.
 
@@ -91,8 +96,30 @@ To **update**, run the Kext Installer from the new release.
 6. On macOS Tahoe, add `-amfipassbeta` to `boot-args`.
 7. If the same EFI also boots Ventura or older, give the four kexts
    `MinKernel` `23.0.0`.
+8. For AirDrop: copy `OwlyAirLinkBridge.kext` out of
+   `AirPort_RTW89.kext/Contents/PlugIns` into `EFI/OC/Kexts` and add it right
+   after Lilu, and add BroadTek as in [BroadTek](#broadtek).
 
 </details>
+
+## BroadTek
+
+AirDrop from an iPhone and Handoff need the Mac's Bluetooth LE adverts, and
+on a non-Apple Bluetooth controller macOS sends them without the Mac's
+private address, so the iPhone ignores them. `BroadTek.kext` (a Lilu plugin,
+MIT licence, in the release zip next to `AirPort_RTW89.kext`) adds that
+address to each advert set, and lets bluetoothd start advertising at all. The
+Kext Installer copies it and adds it to `config.plist` with the boot-arg
+`-broadtekp2poff` (which keeps it from hooking the same function as the
+AirDrop bridge). By hand: copy it to `EFI/OC/Kexts`, add it to
+`Kernel -> Add` right after Lilu, and add `-broadtekp2poff` to `boot-args`.
+
+- It works on the HCI stream, not on any one chip, and was tested with the
+  RTL8852BE's Bluetooth (RealtekBluetoothFirmware) and BlueToolFixup.
+- Its patch for bluetoothd is made for macOS Tahoe 26.7.x; on other versions
+  it may not apply, and then iPhones will not list the Mac.
+- `-broadtekoff` turns it off; `-broadtekadvaddroff` keeps it loaded without
+  changing the adverts.
 
 ## Troubleshooting
 

@@ -23,15 +23,16 @@ EXPORT extern "C" kern_return_t ADDPR(kern_start)(kmod_info_t *, void *)
     OwlyStatus::text("OwlyEB1Version", RTLAIRLINK_VERSION);
     OwlyStatus::text("OwlyEB1BootstrapPhase", "module-entry");
     OwlyStatus::flag("OwlyEB1ModuleEntryReached", true);
-    const bool optedIn = checkKernelArgument("-owlyeb1");
+    /* 0.7.0: on by default; -owlyeb1off (Lilu's disable argument) turns it off. */
+    const bool optedIn = !checkKernelArgument("-owlyeb1off");
     OwlyStatus::flag("OwlyEB1OptInPresent", optedIn);
     if (!optedIn) {
         OwlyStatus::text("OwlyEB1BootstrapPhase", "inactive-no-optin");
         return KERN_SUCCESS;
     }
-    /* An opted-in 0.1.7 starts with registration only. Full activation now
-     * requires the explicit owlyebstage=4 argument; it is never a default. */
-    uint32_t requestedStage = 1;
+    /* Full activation (stage 4) is the default from 0.7.0; owlyebstage=1..3
+     * still selects a partial stage for diagnosis. */
+    uint32_t requestedStage = 4;
     lilu_get_boot_args("owlyebstage", &requestedStage, sizeof(requestedStage));
     owlyStartupPlan.select(requestedStage);
     OwlyStatus::number("OwlyEB1RequestedStage", requestedStage);
