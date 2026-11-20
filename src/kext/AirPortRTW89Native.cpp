@@ -47,6 +47,9 @@ struct AirPort_RTW89::NativeState {
     bool scanBootstrapTried = false;
     uint64_t awdlScansDeferred = 0;
     uint64_t lastConnectedScan = 0;     /* uptime (ns) of the last scan while connected */
+    uint64_t scanAskedAt = 0;           /* uptime (ns) of macOS's previous background scan request */
+    uint64_t scanAskedFrames = 0;       /* data frames (tx+rx) at that request */
+    uint64_t scansHeldBusy = 0;         /* requests answered from the cache because the link was busy */
     uint32_t authLower = APPLE80211_AUTHTYPE_OPEN;
     uint32_t authUpper = APPLE80211_AUTHTYPE_NONE;
     uint8_t countryCode[APPLE80211_MAX_CC_LEN] = { 'Z', 'Z', 0 };
@@ -1599,9 +1602,17 @@ int AirPort_RTW89::nativeRequest(bool isSet, int number, void *data)
             uint64_t now;
 
             absolutetime_to_nanoseconds(mach_absolute_time(), &now);
+            const uint64_t frames = (uint64_t)link.tx_frames + link.rx_frames;
+            const bool busy = isConnected(link) &&
+                rtw89_station_scan_busy(now, _ns->scanAskedAt, frames, _ns->scanAskedFrames);
+            _ns->scanAskedAt = now;
+            _ns->scanAskedFrames = frames;
             if ((link.state!=RTW89_GLUE_LINK_DOWN && !isConnected(link)) ||
-                owly_native_scan_cached(true,awdlProtected && awdlBusy,now,_ns->lastConnectedScan)) {
+                owly_native_scan_cached(true,awdlProtected && awdlBusy,now,_ns->lastConnectedScan) ||
+                rtw89_station_scan_cached(busy, now, _ns->lastConnectedScan)) {
                 UInt32 result = 0;
+                if (busy && !awdlProtected)
+                    setProperty("RTW89ScansHeldBusy", ++_ns->scansHeldBusy, 64);
                 if(awdlProtected) {
                     setProperty("OwlyNativeScansDeferred",++_ns->awdlScansDeferred,64);
                     _ns->scanBootstrapTried=true;
