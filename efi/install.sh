@@ -31,7 +31,7 @@ done
 # zip, next to AirPort_RTW89.kext; without it the Wi-Fi works and AirDrop
 # goes one way only (Mac to iPhone)
 broadtek=
-for d in "$root" "$root/../BroadTek/build/release-0.2.0"; do
+for d in "$root" "$root/../BroadTek-public/build/out/BroadTek-0.3.0"; do
     if [ -f "$d/BroadTek.kext/Contents/MacOS/BroadTek" ]; then broadtek="$d/BroadTek.kext"; break; fi
 done
 [ -n "$broadtek" ] || echo "note: BroadTek.kext not found next to AirPort_RTW89.kext: iPhones will not see this Mac in AirDrop"
@@ -101,4 +101,5 @@ find "$oc/Kexts" -name '._*' -delete 2>/dev/null || true
 cp "$tmp" "$oc/config.plist"
 sync
 echo "done. Restart for it to take effect."
+[ -z "$broadtek" ] || echo "Apple Watch unlock (Intel Bluetooth, AMFI off): add -broadtekrw to boot-args, restart, then run sudo \"BroadTek Watch Unlock/install.sh\" from the release zip"
 echo "to switch it off: sudo efi/uninstall.sh   (or boot from another OpenCore copy without it)"

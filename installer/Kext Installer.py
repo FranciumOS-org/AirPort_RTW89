@@ -296,7 +296,7 @@ def main():
     # BroadTek.kext (Bluetooth): in the release zip next to AirPort_RTW89.kext.
     # Without it Wi-Fi works and AirDrop goes Mac -> iPhone only, because the
     # Mac's Bluetooth adverts carry no address an iPhone can recognise.
-    broadtek = find_kext('BroadTek', extra=[os.path.join(HERE, '..', '..', 'BroadTek', 'build', 'release-0.2.0')])
+    broadtek = find_kext('BroadTek', extra=[os.path.join(HERE, '..', '..', 'BroadTek-public', 'build', 'out', 'BroadTek-0.3.0')])
     if not broadtek:
         say('note: BroadTek.kext is not next to this script: iPhones will not see this Mac in AirDrop.')
     stack = {}
@@ -406,6 +406,12 @@ def main():
 
     say()
     say('Done. Restart to use it; keep a USB stick that boots without this EFI at hand.')
+    if broadtek:
+        say()
+        say('Apple Watch unlock (Intel Bluetooth only, needs AMFI off): add -broadtekrw to')
+        say('boot-args, restart into macOS, then in Terminal run')
+        say('    sudo "BroadTek Watch Unlock/install.sh"')
+        say('from this folder. AirDrop and Handoff do not need it.')
     say('To go back: copy %s over config.plist.' % os.path.basename(backup))
     if not backup.endswith('pre-airport-rtw89'):
         say('(config.plist.pre-airport-rtw89 is the config from before the first install.)')

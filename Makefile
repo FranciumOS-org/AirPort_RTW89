@@ -691,16 +691,22 @@ TOOLS_DIR   := $(BUILD_DIR)/release/$(TOOLS)
 KEXT_DIR    := $(BUILD_DIR)/release/$(RELEASE)
 
 # BroadTek (Bluetooth, separate repo, MIT): its release build goes next to the
-# kext, as AirDrop from an iPhone and Handoff need it.
-BROADTEK_KEXT ?= $(PROJ_ROOT)/../BroadTek/build/release-0.2.0/BroadTek.kext
+# kext, as AirDrop from an iPhone and Handoff need it. Its Apple Watch key
+# helper goes in too, as a folder of its own: it is installed from macOS after
+# the restart, which the Kext Installer (run from any OS, on the EFI) cannot do.
+BROADTEK_REL  ?= $(PROJ_ROOT)/../BroadTek-public/build/out/BroadTek-0.3.0
+BROADTEK_KEXT := $(BROADTEK_REL)/BroadTek.kext
+BROADTEK_WATCH := BroadTek Watch Unlock
 
 release: bundle
-	@[ -f "$(BROADTEK_KEXT)/Contents/MacOS/BroadTek" ] || { echo "BroadTek.kext not found at $(BROADTEK_KEXT): build it (BroadTek: make DEBUG=0 kext) or set BROADTEK_KEXT=" >&2; exit 1; }
+	@[ -f "$(BROADTEK_KEXT)/Contents/MacOS/BroadTek" ] && [ -f "$(BROADTEK_REL)/install.sh" ] || { echo "BroadTek's release folder not found at $(BROADTEK_REL): build it (BroadTek: make release DEBUG=0) or set BROADTEK_REL=" >&2; exit 1; }
 	@rm -rf $(BUILD_DIR)/release
 	@mkdir -p $(KEXT_DIR) $(TOOLS_DIR)/efi/kit $(TOOLS_DIR)/tools
 	@# the kext and, next to it, the installer for each OS
 	@cp -R $(BUNDLE) $(KEXT_DIR)/
-	@cp -R "$(BROADTEK_KEXT)" $(KEXT_DIR)/ && cp "$(BROADTEK_KEXT)/../../../LICENSE" $(KEXT_DIR)/BroadTek-LICENSE.txt
+	@cp -R "$(BROADTEK_KEXT)" $(KEXT_DIR)/ && cp "$(BROADTEK_REL)/LICENSE" $(KEXT_DIR)/BroadTek-LICENSE.txt
+	@mkdir -p "$(KEXT_DIR)/$(BROADTEK_WATCH)"
+	@cp -R "$(BROADTEK_REL)/install.sh" "$(BROADTEK_REL)/uninstall.sh" "$(BROADTEK_REL)/Helper" "$(KEXT_DIR)/$(BROADTEK_WATCH)/"
 	@cp -R "$(BROADTEK_KEXT)" $(TOOLS_DIR)/
 	@python3 tools/embed_installer.py "$(KEXT_DIR)/Kext Installer.py"
 	@cp "installer/Kext Installer.command" "installer/Kext Installer.cmd" "installer/Kext Installer.sh" $(KEXT_DIR)/

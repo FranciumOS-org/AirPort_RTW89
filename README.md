@@ -42,7 +42,8 @@ USB versions of these cards are not supported.
   [below](#broadtek)); without it the iPhone never lists the Mac.
 - **160 and 320 MHz** channels where card and network both have them (untested on hardware).
 
-**Not yet:** Instant Hotspot, Apple Watch unlock, Sidecar over Wi-Fi, iPhone
+**Not yet:** Instant Hotspot, Apple Watch unlock on Realtek Bluetooth (it
+works on Intel Bluetooth through BroadTek 0.3.0, see [below](#broadtek)), Sidecar over Wi-Fi, iPhone
 Mirroring (needs Apple's Secure Enclave, which a Hackintosh does not have),
 Wi-Fi 7 multi-link. Sleep and wake are untested.
 
@@ -116,7 +117,15 @@ AirDrop bridge). By hand: copy it to `EFI/OC/Kexts`, add it to
 `Kernel -> Add` right after Lilu, and add `-broadtekp2poff` to `boot-args`.
 
 - It works on the HCI stream, not on any one chip, and was tested with the
-  RTL8852BE's Bluetooth (RealtekBluetoothFirmware) and BlueToolFixup.
+  RTL8852BE's Bluetooth (RealtekBluetoothFirmware) and the Intel AX210's
+  (IntelBluetoothFirmware), both with BlueToolFixup.
+- **Apple Watch unlock** (BroadTek 0.3.0, Intel Bluetooth only): add
+  `-broadtekrw` to `boot-args`, restart into macOS, then run
+  `sudo "BroadTek Watch Unlock/install.sh"` from the release folder. It adds a
+  small helper that hands your Watch's key, which iCloud Keychain has already
+  put in your keychain, to BroadTek after every login. It needs AMFI off
+  (`amfi_get_out_of_my_way=0x1`). See
+  [BroadTek's README](https://github.com/FranciumOS-org/BroadTek#apple-watch-unlock).
 - Its patch for bluetoothd is made for macOS Tahoe 26.7.x; on other versions
   it may not apply, and then iPhones will not list the Mac.
 - `-broadtekoff` turns it off; `-broadtekadvaddroff` keeps it loaded without
