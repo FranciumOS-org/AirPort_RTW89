@@ -12,14 +12,30 @@ int rtw89_mlme_awdl_set_self_addr(const u8 *addr)
     if(!mlme.running || !mlme.hw || !mlme.vif)return -ENETDOWN;
     lockdep_assert_wiphy(mlme.hw->wiphy);
     if(addr && (mlme.state!=RTW89_MLME_IDLE || !mlme.awdl_chanctx))return -EBUSY;
-    if(addr)mlme.awdl_self_addr=true; /* uncertain writes require forced restore */
     ret=rtw89_compat_awdl_self_addr(mlme.vif,addr ? addr : mlme.vif->addr,!addr);
+    /*
+     * -EOPNOTSUPP is this chip having no self-address write at all, not a
+     * write that went wrong: rtw89_compat_awdl_self_addr() refuses on the
+     * chip check before it touches the CAM. Nothing was changed, so there is
+     * nothing to remember or restore, and an optional AirDrop feature the
+     * card never had must not hold back an ordinary join. Seen on the
+     * RTL8852BTE (10ec:b520): it has the idle channel, so this path runs, and
+     * every join aborted with -95 before the first frame was sent.
+     */
+    if(ret==-EOPNOTSUPP) {
+        mlme.awdl_self_addr=false;
+        mlme.awdl_self_addr_error=0;
+        return 0;
+    }
     if(ret>=0) {
         mlme.awdl_self_addr=addr!=NULL;
         mlme.awdl_self_addr_error=0;
-    } else mlme.awdl_self_addr_error=ret;
-    if(ret)mlme_info("AWDL self-address: mode=%s firmware_result=%d (not RX/ACK proof)",
-                    addr ? "awdl0" : "station",ret);
+    } else {
+        if(addr)mlme.awdl_self_addr=true; /* uncertain writes require forced restore */
+        mlme.awdl_self_addr_error=ret;
+        mlme_info("AWDL self-address: mode=%s firmware_result=%d (not RX/ACK proof)",
+                  addr ? "awdl0" : "station",ret);
+    }
     return ret<0 ? ret : 0;
 }
 

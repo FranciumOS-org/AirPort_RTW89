@@ -20,7 +20,12 @@ int rtw89_compat_awdl_self_addr(struct ieee80211_vif *vif,const u8 *addr,bool fo
     lockdep_assert_wiphy(rtwdev->hw->wiphy);
     link=rtw89_get_designated_link(rtwvif);
     if(!link || !link->addr_cam.valid)return -ENETDOWN;
-    if(rtwdev->chip->chip_id!=RTL8852B)return -EOPNOTSUPP;
+    /* RTL8852BT is the same CAM and firmware interface as the RTL8852B, and
+     * like it reports support_chanctx_num 2, which is what the AWDL channel
+     * context needs. Taking a station's own address back on leaving AWDL is
+     * exactly the same CAM write there. */
+    if(rtwdev->chip->chip_id!=RTL8852B && rtwdev->chip->chip_id!=RTL8852BT)
+        return -EOPNOTSUPP;
     if(vif->p2p || vif->type!=NL80211_IFTYPE_STATION || vif->cfg.assoc ||
        link->net_type!=RTW89_NET_TYPE_NO_LINK || rtwdev->scanning)return -EBUSY;
     if(!force && ether_addr_equal(link->mac_addr,addr))return 0;

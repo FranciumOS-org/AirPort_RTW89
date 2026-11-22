@@ -2091,7 +2091,10 @@ static void owly_scc_filter_set(bool should_enable, unsigned int freq)
     unsigned int want = FIF_OTHER_BSS | FIF_ALLMULTI | FIF_BCN_PRBRESP_PROMISC;
 #if defined(RTW89_MACOS) && defined(OWLY_NATIVE_PEER_DATA) && OWLY_NATIVE_PEER_DATA
     struct rtw89_dev *rtwdev = hw->priv;
-    const bool ax = rtwdev->chip->chip_id == RTL8852B;
+    /* The RTL8852BT shares the RTL8852B's RX filter block, including the
+     * sniffer mode this AWDL receive filter turns on for the social channels. */
+    const bool ax = rtwdev->chip->chip_id == RTL8852B ||
+                    rtwdev->chip->chip_id == RTL8852BT;
     const bool awdl_channel = ax && should_enable &&
         (freq == 2437 || freq == 5220 || freq == 5745);
     const bool mode_changed = rtwdev->hal.owly_awdl_scc_rx != awdl_channel;
@@ -2232,7 +2235,8 @@ static int owly_aux_program_cam(struct ieee80211_hw *hw, struct ieee80211_vif *v
     int ret;
 
     lockdep_assert_wiphy(hw->wiphy);
-    if (rtwdev->chip->chip_id != RTL8852B)
+    /* Same BSSID CAM write on the RTL8852BT as on the RTL8852B. */
+    if (rtwdev->chip->chip_id != RTL8852B && rtwdev->chip->chip_id != RTL8852BT)
         return 0;
     if (vif == glue.vif || !vif->p2p || vif->type != NL80211_IFTYPE_STATION)
         return -EINVAL;
