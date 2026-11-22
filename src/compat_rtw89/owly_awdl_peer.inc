@@ -96,7 +96,10 @@ static int owly_peer_ba_firmware(struct owly_awdl_radio_peer *p,unsigned tid,boo
  struct rtw89_dev *dev=glue_hw()->priv;
  struct ieee80211_ampdu_params a={.sta=p->sta,.tid=(u16)tid,.ssn=ssn,.buf_size=window,.amsdu=false};
  struct rtw89_ba_cam_entry *entry;bool found=false;int rc;lockdep_assert_wiphy(glue_hw()->wiphy);
- if(!sl || tid>=16 || dev->chip->chip_id!=RTL8852B)return -EOPNOTSUPP;
+ /* RTL8852BT reaches the same BA CAM as the RTL8852B (bacam_dynamic_num 4
+  * on both), so its AWDL peer aggregates the same way. */
+ if(!sl || tid>=16 ||
+    (dev->chip->chip_id!=RTL8852B && dev->chip->chip_id!=RTL8852BT))return -EOPNOTSUPP;
  /* Preserve H2C errors. Upstream intentionally returns success when static
   * BA CAM is full: RTL8852B can create dynamic entries automatically.
   * A missing static entry is only an error without that hardware fallback. */
